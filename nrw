@@ -1,4 +1,0 @@
-#!/bin/sh -e
-cd /opt/s/fullstack_template/static
-npm run watch
-
