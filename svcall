@@ -1,0 +1,15 @@
+#!/bin/bash -e
+
+declare -a arr=("dlink" "elk" "hue" "insteon" "sonos" "sonybravia" "yamaha" "ui")
+
+restart_service() {
+	name=$1
+	sudo systemctl stop sofa-$name
+	rm -f /opt/beta/log/$name.log
+	sudo systemctl start sofa-$name
+}
+
+for i in "${arr[@]}"
+do
+	restart_service $i
+done

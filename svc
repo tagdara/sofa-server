@@ -1,0 +1,10 @@
+#!/bin/sh -e
+
+restart_service() {
+	name=$1
+	sudo systemctl stop sofa-$name
+	sudo systemctl start sofa-$name
+	sudo systemctl --no-pager status sofa-$name
+}
+
+restart_service $1
