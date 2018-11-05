@@ -325,9 +325,10 @@ class sonybravia(sofabase):
                 self.log.error('Error getting remote code', exc_info=True)
                 return ''
 
-        async def stateChange(self, device, controller, command, payload):
+        async def stateChange(self, endpointId, controller, command, payload):
     
             try:
+                device=endpointId.split(":")[2]
                 sysinfo={}
                 
                 if controller=="PowerController":

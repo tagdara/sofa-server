@@ -9,7 +9,7 @@ import json
 import asyncio
 import concurrent.futures
 import datetime
-
+import uuid
 import socket
 import struct
 
@@ -51,15 +51,38 @@ class pcServer(sofabase):
                 except json.decoder.JSONDecodeError:
                     self.log.error('Non JSON data received.')
                     return False
+                    
                 
                 if 'op' in message:
                     if message['op']=='state':
                         await self.dataset.ingest({"desktop": { message['device'] : message['state'] }})        
 
-                if 'op' in message:
                     if message['op']=='change':
                         await self.dataset.ingest({"desktop": { message['device'] : { message['property']: message['value'] }}})        
-
+                    
+                    if message['op']=='command':
+                        if message['command'] in ['Skip','Play','Rewind','Pause']:
+                            command={
+                                "directive": {
+                                    "header": {
+                                        "namespace": "Alexa.MusicController",
+                                        "name": message['command'],
+                                        "payloadVersion": "3",
+                                        "messageId": str(uuid.uuid1()),
+                                        "correlationToken": str(uuid.uuid1())
+                                    },
+                                    "endpoint": {
+                                        "scope": {
+                                            "type": "BearerToken",
+                                            "token": "access-token-from-skill"
+                                        },
+                                        "endpointId": "sonos:player:RINCON_B8E937ECE1F001400",
+                                        "cookie": {}
+                                    },
+                                    "payload": {}
+                                }
+                            }
+                            await self.dataset.requestAlexaStateChange(command)
                         
             except:
                 self.log.error('Error handling Adapter MQTT Data', exc_info=True)

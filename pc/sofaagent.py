@@ -537,10 +537,10 @@ class sofaAgentService(SMWinservice):
 # entry point of the module: copy and paste into the new module
 # ensuring you are calling the "parse_command_line" of the new created class
 if __name__ == '__main__':
-    isrunning=True
-    agent=sofaPCAgent(isrunning)
-    agent.start()
+    #isrunning=True
+    #agent=sofaPCAgent(isrunning)
+    #agent.start()
 
-    #print(sys.argv)
-    #sofaAgentService.parse_command_line()
+    print(sys.argv)
+    sofaAgentService.parse_command_line()
 

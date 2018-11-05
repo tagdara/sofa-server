@@ -258,10 +258,17 @@ class sofaDataset():
                         await self.notify(self.adaptername, patch.to_string())
                         await self.notifyChanges(self.adaptername, list(patch))
                     except:
-                        self.log.error('Error in ingest-notify',exc_info=True)
+                        self.log.error('!! Error in ingest-notify',exc_info=True)
                 changeReport=await self.controllerUpdates(patch)
                 if changeReport:
-                    self.log.info('Changereport: %s' % changeReport)
+                    if type(changeReport)==list:
+                        for cr in changeReport:
+                            try:
+                                self.log.info('.. change reports: %s' % cr['payload']['change']['properties'])
+                            except:
+                                self.log.info('.. change reports: %s' % cr)
+                    else:
+                        self.log.info('.. change reports: %s' % changeReport)
                 if returnChangeReport:
                     return changeReport
                 else:
@@ -317,7 +324,7 @@ class sofaDataset():
             smartDevice=self.getDeviceByEndpointId("%s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
 
             if not smartDevice:
-                self.log.info("No device for %s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
+                self.log.info(".? No device for %s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
                 # This device does not exist yet.  Some adapters may update out of order, and this change will be picked up
                 # when the device is created.
                 return False
@@ -418,7 +425,8 @@ class sofaDataset():
                         if statereport and hasattr(self.adapter, "handleStateReport"):
                             await self.adapter.handleStateReport(statereport)
                         return statereport
-                        
+            
+            self.log.warn('.! No State Report returned')            
             return {}
 
         except:
@@ -471,7 +479,7 @@ class sofaDataset():
                 return json.loads(changereport.decode())
 
         except:
-            self.log.error("Error requesting state for %s" % endpointId,exc_info=True)
+            self.log.error("Error requesting state: %s" % data,exc_info=True)
         
 
     async def requestStateChange(self, path, command, value):
@@ -533,7 +541,7 @@ class sofaDataset():
         if hasattr(self.adapter, "nativeAlexaStateChange"):
             changeReports=await self.adapter.nativeAlexaStateChange(data)
         elif hasattr(self.adapter, "stateChange"):
-            changeReports=await self.adapter.stateChange(endpoint, controller, command, payload)
+            changeReports=await self.adapter.stateChange(endpointId, controller, command, payload)
             
         
         if changeReports:

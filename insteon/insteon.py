@@ -735,9 +735,10 @@ class insteon(sofabase):
             return False
 
 
-        async def stateChange(self, device, controller, command, payload):
+        async def stateChange(self, endpointId, controller, command, payload):
             
             try:
+                device=endpointId.split(":")[2]
                 nativeCommand={}
                 
                 if controller=="PowerController":

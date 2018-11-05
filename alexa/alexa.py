@@ -122,12 +122,13 @@ class alexaBridge(sofabase):
                             return response
                         else:
                             #self.log.info('Correlation Token: %s' % event["directive"]["header"]['correlationToken'] )
-                            response=await self.dataset.requestAlexaStateChange(event)
-                            if event["directive"]["header"]['name']=='Activate':
-                                response=await self.activationStarted(event)
-                                return response
+                            if event["directive"]["header"]['name']in ['Activate','Deactivate']:
+                                response=await self.activationStarted(event)  
+                                await self.SQSearlyResponse(response)
                             
-                            if 'correlationToken' in event["directive"]["header"]:
+                            response=await self.dataset.requestAlexaStateChange(event)
+
+                            if 'correlationToken' in event["directive"]["header"] and response:
                                 response=await self.convertChangeToResponse(response)
                                 response['event']['header']['correlationToken']=event["directive"]["header"]['correlationToken']
                                 response['event']['endpoint']['scope']=event["directive"]["endpoint"]['scope']
@@ -144,7 +145,9 @@ class alexaBridge(sofabase):
         async def convertChangeToResponse(self, changereport):
         
             try:
-                response={ "event": { "header" : {"namespace": "Alexa", "name":"Response", "payloadVersion": "3", "messageId": str(uuid.uuid1()) } , "endpoint" : { "endpointId": changereport['event']['endpoint']['endpointId'] } , "payload": {} }, "context": { "properties" :  changereport['payload']['change']['properties'] } }
+                response={}
+                if changereport:
+                    response={ "event": { "header" : {"namespace": "Alexa", "name":"Response", "payloadVersion": "3", "messageId": str(uuid.uuid1()) } , "endpoint" : { "endpointId": changereport['event']['endpoint']['endpointId'] } , "payload": {} }, "context": { "properties" :  changereport['payload']['change']['properties'] } }
                 return response
             except:
                 self.log.error('Error converting change report: %s' % changereport, exc_info=True)
@@ -189,6 +192,18 @@ class alexaBridge(sofabase):
                     return queue
                 except:
                     return None
+
+        async def SQSearlyResponse(self, response):
+
+            try:
+                await self.sqs.send_message(QueueUrl=self.lambdaqueue,MessageBody=json.dumps(response))
+                try:
+                    self.log.info('<- %s/%s %s %s' % (response["event"]["header"]["name"], response["event"]["header"]["messageId"], self.suppressTokens(response)))
+                except:
+                    self.log.info('<- response %s' % response)
+
+            except:
+                self.log.error('Error sending back early response: %s' % response, exc_info=True)
 
         async def handleSQSmessage(self,sqsbody):
         

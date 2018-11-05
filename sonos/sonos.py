@@ -49,11 +49,20 @@ class sonos(sofabase):
                 self.loop = asyncio.new_event_loop()
             else:
                 self.loop=loop
-            self.readLogoImage()
+            self.readLightLogoImage()
+            self.readDarkLogoImage()
                 
-        def readLogoImage(self):
+        def readLightLogoImage(self):
             sonoslogofile = open("/opt/beta/sonos/sonoslogo.png", "rb")
             self.sonoslogo = sonoslogofile.read()
+            self.lightlogo = self.sonoslogo
+
+        def readDarkLogoImage(self):
+            try:
+                sonoslogofile = open("/opt/beta/sonos/sonosdark.png", "rb")
+                self.darklogo = sonoslogofile.read()
+            except:
+                self.log.error('Error getting dark logo', exc_info=True)
                
                 
         async def start(self):
@@ -181,6 +190,9 @@ class sonos(sofabase):
             try:
                 linkedPlayers={}
                 if 'ZoneGroupTopology' not in nativeObj:
+                    return []
+                if 'zone_group_state' not in nativeObj['ZoneGroupTopology']:
+                    self.log.error('!! Cant get linked players: zone_group_state not in %s' % nativeObj['ZoneGroupTopology'])
                     return []
                 for group in nativeObj['ZoneGroupTopology']['zone_group_state']['ZoneGroups']['ZoneGroup']:
                     if group['@Coordinator']==nativeObj['speaker']['uid']:
@@ -349,20 +361,18 @@ class sonos(sofabase):
             return None
 
 
-        async def stateChange(self, device, controller, command, payload):
+        async def stateChange(self, endpointId, controller, command, payload):
     
             try:
+                device=endpointId.split(":")[2]
                 for player in self.players:
                     if player.player_name==device or player.uid==device:
 
                         if controller=="SpeakerController":
                             if command=='SetVolume':
-                                self.log.info('Set volume for %s %s' % (device, payload))
                                 player.volume=int(payload['volume'])
                             elif command=='SetMute':
-                                self.log.info('Set mute for %s %s' % (device, payload))
                                 player.mute=payload['muted']
-                                self.log.info('State: %s' % player.renderingControl.__dict__)     
                                 
                         elif controller=="MusicController":
                             if command=='PlayFavorite':
@@ -445,7 +455,6 @@ class sonos(sofabase):
                 # Sonos doesn't always populate the zone_group_name field, even when a player is grouped.  It's probably just a Sonos
                 # thing, but it might be a Soco thing.  Anyway, here's Wonderwall.
                 if 'zone_group_state' not in nativeObj['ZoneGroupTopology']:
-                    self.log.info('No zone_group_state in zonegrouptopology')
                     return nativeObj
                 for group in nativeObj['ZoneGroupTopology']['zone_group_state']['ZoneGroups']['ZoneGroup']:
                     if group['@Coordinator']==nativeObj['speaker']['uid']:
@@ -564,8 +573,16 @@ class sonos(sofabase):
         async def virtualImage(self, path, client=None):
             
             try:
+
+                if path=='darklogo':
+                    return self.darklogo
+
+                if path=='lightlogo':
+                    return self.lightlogo
+
                 if path=='logo':
                     return self.sonoslogo
+                    
                 playerObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath("/"+path))
                 url=self.dataset.getObjectFromPath("/"+path)
                 #self.log.info('VI: %s %s %s' % (path, url, playerObject))

@@ -267,16 +267,16 @@ class PowerControllerInterface(smartInterface):
         
 class ButtonControllerInterface(smartInterface):
     
-    def __init__(self, pressState="OFF", Press=None, Hold=None):
-        smartInterface.__init__(self, "ButtonController", ["pressState"], ["Press", "Hold"])
-        self.pressState=pressState
+    def __init__(self, duration=1, Press=None, Hold=None):
+        smartInterface.__init__(self, "ButtonController", ["duration"], ["Press", "Hold", "Release"])
+        self.duration=duration
         
         self.Press=Press
         self.Hold=Hold
         
     @property            
     def commands(self):
-        return {'Press': {'pressState':'value'}, 'Hold': {'pressState':'value'}}
+        return {'Press': {}, 'Hold': {'duration':'value'}, 'Release': {}}
         
     def updatePressState(self, value):
         if value=="ON":
@@ -353,14 +353,16 @@ class ThermostatControllerInterface(smartInterface):
 
 class LogicControllerInterface(smartInterface):
     
-    def __init__(self, duration=0, Delay=None, Alert=None, namespace="Sofa", ):
-        smartInterface.__init__(self, "LogicController", ['duration','message'], ["Delay","Alert"])
+    def __init__(self, duration=0, Delay=None, Alert=None, Capture=None, Reset=None, Wait=None, namespace="Sofa" ):
+        smartInterface.__init__(self, "LogicController", ['duration','message','device'], ["Delay","Alert","Capture","Reset","Wait"])
         self.Delay=Delay
         self.Alert=Alert
+        self.Reset=Reset
+        self.Wait=Wait
         
     @property            
     def commands(self):
-        return {'Delay': {'duration':'value'}, 'Alert': {'message':'value'}}
+        return {'Delay': {'duration':'value'}, 'Alert': {'message':'value'}, 'Capture': {'device':'value'}, 'Reset': {'device':'value'}, "Wait":{}}
 
         
 class MusicControllerInterface(smartInterface):
@@ -626,6 +628,17 @@ class basicDevice(smartObject):
         self.interfaces=[self.PowerController]
         self.description=description
         self.manufacturer=manufacturer
+
+class simpleMode(smartObject):
+    
+    def __init__(self, path, name, description="", manufacturer="sofa", log=None):
+        smartObject.__init__(self, path, name)
+        self.displayCategories=["MODE"]
+        self.PowerController=PowerControllerInterface()
+        self.interfaces=[self.PowerController]
+        self.description=description
+        self.manufacturer=manufacturer
+
 
 class smartButton(smartObject):
     

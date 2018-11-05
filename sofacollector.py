@@ -39,7 +39,6 @@ class SofaCollector(sofabase):
     
         def getDeviceByfriendlyName(self, friendlyName):
         
-            #self.log.info('GDFN: %s %s' % (friendlyName, self.dataset.devices))
             for device in self.dataset.devices:
                 if self.dataset.devices[device]['friendlyName']==friendlyName:
                     return self.dataset.devices[device]
@@ -110,7 +109,8 @@ class SofaCollector(sofabase):
                 if self.dataset.getDeviceByEndpointId(message['event']['endpoint']['endpointId']):
                     self.log.debug('Props: %s' % message['context']['properties'])
                     for prop in message['context']['properties']:
-                        field="discovery/%s/%s/%s" % (message['event']['endpoint']['cookie']['name'], prop['namespace'].split(".")[1], prop['name'])
+                        devname=self.getDeviceByEndpointId(message['event']['endpoint']['endpointId'])['friendlyName']
+                        field="discovery/%s/%s/%s" % (devname, prop['namespace'].split(".")[1], prop['name'])
                         self.log.debug('Field: %s' % field)
                         if self.dataset.getObjectFromPath(field, self.dataset.data['cache'])!={}:
                         #if field in self.dataset.data['cache']:

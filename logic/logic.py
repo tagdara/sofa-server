@@ -12,7 +12,10 @@ import json
 import asyncio
 import concurrent.futures
 import datetime
+import time
 import uuid
+import aiohttp
+from aiohttp import web
 
 
 class logicServer(sofabase):
@@ -24,6 +27,7 @@ class logicServer(sofabase):
             self.dataset.nativeDevices['scene']={}
             self.dataset.nativeDevices['activity']={}
             self.dataset.nativeDevices['logic']={}
+            self.dataset.nativeDevices['mode']={}
 
             #self.definitions=definitions.Definitions
             self.log=log
@@ -42,6 +46,9 @@ class logicServer(sofabase):
                     result=await self.saveAutomation(dp[1], data)
                 elif dp[0]=='scene':
                     result=await self.saveScene(dp[1], data)  
+                elif dp[0]=='schedule':
+                    result=await self.saveSchedule(dp[1], data)  
+
                 else:
                     return '{"status":"failed", "reason":"No Save Handler Available for type %s"}' % dp[0]
                     
@@ -62,6 +69,9 @@ class logicServer(sofabase):
                     result=await self.delAutomation(dp[1])
                 elif dp[0]=='scene':
                     result=await self.delScene(dp[1])  
+                elif dp[0]=='schedule':
+                    result=await self.delSchedule(dp[1])  
+
                 else:
                     return '{"status":"failed", "reason":"No Del Handler Available for type %s"}' % dp[0]
                     
@@ -83,6 +93,8 @@ class logicServer(sofabase):
                     result=await self.saveAutomation(dp[1], data)
                 elif dp[0]=='scene':
                     result=await self.saveScene(dp[1], data)  
+                elif dp[0]=='schedule':
+                    result=await self.saveScheduleWeb(dp[1], data)  
                 else:
                     return '{"status":"failed", "reason":"No Save Handler Available for type %s"}' % dp[0]
                     
@@ -104,19 +116,35 @@ class logicServer(sofabase):
                 self.log.error('Found unknown object for json dump: (%s) %s' % (type(obj),obj))
             return None
 
-        async def saveAutomation(self, name,data):
+        async def saveAutomation(self, name, data):
             
             try:
                 data=json.loads(data)
                 if name not in self.automations:
-                    self.automations[name]={"lastrun": "never", "actions": []}
+                    self.automations[name]={"lastrun": "never", "actions": [], "conditions": []}
                 
-                self.automations[name]['actions']=data
+                if 'actions' in data:
+                    self.automations[name]['actions']=data['actions']
+                if 'conditions' in data:
+                    self.automations[name]['conditions']=data['conditions']
+
                 self.saveJSON('/opt/beta/config/automations.json',self.automations)
                 return True
             except:
                 self.log.error('Error saving automation: %s %s' % (name, data), exc_info=True)
                 return False
+
+        async def saveScene(self, area, name, data):
+            
+            try:
+                data=json.loads(data)
+                self.newscenes[name]=data
+                self.saveJSON('/opt/beta/config/scenes.json',self.automations)
+                return True
+            except:
+                self.log.error('Error saving automation: %s %s' % (name, data), exc_info=True)
+                return False
+
 
         async def delAutomation(self, name):
             
@@ -125,6 +153,19 @@ class logicServer(sofabase):
                     del self.automations[name]
                 
                 self.saveJSON('/opt/beta/config/automations.json',self.automations)
+                return True
+            except:
+                self.log.error('Error deleting automation: %s' % name, exc_info=True)
+                return False
+
+        async def delSchedule(self, name):
+            
+            try:
+                if name in self.schedule:
+                    del self.schedule[name]
+                
+                self.saveJSON('/opt/beta/config/schedule.json',self.schedule)
+                await self.calculateNextRun()
                 return True
             except:
                 self.log.error('Error deleting automation: %s' % name, exc_info=True)
@@ -143,9 +184,9 @@ class logicServer(sofabase):
         async def saveSchedule(self, name, data):
             
             try:
+                self.log.info('Saving Schedule: %s %s' % (name, data))
                 if type(data)==str:
                     data=json.loads(data)
-                
                 
                 self.log.info('Saving: %s %s' % (name, data))
                 if name not in self.schedule:
@@ -155,8 +196,8 @@ class logicServer(sofabase):
                     self.schedule[name]['lastrun']=data['lastrun']
                     self.schedule[name]['enabled']=data['enabled']
                 self.schedule[name]['start']=data['start']
-                self.schedule[name]['interval']=data['interval']
-                self.schedule[name]['intervalunit']=data['intervalunit']
+                self.schedule[name]['type']=data['type']
+                self.schedule[name]['schedule']=data['schedule']
                 self.schedule[name]['action']=data['action']
 
                 self.saveJSON('/opt/beta/config/schedule.json',self.schedule)
@@ -164,6 +205,149 @@ class logicServer(sofabase):
             except:
                 self.log.error('Error saving schedule: %s %s' % (name, data), exc_info=True)
                 return False
+
+        async def saveScheduleWeb(self, name, data):
+            
+            try:
+                self.log.info('Saving Schedule: %s %s' % (name, data))
+                if type(data)==str:
+                    data=json.loads(data)
+                    
+                self.schedule[name]=data
+
+                self.saveJSON('/opt/beta/config/schedule.json',self.schedule)
+                await self.calculateNextRun()
+                return True
+            except:
+                self.log.error('Error saving schedule: %s %s' % (name, data), exc_info=True)
+                return False
+
+        def fixdate(self, datetext):
+            try:
+                working=datetext.split('.')[0].replace('Z','')
+                if working.count(':')>1:
+                    return datetime.datetime.strptime(working, '%Y-%m-%dT%H:%M:%S')    
+                else:
+                    return datetime.datetime.strptime(working, '%Y-%m-%dT%H:%M')
+            except:
+                self.log.error('Error fixing date: %s' % datetext, exc_info=True)
+                return None
+                
+            
+
+        async def calculateNextRun(self, name=None):
+            
+            # This is all prototype code and should be cleaned up once it is functional
+            
+            wda=['mon','tue','wed','thu','fri','sat','sun'] # this is stupid but python weekdays start monday
+            nextruns={}
+            try:
+                now=datetime.datetime.now()
+                for sched in self.schedule:
+                    #self.log.info('Checking: %s %s' % (sched,self.schedule[sched]))
+                    startdate = self.fixdate(self.schedule[sched]['start'])
+                    if self.schedule[sched]['type']=='specificTime':
+                        try:
+                            runtime = datetime.datetime.strptime(self.schedule[sched]['schedule']['at'],'%H:%M')
+                        except ValueError as v:
+                            # if it includes seconds or microseconds, strp will fail with the value error
+                            ulr = len(v.args[0].partition('unconverted data remains: ')[2])
+                            if ulr:
+                                runtime = datetime.datetime.strptime(self.schedule[sched]['schedule']['at'][:-ulr], '%H:%M')
+                                
+                        if self.schedule[sched]['schedule']['daysType']=='daysOfTheWeek':
+                            if startdate>now:
+                                #self.log.info('Starts in the future: %s' % self.schedule[sched]['start'])
+                                onStartDate=startdate.replace(hour=runtime.hour, minute=runtime.minute)
+                                
+                                if onStartDate>startdate:  # see if this is later in the day and if not, add a day
+                                    startdate=onStartDate
+                                else:
+                                    startdate=onStartDate+datetime.timedelta(days=1)
+                            else:
+                                startdate=now.replace(hour=runtime.hour, minute=runtime.minute)
+                                if now>startdate:
+                                    startdate=startdate+datetime.timedelta(days=1)
+                                    
+                            if self.schedule[sched]['lastrun']!='never':
+                                lastrun=self.fixdate(self.schedule[sched]['lastrun'])
+                                if lastrun.replace(hour=runtime.hour, minute=runtime.minute)+datetime.timedelta(days=1) > startdate:
+                                    startdate=lastrun.replace(hour=runtime.hour, minute=runtime.minute)+datetime.timedelta(days=1)
+                                    
+                            while wda[startdate.weekday()] not in self.schedule[sched]['schedule']['days']:
+                                startdate=startdate+datetime.timedelta(days=1)
+                                
+                            self.log.info('** %s next start %s %s %s' % (sched, wda[startdate.weekday()], startdate, self.schedule[sched]))
+                            nextruns[sched]=startdate
+                        
+                        elif self.schedule[sched]['schedule']['daysType']=='interval':
+                            if startdate>now:
+                                #self.log.info('Starts in the future: %s' % self.schedule[sched]['start'])
+                                if startdate.replace(hour=runtime.hour, minute=runtime.minute) > startdate:
+                                    startdate=startdate.replace(hour=runtime.hour, minute=runtime.minute)
+                                else:
+                                    startdate=startdate.replace(hour=runtime.hour, minute=runtime.minute)+datetime.timedelta(days=1)
+                            else:
+                                delta = now - startdate
+                                interval=int(self.schedule[sched]['schedule']['interval'])
+                                self.log.info('Number of days since start: %s / %s / %s ' % ( delta.days, interval, delta.days/interval))
+                                if startdate.replace(hour=runtime.hour, minute=runtime.minute) > startdate:
+                                    startdate=startdate.replace(hour=runtime.hour, minute=runtime.minute)
+                                else:
+                                    startdate=startdate.replace(hour=runtime.hour, minute=runtime.minute)+datetime.timedelta(days=1)
+                                
+                                if self.schedule[sched]['lastrun']!='never':
+                                    lastrun=self.fixdate(self.schedule[sched]['lastrun'])
+                                    if lastrun.replace(hour=runtime.hour, minute=runtime.minute) > startdate:
+                                        startdate=lastrun.replace(hour=runtime.hour, minute=runtime.minute)
+                                
+                                while startdate < now:
+                                    startdate=startdate+datetime.timedelta(days=interval)
+
+                    elif self.schedule[sched]['type']=='interval':  
+                        startdate = self.fixdate(self.schedule[sched]['start'])
+                        if startdate>now:
+                            self.log.info('** Starts in the future: %s %s' % (sched, self.schedule[sched]['start']))
+                            nextruns[sched]=startdate
+                        else:
+                            if self.schedule[sched]['lastrun']=='never':
+                                delta = now - startdate
+                            else:
+                                delta = self.fixdate(self.schedule[sched]['lastrun']) - startdate
+                                
+                            interval=int(self.schedule[sched]['schedule']['interval'])
+                            unit=self.schedule[sched]['schedule']['unit']
+                            
+                            if unit=='minute':
+                                delta_minutes = delta.days * 24 * 60 + delta.seconds / 60
+                                #self.log.info('Number of %s since start: %s / %s / %s ' % ( unit, delta_minutes, interval, delta_minutes//interval))
+                                totalint=(delta_minutes//interval)*interval+interval
+                                startdate=startdate+datetime.timedelta(seconds=totalint*60)
+                                self.log.info('** %s next start %s %s %s' % (sched, wda[startdate.weekday()], startdate, self.schedule[sched]))
+                                nextruns[sched]=startdate
+                                
+                            elif unit=='hour':
+                                delta_hours = delta.days * 24 + delta.seconds / 3600.0
+                                #self.log.info('Number of %s since start: %s / %s / %s ' % ( unit, delta_hours, interval, delta_hours//interval))
+                                totalint=(delta_hours//interval)*interval+interval
+                                startdate=startdate+datetime.timedelta(seconds=totalint*60*60)
+                                self.log.info('** %s next start %s %s %s' % (sched, wda[startdate.weekday()], startdate, self.schedule[sched]))
+                                nextruns[sched]=startdate
+                            
+                            elif unit=='day':
+                                #self.log.info('Number of %s since start: %s / %s / %s ' % ( unit, delta.days, interval, delta.days/interval))
+                                totalint=(delta.days//interval)*interval+interval
+                                startdate=startdate+datetime.timedelta(days=totalint)
+                                self.log.info('** %s next start %s %s %s' % (sched, wda[startdate.weekday()], startdate, self.schedule[sched]))
+                                nextruns[sched]=startdate
+                                
+                for nextrun in nextruns:
+                    # update schedule so it is available to the web ui
+                    self.schedule[nextrun]['nextrun']=nextruns[nextrun]
+                return nextruns
+                
+            except:
+                self.log.error('Error with next run calc: %s' % self.schedule, exc_info=True)
 
                 
         def saveJSON(self, jsonfilename, data):
@@ -178,12 +362,41 @@ class logicServer(sofabase):
 
         async def buildLogicCommand(self):
             try:
-                logicCommand={"logic": {"command": {"Delay": 0, "Alert":0}}}
+                logicCommand={"logic": {"command": {"Delay": 0, "Alert":0, "Capture":"", "Reset":"", "Wait":0}}}
                 await self.dataset.ingest(logicCommand)
             except:
                 self.log.error('Error adding logic commands', exc_info=True)
                 
-           
+        def upgradeScenes(self):
+            
+            try:
+                self.newareas={}
+                self.newscenes={}
+                for area in self.scenes:
+                    self.newareas[area]={}
+                    if area in self.areas:
+                        self.newareas[area]=self.areas[area]
+                        if 'scenes' not in self.newareas[area]:
+                            self.newareas[area]['scenes']={}
+                        self.newareas[area]['shortcuts']={}
+                        for sc in self.scenes[area]['shortcuts']:
+                            self.newareas[area]['shortcuts'][sc]=area + " "+ self.scenes[area]['shortcuts'][sc]
+                            
+                        for scene in self.scenes[area]['scenes']:
+                            self.newareas[area]['scenes'][area+" "+scene]={'endpointId': "logic:scene:"+area+" "+scene}
+                            self.newscenes[area+" "+scene]=self.scenes[area]['scenes'][scene]
+                            for light in self.newscenes[area+" "+scene]:
+                                if 'set' in self.newscenes[area+" "+scene][light]:
+                                    self.newscenes[area+" "+scene][light]={"brightness": self.newscenes[area+" "+scene][light]['set']}
+                self.saveJSON('/opt/beta/config/areas.json', self.newareas)
+                self.saveJSON('/opt/beta/config/scenes.json', self.newscenes)   
+
+            except:
+                self.log.error('Error upgrading scene data', exc_info=True)
+                        
+                        
+                    
+            
         async def start(self):
             self.polltime=1
             self.log.info('.. Starting Logic Manager')
@@ -193,16 +406,25 @@ class logicServer(sofabase):
                 self.areas=self.loadJSON('areamap')
                 self.automations=self.loadJSON('automations')
                 self.scenes=self.loadJSON('scenemap')
+                self.upgradeScenes()
                 self.regions=self.loadJSON('regions')
                 self.schedule=self.loadJSON('schedule')
+                await self.calculateNextRun()
                 self.events=self.loadJSON('events')
                 self.users=self.loadJSON('users')
+                self.modes=self.loadJSON('modes')
+                self.virtualDevices=self.loadJSON('virtualDevices')
                 self.log.info('self.users: %s' % self.users)
                 self.eventTriggers=self.buildTriggerList(self.events)
+                self.capturedDevices={}
                 await self.buildLogicCommand()
                 
                 for auto in self.automations:
                     await self.dataset.ingest({"activity": { auto : self.automations[auto] }})
+
+                for mode in self.modes:
+                    self.log.info('Mode: %s - %s' % (mode,self.modes[mode]))
+                    await self.dataset.ingest({"mode": { mode : self.modes[mode] }})
                     
                 for area in self.scenes:
                     for scene in self.scenes[area]['scenes']:
@@ -223,8 +445,21 @@ class logicServer(sofabase):
                 except:
                     self.log.error('Error polling schedule', exc_info=True)
                 
-
         async def checkScheduledItems(self):
+            try:
+                now = datetime.datetime.now()
+                for sched in self.schedule:
+                    if now>self.schedule[sched]['nextrun']:
+                        self.log.info('Scheduled run is due: %s %s' % (sched,self.schedule[sched]['nextrun']))
+                        action=self.schedule[sched]['action']
+                        await self.sendAlexaCommand(action['command'], action['controller'], action['endpointId'], action['value'])  
+                        self.schedule[sched]['lastrun']=now.isoformat()+"Z"
+                        await self.saveScheduleWeb(sched, self.schedule[sched])
+            except:
+                self.log.error('Error checking scheduled items', exc_info=True)
+                    
+                
+        async def OldcheckScheduledItems(self):
         
             try:
         
@@ -233,7 +468,11 @@ class logicServer(sofabase):
             
                 for item in self.schedule:
                     if self.schedule[item]['enabled']==True:
-                        if now>=datetime.datetime.strptime(self.schedule[item]['start'], '%Y-%m-%dT%H:%M:%S.%fZ'):
+                        try:
+                            schedtime=datetime.datetime.strptime(self.schedule[item]['start'], '%Y-%m-%dT%H:%M:%S.%fZ')
+                        except:
+                            schedtime=datetime.datetime.strptime(self.schedule[item]['start'], '%Y-%m-%dT%H:%MZ')
+                        if now>=schedtime:
                             #self.log.info('After Launch Time: %s' % self.schedule[item]['start'])
                             intervalsec=int(self.schedule[item]['interval'])*intervalConversion[self.schedule[item]['intervalunit']]
                             if self.schedule[item]['lastrun']!='never':
@@ -249,7 +488,10 @@ class logicServer(sofabase):
                                 action=self.schedule[item]['action']
                                 await self.sendAlexaCommand(action['command'], action['controller'], action['endpointId'], action['value'])
                                 self.schedule[item]['lastrun']=now.isoformat()+"Z"
-                                await self.saveSchedule(item, self.schedule[item])
+                                try:
+                                    await self.saveSchedule(item, self.schedule[item])
+                                except:
+                                    self.log.error('Error saving schedule  %s' % item, exc_info=True)
             
             except:
                 self.log.error('Error checking schedules', exc_info=True)
@@ -262,6 +504,8 @@ class logicServer(sofabase):
             try:
                 if path.split("/")[1]=="activity":
                     return self.addSimpleActivity(path.split("/")[2])
+                elif path.split("/")[1]=="mode":
+                    return self.addSimpleMode(path.split("/")[2])
                 elif path.split("/")[1]=="scene":
                     return self.addSimpleScene(path.split("/")[2])
                 elif path.split("/")[1]=="logic":
@@ -283,6 +527,14 @@ class logicServer(sofabase):
             
             return False
 
+        async def addSimpleMode(self, name):
+            
+            nativeObject=self.dataset.nativeDevices['mode'][name]
+            
+            if name not in self.dataset.devices:
+                return self.dataset.addDevice(name, devices.simpleMode('logic:mode:%s' % name, name))
+            
+            return False
                 
         async def addSimpleActivity(self, name):
             
@@ -326,12 +578,149 @@ class logicServer(sofabase):
                 self.log.error('Error executing Alexa Command', exc_info=True)
                 return {}
 
+        async def captureDeviceState(self, deviceName):
+            
+            try:            
+                device=self.getDeviceByfriendlyName(deviceName)
+                if device:
+                    devprops=await self.dataset.requestReportState(device['endpointId'])
+                    self.capturedDevices[deviceName]=devprops
+                    self.log.info('Captured prop for %s (%s) - %s' % (deviceName, device['endpointId'], devprops))
+            except:
+                self.log.error('Error saving device state', exc_info=True)
+
+
+        async def resetCapturedDeviceState(self, deviceName):
+            
+            try:
+                self.log.info('Attempting to reset %s' % deviceName)
+                if deviceName in self.capturedDevices:
+                    olddevice=self.capturedDevices[deviceName]
+                    endpointId=olddevice['event']['endpoint']['endpointId']
+                    newdevice=await self.dataset.requestReportState(endpointId)
+                
+                    oldprops={}
+                    for prop in olddevice['context']['properties']:
+                        propname="%s.%s" % (prop['namespace'], prop['name'])
+                        oldprops[propname]=prop['value']
+                
+                    newprops={}
+                    for prop in newdevice['context']['properties']:
+                        propname="%s.%s" % (prop['namespace'], prop['name'])
+                        newprops[propname]=prop['value']
+                    
+                    powerOff=False
+                    for prop in oldprops:
+                        if prop in newprops:
+                            if oldprops[prop]!=newprops[prop]:
+                                self.log.info('Difference discovered %s - now %s was %s' % (prop, oldprops[prop], newprops[prop]))
+                                # Need to figure out how to get back to the command from the property, but for now this
+                                # mostly just applies to lights so will shim in this fix
+                                if prop=='Alexa.BrightnessController.brightness':
+                                    await self.sendAlexaCommand('SetBrightness', 'BrightnessController', endpointId, oldprops[prop])
+                                elif prop=='Alexa.ColorController.color':
+                                    await self.sendAlexaCommand('SetColor', 'ColorController', endpointId, oldprops[prop])
+                                elif prop=='Alexa.PowerController.powerState':
+                                    if oldprops[prop]=='ON':
+                                        await self.sendAlexaCommand('TurnOn', 'PowerController', endpointId)
+                                    else:
+                                        powerOff=True
+                                        # This has to be done last or the other settings will either miss or reset the on
+                                        # For lights that are on, bri and color have poweron built in
+
+                    if powerOff:
+                        await self.sendAlexaCommand('TurnOff', 'PowerController', endpointId)                        
+                                        
+                else:
+                    self.log.info('Device: %s not in %s' % (deviceName, self.capturedDevices))
+                    
+            except:
+                self.log.error('Error resetting saved device state', exc_info=True)
+            
+            
+
+        async def runActivityWait(self, activityName):
+            
+            try:
+                devstateCache={}
+                conditionlist=[]
+                conditionMatch=True
+                if 'conditions' in self.automations[activityName]:
+                    conditions=self.automations[activityName]['conditions']
+                    for condition in conditions:
+                        if condition['endpointId'] not in devstateCache:
+                            devstate=await self.dataset.requestReportState(condition['endpointId'])
+                            devstateCache[condition['endpointId']]=devstate['context']['properties']
+                        devstate=devstateCache[condition['endpointId']]
+                        self.log.info('Devstate from condition for %s: %s' % (condition['endpointId'], devstate))
+                        for prop in devstate:
+                            if prop['namespace'].split('.')[1]==condition['controller'] and prop['name']==condition['propertyName']:
+                                if condition['operator']=='=' or condition=='==':
+                                    if prop['value']==condition['value']:
+                                        break
+                                elif condition['operator']=='!=':
+                                    if prop['value']!=condition['value']:
+                                        break
+                                elif condition['operator']=='>':
+                                    if prop['value']>condition['value']:
+                                        break
+                                elif condition['operator']=='<':
+                                    if prop['value']<condition['value']:
+                                        break
+                                elif condition['operator']=='>=':
+                                    if prop['value']>=condition['value']:
+                                        break
+                                elif condition['operator']=='<=':
+                                    if prop['value']<=condition['value']:
+                                        break
+                                elif condition['operator']=='contains':
+                                    if str(condition['value']) in str(prop['value']):
+                                        break
+                                self.log.info('Did not meet condition: %s %s' % (prop, condition))
+                                conditionMatch=False
+                                break
+                                    
+
+                    if not conditionMatch:           
+                        self.log.info('Did not meet conditions')
+                        return False
+                    else:
+                        self.log.info('Matched defined conditions')
+                        
+                activity=self.automations[activityName]['actions']
+                chunk=[]
+                for action in activity:
+                    if action['command']=='Wait':
+                        result=await self.runActivityChunk(chunk)
+                        self.log.info('Result of chunk: %s' % result)
+                        chunk=[]
+                    else:
+                        chunk.append(action)
+                if chunk:
+                    result=await self.runActivityChunk(chunk)
+                    
+                self.log.info('Done with all chunks')
+                
+            except:
+                self.log.error('Error with chunky Activity', exc_info=True)
+
+        async def runActivityChunk(self, chunk ):
+        
+            try:
+                allacts = await asyncio.gather(*[self.sendAlexaCommand(action['command'], action['controller'], action['endpointId'], action['value']) for action in chunk ])
+                self.log.info('chunk result: %s' % allacts)
+                return allacts
+            except:
+                self.log.error('Error executing activity', exc_info=True)
+            
+
         async def runActivity(self, activityName ):
         
             try:
                 activity=self.automations[activityName]['actions']
                 allacts = asyncio.gather(*[self.sendAlexaCommand(action['command'], action['controller'], action['endpointId'], action['value']) for action in activity ])
-                self.log.info('activity %s result: %s' % (activityName, allacts))   
+                self.log.info('activity %s result: %s' % (activityName, allacts))
+                return allacts
             except:
                 self.log.error('Error executing activity', exc_info=True)
 
@@ -356,10 +745,48 @@ class logicServer(sofabase):
             except:
                 self.log.error('Error executing Scene', exc_info=True)
 
+        async def imageGetter(self, item, thumbnail=False):
 
+            try:
+                source=item.split('/',1)[0] 
+                if source in self.dataset.adapters:
+                    result='#'
+                    if thumbnail:
+                        url = 'http://%s:%s/thumbnail/%s' % (self.dataset.adapters[source]['address'], self.dataset.adapters[source]['port'], item.split('/',1)[1] )
+                    else:
+                        url = 'http://%s:%s/image/%s' % (self.dataset.adapters[source]['address'], self.dataset.adapters[source]['port'], item.split('/',1)[1] )
+                    async with aiohttp.ClientSession() as client:
+                        async with client.get(url) as response:
+                            result=await response.read()
+                            return result
+                            #result=result.decode()
+                            if str(result)[:10]=="data:image":
+                                #result=base64.b64decode(result[23:])
+                                self.imageCache[item]=str(result)
+                                return result
+                return None
+    
+            except concurrent.futures._base.CancelledError:
+                self.log.error('Error getting image %s (cancelled)' % item)
+            except:
+                self.log.error('Error getting image %s' % item, exc_info=True)
+                return None
+                
         async def runAlert(self, message, image=None):
             
             try:
+                if message.startswith('Garage Door') or message.startswith('Garage Side Door'):
+                    camera='driveway'
+                elif message.startswith('Doorbell') or message.startswith('Front Door') or message.startswith('Office Window'):
+                    camera='frontdoor'
+                elif message.startswith('Stairs Door'):
+                    camera='garage'
+                else:
+                    camera=''
+                
+                if camera:
+                    image=await self.imageGetter('dlink/camera/'+camera)
+                    
                 for user in self.users:
                     if self.users[user]['alerts']:
                         self.mailsender.sendmail(self.users[user]['email'], '', message+' @'+datetime.datetime.now().strftime("%l:%M.%S%P")[:-1], image)
@@ -368,10 +795,25 @@ class logicServer(sofabase):
                 self.log.error('Error sending alert', exc_info=True)
                         
 
-        async def stateChange(self, device, controller, command, payload):
+        async def stateChange(self, endpointId, controller, command, payload):
     
             try:
+                device=endpointId.split(":")[2]
                 self.log.info('Statechange: %s %s %s %s' % (device, controller, command, payload))
+
+                if controller=="PowerController":
+                    if device in self.modes:
+                        self.log.info('Modes: %s ' % self.modes)
+                        if command=="TurnOn":
+                            changes=await self.dataset.ingest({ "mode" : { device: {'active':True }}})
+                            self.saveJSON('/opt/beta/config/modes.json',self.modes)
+                        if command=="TurnOff":
+                            
+                            changes=await self.dataset.ingest({ "mode" : { device: {'active':False }}})
+                            self.saveJSON('/opt/beta/config/modes.json',self.modes)
+                        self.log.info('Changes: %s' % changes)
+                        return changes
+                        
                 
                 if controller=="LogicController":
                     if command=='Alert':
@@ -381,16 +823,24 @@ class logicServer(sofabase):
                     if command=='Delay':
                         asyncio.sleep(payload['duration'])
                         return []
+                    if command=='Capture':
+                        await self.captureDeviceState(payload['device'])
+                        return []
+                    if command=='Reset':
+                        await self.resetCapturedDeviceState(payload['device'])
+                        return []
                         
                 if controller=="SceneController":
                     if command=="Activate":
                         # This is heavy handed but it will make sure the current data is loaded
                         # Until I can implement saving through this adapter
-                        self.automations=self.loadJSON('automations')
+                        
+                        # i did i think
+                        # self.automations=self.loadJSON('automations')
                         self.scenes=self.loadJSON('scenemap')
-
+                           
                         if device in self.automations:
-                            await self.runActivity(device)
+                            await self.runActivityWait(device)
                             # This should return the scene ack
                             return []
                         else:
@@ -411,11 +861,33 @@ class logicServer(sofabase):
         def virtualControllers(self, itempath):
 
             try:
-                return {}
+                nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
+                self.log.debug('Checking object for controllers: %s' % nativeObject)
+                try:
+                    detail=itempath.split("/",3)[3]
+                except:
+                    detail=""
 
+                controllerlist={}
+                #self.log.info('Itempath / Detail: %s %s' % (itempath, detail))
+                if itempath.startswith('/mode'):
+                    controllerlist["PowerController"]=["powerState"]
+
+                return controllerlist
+            except KeyError:
+                pass
             except:
                 self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
 
+        def virtualControllerProperty(self, nativeObj, controllerProp):
+            
+            try:
+                self.log.info('Checking controller prop: %s %s' % (controllerProp, nativeObj))
+                if controllerProp=='powerState':
+                    return "ON" if nativeObj['active'] else "OFF"
+            except:
+                self.log.error('Error converting virtual controller property: %s %s' % (controllerProp, nativeObj), exc_info=True)
+                return False
 
         def buildTriggerList(self, events):
             
@@ -435,13 +907,23 @@ class logicServer(sofabase):
             
             return triggerlist
                             
-        async def runEvents(self, events):
+        async def runEvents(self, events, trigger=''):
             
             try:
                 for event in events:
                     action=self.events[event]['action']
-                    self.log.info('Running event %s action: %s' % (event, action))
-                    await self.sendAlexaCommand(action['command'], action['controller'], action['endpointId'], action['value'])
+                    
+                    # cheese for alerts until the data type passing of multiple parameters can be fixed and 
+                    # allowing for macros to condense it all into one trigger
+                    if action['controller']=='LogicController' and action['command']=='Alert':
+                        self.log.info('Alert action running from trigger: %s' % trigger)
+                        aval=action['value'].replace('[deviceName]',trigger.split('.')[0])
+                        aval=aval.replace('[value]',trigger.split('=')[1])
+                    else:
+                        aval=action['value']
+                    
+                    self.log.info('Running event %s action: %s %s' % (event, aval, action))
+                    await self.sendAlexaCommand(action['command'], action['controller'], action['endpointId'], aval)
             except:
                 self.log.error('Error running events: %s' % events, exc_info=True)
 
@@ -453,9 +935,37 @@ class logicServer(sofabase):
                 trigname="%s.%s.%s=%s" % (deviceName, change['namespace'].split('.')[1], change['name'], change['value'])
                 if trigname in self.eventTriggers:
                     self.log.info('!+ This is a trigger we are watching for: %s %s %s' % (trigname, deviceName, change))
-                    await self.runEvents(self.eventTriggers[trigname])
+                    await self.runEvents(self.eventTriggers[trigname],trigname)
             except:
                 self.log.error('Error in virtual change handler: %s %s' % (deviceName, change), exc_info=True)
+
+        async def buildRegion(self, thisRegion=None):
+            
+            try:
+                
+                
+                if thisRegion:
+                    reg={thisRegion: self.regions[thisRegion].copy()}
+                else:
+                    reg=self.regions.copy()
+                self.log.info('Reg: %s' % reg)
+                for region in reg:
+                    self.log.info('Working on region %s' % region)
+                    reg[region]['areas']={}
+                    reg[region]['scenes']={}
+                    for room in reg[region]['rooms']:
+                        reg[region]['areas'][room]=self.newareas[room]
+                        for scene in self.newareas[room]['scenes']:
+                            reg[region]['scenes'][scene]=self.newscenes[scene]
+                            
+                if thisRegion:
+                    return reg[thisRegion]
+                    
+                return reg
+            except:
+                self.log.info('Error building region data: %s' % region, exc_info=True)
+            
+
 
         async def virtualList(self, itempath, query={}):
 
@@ -465,12 +975,28 @@ class logicServer(sofabase):
 
                 if itempath=="schedule":
                     return self.schedule
+                
+                if itempath=="scenes":
+                    return self.newscenes
 
+                if itempath=="areas":
+                    return self.newareas
+
+                if itempath=="events":
+                    return self.events
+                    
+                if itempath=="regions":
+                    return await self.buildRegion()
+
+                if itempath=="virtualDevices":
+                    return self.virtualDevices
                     
                 if itempath=="automationlist":
                     al={}
                     for auto in self.automations:
-                        al[auto]={ 'lastrun': self.automations[auto]['lastrun'], 'count': len(self.automations[auto]['actions']), 'endpointId':'logic:activty:%s' % auto }
+                        if 'conditions' not in self.automations[auto]:
+                            self.automations[auto]['conditions']=[]
+                        al[auto]={ 'lastrun': self.automations[auto]['lastrun'], 'actionCount': len(self.automations[auto]['actions']), 'conditionCount': len(self.automations[auto]['conditions']), 'endpointId':'logic:activty:%s' % auto }
                     return al
 
                 if itempath=="arealist":
@@ -492,8 +1018,10 @@ class logicServer(sofabase):
                         if ip[1] in self.automations:
                             return self.automations[ip[1]]
                     if ip[0]=='region':
+                        self.log.info('Regions: %s %s' % (ip[1],self.regions))
                         if ip[1] in self.regions:
-                            return self.regions[ip[1]]['rooms']
+                            return await self.buildRegion(ip[1])
+                            #return self.regions[ip[1]]['rooms']
                     if ip[0]=='area':
                         if ip[1] in self.areas:
                             return self.areas[ip[1]]['lights']
@@ -510,14 +1038,8 @@ class logicServer(sofabase):
                 return {}
 
             except:
-                self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
+                self.log.error('Error getting virtual list for %s' % itempath, exc_info=True)
 
-
-
-        def virtualControllerProperty(self, nativeObj, controllerProp):
-        
-            # Scenes have no properties
-            return None
 
         
 

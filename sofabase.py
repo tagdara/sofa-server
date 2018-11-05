@@ -52,6 +52,18 @@ class adapterbase():
             jsonfile.close()
         except:
             self.log.error('Error saving json to %s' % jsonfilename, exc_info=True)
+    
+    def addControllerProps(self, controllerlist, controller, prop):
+        
+        try:
+            if controller not in controllerlist:
+                controllerlist[controller]=[]
+            if prop not in controllerlist[controller]:
+                controllerlist[controller].append(prop)
+        except:
+            self.log.error('Error adding controller property', exc_info=True)
+                
+        return controllerlist
             
 class sofabase():
 
@@ -67,8 +79,9 @@ class sofabase():
 
 
     def logsetup(self, level="INFO", errorOnly=[]):
-        
-        log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s %(lineno)4d %(threadName)-.1s: %(message)s','%m/%d %H:%M:%S')
+
+        #log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s %(lineno)4d %(threadName)-.1s: %(message)s','%m/%d %H:%M:%S')
+        log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s%(lineno)4d: %(message)s','%m/%d %H:%M:%S')
         if not os.path.exists("%s/log/%s" % (self.basepath, self.adaptername)):
             os.makedirs("%s/log/%s" % (self.basepath, self.adaptername))
         #check if a log file already exists and if so rotate it
@@ -106,10 +119,10 @@ class sofabase():
     def oldlogsetup(self, level="INFO", errorOnly=[]):
         
         loglevel=getattr(logging,level)
-        logging.basicConfig(level=loglevel, format='%(asctime)-6s.%(msecs).03d %(levelname).1s %(lineno)4d %(threadName)-.1s: %(message)s',datefmt='%m/%d %H:%M:%S', filename='/opt/beta/log/%s.log' % self.adaptername,)
+        logging.basicConfig(level=loglevel, format='%(asctime)-6s.%(msecs).03d %(levelname).1s %(lineno)4d: %(message)s',datefmt='%m/%d %H:%M:%S', filename='/opt/beta/log/%s.log' % self.adaptername,)
         self.log = logging.getLogger(self.adaptername)
         
-        formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s %(lineno)4d %(threadName)-.1s: %(message)s',datefmt='%m/%d %H:%M:%S')
+        formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s %(lineno)4d: %(message)s',datefmt='%m/%d %H:%M:%S')
         console = logging.StreamHandler()
         console.setFormatter(formatter)
         console.setLevel(logging.INFO)
@@ -130,7 +143,8 @@ class sofabase():
 
         try:
             with open('/opt/beta/config/%s.json' % (self.adaptername),'r') as configfile:
-                return json.loads(configfile.read())
+                configdata=configfile.read()
+                return json.loads(configdata)
         except FileNotFoundError:
             self.log.error('.! Config file was not found for: %s' % self.adaptername)
             return {}

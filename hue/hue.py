@@ -249,10 +249,11 @@ class hue(sofabase):
                 self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
 
 
-        async def stateChange(self, device, controller, command, payload):
+        async def stateChange(self, endpointId, controller, command, payload):
     
             try:
                 nativeCommand={}
+                device=endpointId.split(":")[2]
                 
                 if controller=="PowerController":
                     if command=='TurnOn':
@@ -269,9 +270,16 @@ class hue(sofabase):
                 elif controller=="ColorController":
                     if command=="SetColor":
                         self.log.info('Setcolor with HSB: %s' % payload)
-                        nativeCommand["bri"]=int(payload['color']['brightness']*255)
-                        nativeCommand["sat"]=int(payload['color']['saturation']*255)
-                        nativeCommand["hue"]=int((payload['color']['hue']/360)*65536)
+                        if type(payload['color']) is not dict:
+                            payloadColor=json.loads(payload['color'])
+                            self.log.info('Fixed payload color: %s' % payloadColor)
+                        else:
+                            payloadColor=payload['color']
+                        nativeCommand["bri"]=int(payloadColor['brightness']*255)
+                        nativeCommand["sat"]=int(payloadColor['saturation']*255)
+                        nativeCommand["hue"]=int((payloadColor['hue']/360)*65536)
+                        nativeCommand["transitiontime"]=10
+                        nativeCommand['on']=True
 
                         #nativeCommand['bri']=self.percentage(int(payload['brightness']), 255)
 

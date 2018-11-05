@@ -41,7 +41,7 @@ class BroadcastProtocol:
         for phrase in self.keyphrases:
             if data.find(phrase)>-1 and data.find("<?xml")>-1:
                 event=self.etree_to_dict(et.fromstring(data[data.find("<?xml"):]))
-                self.log.info('>> ssdp/keyword %s %s' % (phrase, event))
+                self.log.info('>> ssdp %s' % event)
                 self.processUPNPevent(event)
                 #return str(data)
 
@@ -88,9 +88,6 @@ class yamahaXML():
         self.log=log
         self.dataset=dataset
         self.definitions=definitions.yamahaDefinitions
-        self.address=self.dataset.config['address']
-        self.port=self.dataset.config['port']
-
 
     def etree_to_dict(self, t):
         
@@ -142,14 +139,14 @@ class yamahaXML():
             data=self.data2xml(data).decode()
             socket.setdefaulttimeout(1)
 
-            url = 'http://%s:%s/YamahaRemoteControl/ctrl' % (self.address, self.port)
+            url = 'http://%s:%s/YamahaRemoteControl/ctrl' % (self.dataset.config['address'], self.dataset.config['port'])
             #self.log.info('Command: %s %s' % (url, data))
             headers = { "Content-type": "text/xml" }
-            self.log.info('Sending: %s %s %s' % (url, data, headers))
+            self.log.debug('Sending: %s %s %s' % (url, data, headers))
             async with aiohttp.ClientSession() as client:
                 response=await client.post(url, data=data, headers=headers)
                 xml=await response.read()
-                self.log.info('XML resp: %s' % xml)
+                self.log.debug('XML resp: %s' % xml)
                 if xml:
                     ydata=self.etree_to_dict(et.fromstring(xml))
                     return ydata['YAMAHA_AV']
@@ -160,7 +157,7 @@ class yamahaXML():
     
     async def getState(self, itemState):
         try:
-            url = 'http://%s:%s/YamahaRemoteControl/ctrl' % (self.address, self.port)
+            url = 'http://%s:%s/YamahaRemoteControl/ctrl' % (self.dataset.config['address'], self.dataset.config['port'])
             headers = { "Content-type": "text/xml" }
             data=self.definitions.itemStates[itemState]
             async with aiohttp.ClientSession() as client:
@@ -234,9 +231,11 @@ class yamaha(sofabase):
             
             
         async def start(self):
-            self.receiver=yamahaXML(log=self.log)
 
             try:
+                self.address=self.dataset.config['address']
+                self.port=self.dataset.config['port']
+                self.receiver=yamahaXML(log=self.log, dataset=self.dataset)
                 await self.updateEverything()
             except:
                 self.log.error('error with update',exc_info=True)
@@ -279,9 +278,10 @@ class yamaha(sofabase):
             
             return False
 
-        async def stateChange(self, device, controller, command, payload):
+        async def stateChange(self, endpointId, controller, command, payload):
     
             try:
+                device=endpointId.split(":")[2]
                 nativeCommand={}
                 
                 if controller=="PowerController":
@@ -304,24 +304,50 @@ class yamaha(sofabase):
                         
                 if nativeCommand:      
                     response=await self.receiver.sendCommand(nativeCommand, '', payload)
-                    self.log.info('Command response: %s' % response)
+                    self.log.info('<- %s' % response)
                     await self.updateEverything()
                   
             except:
                 self.log.error('Error executing state change.', exc_info=True)
 
-
+ 
+        def addControllerProps(self, controllerlist, controller, prop):
+        
+            try:
+                if controller not in controllerlist:
+                    controllerlist[controller]=[]
+                if prop not in controllerlist[controller]:
+                    controllerlist[controller].append(prop)
+            except:
+                self.log.error('Error adding controller property', exc_info=True)
+                
+            return controllerlist
 
         def virtualControllers(self, itempath):
 
             try:
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
+                self.log.debug('Checking object for controllers: %s' % nativeObject)
+                
+                try:
+                    detail=itempath.split("/",3)[3]
+                except:
+                    detail=""
+
                 controllerlist={}
                 if "Basic_Status" in nativeObject:
-                    controllerlist["PowerController"]=["powerState"]
-                    controllerlist["SpeakerController"]=["volume","muted"]
-                    controllerlist["InputController"]=["input"]
-                    controllerlist["SurroundController"]=["surround", "decoder"]
+                    if detail=="Basic_Status/Power_Control/Power" or detail=="":
+                        controllerlist=self.addControllerProps(controllerlist, "PowerController", "powerState")
+                    if detail=="Basic_Status/Volume/Lvl/Val" or detail=="":
+                        controllerlist=self.addControllerProps(controllerlist, 'SpeakerController', 'volume')
+                    if detail=="Basic_Status/Volume/Mute" or detail=="":
+                        controllerlist=self.addControllerProps(controllerlist, 'SpeakerController', 'muted')
+                    if detail=="Basic_Status/Input/Input_Sel" or detail=="":
+                        controllerlist=self.addControllerProps(controllerlist, 'InputController', 'input')
+                    if detail=="Basic_Status/Surround/Program_Sel/Current/Sound_Program" or detail=="":
+                        controllerlist=self.addControllerProps(controllerlist, "SurroundController", "surround")
+                    if detail=="Basic_Status/Input/Decoder_Sel" or detail=="":
+                        controllerlist=self.addControllerProps(controllerlist, "SurroundController", "decoder")
                 return controllerlist
             except:
                 self.log.error('Error getting virtual controller types for %s' % nativeObj, exc_info=True)

@@ -342,7 +342,7 @@ class sofaRest():
                         controllers=await self.getPathControllers(path)
                         response=self.dataset.generateStateReport(path, controllers, correlationToken=jsondata['directive'])
                     else:
-                        self.log.info('Sending alexa command: %s %s' % (jsondata['directive']['header']['name'],jsondata))
+                        self.log.info('<< %s %s' % (jsondata['directive']['header']['name'],jsondata))
                         response=await self.dataset.handleStateChange(jsondata)
 
             except:

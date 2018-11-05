@@ -2,7 +2,7 @@
 
 import sys
 sys.path.append('/opt/beta')
-from sofabase import sofabase
+from sofabase import sofabase, adapterbase
 import devices
 
 import math
@@ -170,6 +170,12 @@ class Client(asyncio.Protocol):
         
         elif command=="Request Ethernet test":
             self.log.debug('Ethernet heartbeat')
+        
+        elif command=="Control output change update": #CC
+            try:
+                outputdata=await self.outputChangeUpdate(data)
+            except:
+                self.log.info('Error getting Output Change Update', exc_info=True)
         
         else:
             self.log.info('elk %s > %s' % (command, data.replace('\n', ' ').replace('\r', '')))
@@ -372,11 +378,37 @@ class Client(asyncio.Protocol):
         except:
             self.log.error("zoneDefinitionReport Error",exc_info=True)
 
+    async def outputChangeUpdate(self,data): # CC
+        # 0A – Length as ASCII hex
+        # CC – Zone Change Message Command
+        # ZZZ – Output Number, 1 based
+        # S – Output State, 0 = OFF, 1 = ON
+        # 00 – future use
+        # CC – Checksum
+
+        data=self.clipElkData(data)
+
+        try:
+            elkoutput=data[2:5]
+            outputstate=data[5]
+            if data[5]=='0':
+                outputstate='Off'
+            else:
+                outputstate='On'
+            
+            await self.dataset.ingest({'output': { str(int(elkoutput)): {'status': outputstate }}})
+            
+            self.log.info('outputChangeUpdate: %s = %s' % (elkoutput, outputstate))
+                    
+        except:
+            self.log.error("outputChangeUpdate",exc_info=True)
+
+
         
         
 class elkm1(sofabase):
 
-    class adapterProcess():
+    class adapterProcess(adapterbase):
     
         def __init__(self, log=None, dataset=None, notify=None, loop=None, **kwargs):
             self.dataset=dataset
@@ -399,42 +431,14 @@ class elkm1(sofabase):
             except:
                 self.log.error('Error', exc_info=True)
 
-
-        async def stateChange(self, device, controller, command, payload):
-    
-            try:
-
-                if controller=="ButtonController":
-                    if command=='Press':
-                        await self.triggerTask(device)
-                        self.log.info('Button press: %s %s %s %s' % (device, controller, command, payload))
-                        await self.triggerIt(device)
-
-               
-                #if nativeCommand:
-                #    return await self.setHueLight(device, nativeCommand)
-                    
-            except:
-                self.log.error('Error executing state change.', exc_info=True)
-
-
-        async def triggerIt(self, device):
-            try:
-                self.log.info('This is device yo %s' % device)
-                elkcmd="09tn"+str(device).zfill(3)+"00"
-                elkcmd=elkcmd+self.elkClient.computechecksum(elkcmd)
-                self.elkClient.queueForSend(elkcmd+"\r\n")
-                self.elkClient.checkSendQueue()    
-            except:
-                self.log.error('Error with TriggerIt', exc_info=True)
-
         async def addSmartDevice(self, path):
             
             try:
                 if path.split("/")[1]=="zone":
                     return self.addSmartZone(path.split("/")[2])
-                elif path.split("/")[1]=="task":
-                    return self.addSmartButton(path.split("/")[2])
+                elif path.split("/")[1] in ["task","output"]:
+                    return self.addSmartButton(path.split("/")[2],path.split("/")[1])
+
 
             except:
                 self.log.error('Error defining smart device', exc_info=True)
@@ -463,18 +467,30 @@ class elkm1(sofabase):
                 self.log.error('Error adding Smart Zone  %s' % deviceid, exc_info=True)
 
 
-        def addSmartButton(self, deviceid):
+        def addSmartButton(self, deviceid, buttontype):
             
             try:
-                nativeObject=self.dataset.nativeDevices['task'][deviceid]
-                if 'name' not in nativeObject:
+                nativeObject=self.dataset.nativeDevices[buttontype][deviceid]
+                #if 'name' not in nativeObject:
+                if 'name' not in nativeObject or 'status' not in nativeObject:
                     #self.log.info('Name info not present for %s' % deviceid)
                     return False
                 if nativeObject['name'] not in self.dataset.localDevices:
-                    return self.dataset.addDevice(nativeObject['name'], devices.smartButton('elk/task/%s' % deviceid, nativeObject['name']))
+                    return self.dataset.addDevice(nativeObject['name'], devices.smartButton('elk/%s/%s' % (buttontype,deviceid), nativeObject['name']))
             except:
                 self.log.error('Error adding Smart Button %s' % deviceid, exc_info=True)
 
+        def addBasicDevice(self, deviceid):
+            
+            try:
+                nativeObject=self.dataset.nativeDevices['output'][deviceid]
+                if 'name' not in nativeObject or 'status' not in nativeObject:
+                    #self.log.info('Name info not present for %s' % deviceid)
+                    return False
+                if nativeObject['name'] not in self.dataset.localDevices:
+                    return self.dataset.addDevice(nativeObject['name'], devices.basicDevice('elk/output/%s' % deviceid, nativeObject['name']))
+            except:
+                self.log.error('Error adding Smart Button %s' % deviceid, exc_info=True)
 
             
 
@@ -490,13 +506,16 @@ class elkm1(sofabase):
 
                 controllerlist={}
                 if itempart[1]=='task':
-                    controllerlist["ButtonController"]=["pressState"]
+                    controllerlist=self.addControllerProps(controllerlist,"ButtonController","pressState")
+                elif itempart[1]=='output':
+                    controllerlist=self.addControllerProps(controllerlist,"ButtonController","pressState")
                 elif nativeObject["zonetype"].find("Temperature")>-1:
-                    controllerlist["TemperatureSensor"]=["temperature"]
-                elif nativeObject["zonetype"].find("Burglar")==0:
-                    controllerlist["ZoneSensor"]=["position","type"]
-                elif nativeObject["zonetype"].find("Non Alarm")==0:
-                    controllerlist["ZoneSensor"]=["position","type"]
+                    controllerlist=self.addControllerProps(controllerlist,"TemperatureSensor","temperature")
+                elif nativeObject["zonetype"].find("Non Alarm")==0 or nativeObject["zonetype"].find("Burglar")==0:
+                    if detail=="":
+                        controllerlist=self.addControllerProps(controllerlist,"ZoneSensor","type")
+                    if detail=="status" or detail=="":
+                        controllerlist=self.addControllerProps(controllerlist,"ZoneSensor","position")
 
                 return controllerlist
             except:
@@ -508,7 +527,14 @@ class elkm1(sofabase):
 
             try:
                 if controllerProp=='pressState':
-                    return 'OFF'
+                    if 'status' not in nativeObj:
+                        return 'OFF'
+                        
+                    elif nativeObj['status']=="Off":
+                        return 'OFF'
+                    else:
+                        return 'ON'
+                        
                 if controllerProp=='temperature':
                     return nativeObj['temperature']
                     
@@ -529,13 +555,31 @@ class elkm1(sofabase):
             except:
                 self.log.error('Error getting virtualcontrollerproperty: %s %s' % (controllerProp, nativeObj), exc_info=True)
 
-        async def command(self, category, item, data):
-            
-            self.log.info('Received command: %s %s %s' % (category, item, data))
-            
-            if category=='task':
-                await self.triggerTask(item)
 
+        async def stateChange(self, endpointId, controller, command, payload):
+    
+            try:
+                devicetype=endpointId.split(":")[1]
+                device=endpointId.split(":")[2]
+                
+                if controller=="ButtonController":
+                    if command=='Press':
+                        self.log.info('Button press: %s %s %s %s' % (endpointId, controller, command, payload))
+                        if devicetype=='task':
+                            await self.triggerTask(device)
+                        elif devicetype=='output':
+                            await self.triggerOutput(device)
+                            
+                    elif command=='Hold':
+                        if devicetype=='output':
+                            await self.triggerOutput(device, payload['duration'])
+                    
+                    elif command=='Release':
+                        if devicetype=='output':
+                            await self.releaseOutput(device)
+                        
+            except:
+                self.log.error('Error executing state change.', exc_info=True)
 
         async def triggerTask(self, taskname):
             
@@ -553,6 +597,33 @@ class elkm1(sofabase):
                 self.log.error('Error with triggerTask', exc_info=True)
         
 
+        async def releaseOutput(self, outputId):
+            
+            # Control Output off (cf)
+            # 09cfDDD00CC(CR-LF)
+            # Example: turn off Control Output 2: 09cf00200DC(CR-LF )
+            
+            try:
+                elkcmd="09cf"+outputId.zfill(3)+"00"
+                elkcmd=elkcmd+self.elkClient.computechecksum(elkcmd)
+                self.elkClient.queueForSend(elkcmd+"\r\n")
+                self.elkClient.checkSendQueue()    
+            except:
+                self.log.error('Error with releasing Output: %s %s' (outputId,duration), exc_info=True)
+ 
+        async def triggerOutput(self, outputId, duration=1):
+            
+            # 0EcnDDDTTTTT00CC(CR-LF)
+            # Example: turn on Control Output 1 for 10 seconds: 0Ecn0010001000D8(CR-LF )
+            
+            try:
+                elkcmd="0Ecn"+outputId.zfill(3)+str(duration).zfill(5)+"00"
+                elkcmd=elkcmd+self.elkClient.computechecksum(elkcmd)
+                self.elkClient.queueForSend(elkcmd+"\r\n")
+                self.elkClient.checkSendQueue()    
+            except:
+                self.log.error('Error with trigger Output: %s %s' (outputId,duration), exc_info=True)
+ 
         async def virtualCategory(self, category):
             
             if category=='temperature':

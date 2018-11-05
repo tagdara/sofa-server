@@ -2,7 +2,7 @@
 
 import sys
 sys.path.append('/opt/beta')
-from sofabase import sofabase
+from sofabase import sofabase,adapterbase
 import devices
 
 import math
@@ -24,7 +24,7 @@ from libpurecoollink.dyson_pure_state import DysonPureHotCoolState, \
         
 class dyson(sofabase):
 
-    class adapterProcess():
+    class adapterProcess(adapterbase):
     
         def __init__(self, log=None, dataset=None, notify=None, request=None, loop=None, **kwargs):
             self.dataset=dataset
@@ -65,7 +65,7 @@ class dyson(sofabase):
                             # to prevent mid-degree temperature updates and prevents general spam on the bus
                             newstate[prop]=int(newstate[prop])
                 #self.log.info('New State: %s' % newstate)
-                asyncio.ensure_future(self.dataset.ingest({'fan': {self.dyson_devices[0].name+" fan": newstate}}), loop=self.loop)
+                asyncio.ensure_future(self.dataset.ingest({'fan': {self.dyson_devices[0].name+" fan": { "state": newstate} }}), loop=self.loop)
             except:
                 self.log.error('Error handling message: %s' % msg, exc_info=True)
             
@@ -160,9 +160,10 @@ class dyson(sofabase):
                 return {}
 
 
-        async def stateChange(self, device, controller, command, payload):
+        async def stateChange(self, endpointId, controller, command, payload):
             
             try:
+                device=endpointId.split(":")[2]
                 nativeCommand={}
                 
                 if controller=="PowerController":
@@ -224,19 +225,6 @@ class dyson(sofabase):
                 count=count+1
             self.inUse=False
             return True
-        
-        def addControllerProps(self, controllerlist, controller, prop):
-        
-            try:
-                if controller not in controllerlist:
-                    controllerlist[controller]=[]
-                if prop not in controllerlist[controller]:
-                    controllerlist[controller].append(prop)
-            except:
-                self.log.error('Error adding controller property', exc_info=True)
-                
-            return controllerlist
-        
 
         def virtualControllers(self, itempath):
             
@@ -251,13 +239,13 @@ class dyson(sofabase):
                 controllerlist={}
                 
                 if nativeObject["product_type"]=="455":
-                    if detail=="temperature" or detail=="":
+                    if detail=="state/temperature" or detail=="":
                         controllerlist=self.addControllerProps(controllerlist,'TemperatureSensor','temperature')
-                    if detail=="heat_mode" or detail=="fan_mode" or detail=="":
+                    if detail=="state/heat_mode" or detail=="state/fan_mode" or detail=="":
                         controllerlist=self.addControllerProps(controllerlist,"ThermostatController","thermostatMode")
-                    if detail=='heat_target' or detail=="":
+                    if detail=='state/heat_target' or detail=="":
                         controllerlist=self.addControllerProps(controllerlist,"ThermostatController","targetSetPoint")
-                    if detail=="fan_state" or detail=="":
+                    if detail=="state/fan_state" or detail=="":
                         controllerlist=self.addControllerProps(controllerlist,"PowerLevelController","powerLevel")
                 
                 return controllerlist
