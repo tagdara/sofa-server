@@ -8,6 +8,7 @@ from sofabase import adapterbase
 import devices
 
 import datetime
+import time
 import os
 import math
 import random
@@ -408,7 +409,7 @@ class dlink(sofabase):
         def getCameraCaptureDates(self, cameraname, capturetype, includeEvent=False):
             
             try:
-                result=[]
+                result={}
                 hasEvent=False
 
                 campath = os.path.join(self.dataset.config['captures']['basedir'], cameraname, capturetype)
@@ -422,10 +423,11 @@ class dlink(sofabase):
                     fullpath = os.path.join(campath, dirname)
                     if os.path.isdir(fullpath):
                         if dirname.startswith('20'):
+                            data={'date': datetime.datetime.strptime(dirname, '%Y%m%d').strftime('%a %b %e') }
                             if includeEvent and hasEvent:
-                                result.append('Event/%s' % dirname)
+                                result['Event/%s' % dirname]=data
                             else:
-                                result.append(dirname)
+                                result[dirname]=data
                         
                 return result
                 
@@ -456,7 +458,7 @@ class dlink(sofabase):
         def getCameraCapturesByTime(self, cameraname, capturetype, capturedate, capturehour):
             
             try:
-                result=[]
+                result={}
 
                 precampath = os.path.join(self.dataset.config['captures']['basedir'], cameraname, capturetype)
                 # Motion capture events may use this structure
@@ -464,11 +466,14 @@ class dlink(sofabase):
                     precampath = os.path.join(precampath,'Event')
 
                 campath = os.path.join(precampath, capturedate, capturehour)
-                for dirname in os.listdir(campath):
-                    fullpath = os.path.join(campath, dirname)
+                for filename in os.listdir(campath):
+                    fullpath = os.path.join(campath, filename)
                     if os.path.isfile(fullpath):
-                        result.append(dirname)
-                            
+                        t = os.path.getmtime(fullpath)
+                        #self.log.info('gm: %s ' % strfdatedatetime.datetime.fromtimestamp(t) )
+                        result[filename]={'date' : datetime.datetime.fromtimestamp(t).strftime('%-I:%M:%-S') }
+                        #result[filename]={'date':stat.st_mtime}                       
+                         
                 return result
                 
             except:
@@ -488,7 +493,7 @@ class dlink(sofabase):
 
                 img = Image.open(campath)
                 if thumbnail:
-                    img.thumbnail((50, 50), Image.ANTIALIAS)
+                    img.thumbnail((200, 200), Image.ANTIALIAS)
 
                 with io.BytesIO() as output:
                     img.save(output, format="JPEG")

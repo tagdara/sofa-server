@@ -158,6 +158,58 @@ class dyson(sofabase):
             except:
                 self.log.error('Error getting Fan properties', exc_info=True)
                 return {}
+                
+        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
+
+            try:
+                device=endpointId.split(":")[2]
+                nativeCommand={}
+                
+                if controller=="PowerController":
+                    if command=='TurnOn':
+                        nativeCommand['fan_mode']=FanMode.FAN
+                    elif command=='TurnOff':
+                        nativeCommand['fan_mode']=FanMode.OFF
+
+                elif controller=="PowerLevelController":
+                    if command=="SetPowerLevel":
+                        self.log.info('Fanspeed: %s' % FanSpeed)
+                        if payload['powerLevel']=='AUTO':
+                            fanspeed='AUTO'
+                            nativeCommand['fan_mode']=FanMode.AUTO
+                        else:
+                            fanspeed=str(int(payload['powerLevel'])//10)
+                            if fanspeed=='0':
+                                fanspeed='1'
+                            nativeCommand['fan_speed']=getattr(FanSpeed, 'FAN_SPEED_%s' % fanspeed)
+ 
+
+                elif controller=="ThermostatController":
+                    if command=="SetThermostatMode":
+                        if payload['thermostatMode']=='HEAT':
+                            nativeCommand['fan_mode']=FanMode.FAN
+                            nativeCommand['heat_mode']=HeatMode.HEAT_ON
+                        elif payload['thermostatMode']=='FAN':
+                            nativeCommand['fan_mode']=FanMode.FAN
+                            nativeCommand['heat_mode']=HeatMode.HEAT_OFF
+                        elif payload['thermostatMode']=='OFF':
+                            nativeCommand['fan_mode']=FanMode.OFF
+                    if command=="SetTargetTemperature":
+                        #nativeCommand['heat_mode']=HeatMode.HEAT_ON
+                        nativeCommand['heat_target']=HeatTarget.fahrenheit(int(payload['targetSetPoint']))
+
+                if nativeCommand:
+                    await self.setDyson(device, nativeCommand)
+                    await self.waitPendingChange(device)
+                    updatedProperties=await self.getFanProperties(device)
+                    await self.dataset.ingest({'fan': { device: {'state':updatedProperties}}})
+                    return await self.dataset.generateResponse(endpointId, correlationToken)
+                else:
+                    self.log.info('Could not find a command for: %s %s %s %s' % (device, controller, command, payload) )
+                    return {}
+
+            except:
+                self.log.error('Error executing state change.', exc_info=True)
 
 
         async def stateChange(self, endpointId, controller, command, payload):
@@ -216,16 +268,18 @@ class dyson(sofabase):
                 
         async def waitPendingChange(self, device):
         
-            # The ISY will send an update to the properties, but it takes .5-1 second to complete
-            # Waitiing up to 2 seconds allows us to send back a change report for the change command
+            if device not in self.pendingChanges:
+                self.pendingChanges.append(device)
+
             count=0
             while device in self.pendingChanges and count<30:
-                #self.log.info('Waiting for update... %s %s' % (device, self.pendingChanges))
+                #self.log.info('Waiting for update... %s %s' % (device, self.subscription.pendingChanges))
                 await asyncio.sleep(.1)
                 count=count+1
             self.inUse=False
             return True
 
+  
         def virtualControllers(self, itempath):
             
             try:

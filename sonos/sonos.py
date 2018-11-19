@@ -361,7 +361,8 @@ class sonos(sofabase):
             return None
 
 
-        async def stateChange(self, endpointId, controller, command, payload):
+        #async def stateChange(self, endpointId, controller, command, payload):
+        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
     
             try:
                 device=endpointId.split(":")[2]
@@ -397,8 +398,12 @@ class sonos(sofabase):
                                         if otherplayer.player_name==payload['input']:
                                             player.join(otherplayer)
                    
-                    #await self.dataset.ingest({"player": { spinfo["uid"]: { "speaker": spinfo, "name":player.player_name, "ip_address":player.ip_address }}})
-                     
+                        #await self.dataset.ingest({"player": { spinfo["uid"]: { "speaker": spinfo, "name":player.player_name, "ip_address":player.ip_address }}})
+                        response=await self.dataset.generateResponse(endpointId, correlationToken)
+                        return response
+
+            except soco.exceptions.SoCoUPnPException:
+                self.log.error('Error from Soco while trying to issue command', exc_info=True)
             except:
                 self.log.error('Error executing state change.', exc_info=True)
 

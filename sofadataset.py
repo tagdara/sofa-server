@@ -188,7 +188,6 @@ class sofaDataset():
         return devicelist
 
 
-
     async def getCategory(self, category):
             
         if category in self.data:
@@ -223,7 +222,6 @@ class sofaDataset():
         try:
             # This takes a set of updated properties and applies them to the object
             # without deleting any props that were not referenced or changed.
-            
             newprops=[]
             for i, oldprop in enumerate(nativeObject['state']):
                 for prop in updateprops:
@@ -244,36 +242,12 @@ class sofaDataset():
             self.oldNativeDevices = copy.deepcopy(self.nativeDevices)
             if overwriteLevel:
                 self.nested_set(self.nativeDevices, overwriteLevel.split('/'), data )
-                #self.log.info('Overwrite: %s %s .. %s ' % (overwriteLevel, data, self.data))
-                #dpath.util.set(self.nativeDevices, overwriteLevel, data )
             else:
                 dpath.util.merge(self.nativeDevices, data, flags=dpath.util.MERGE_REPLACE)
-                
             patch = jsonpatch.JsonPatch.from_diff(self.oldNativeDevices, self.nativeDevices)
             
             if patch:
-                #self.log.info('Patch: %s' % patch)
-                if notify:
-                    try:
-                        await self.notify(self.adaptername, patch.to_string())
-                        await self.notifyChanges(self.adaptername, list(patch))
-                    except:
-                        self.log.error('!! Error in ingest-notify',exc_info=True)
-                changeReport=await self.controllerUpdates(patch)
-                if changeReport:
-                    if type(changeReport)==list:
-                        for cr in changeReport:
-                            try:
-                                self.log.info('.. change reports: %s' % cr['payload']['change']['properties'])
-                            except:
-                                self.log.info('.. change reports: %s' % cr)
-                    else:
-                        self.log.info('.. change reports: %s' % changeReport)
-                if returnChangeReport:
-                    return changeReport
-                else:
-                    return patch
-
+                return await self.updateDevicesFromPatch(patch)
             return {}
                 
         except:
@@ -281,37 +255,27 @@ class sofaDataset():
             return {}
 
                 
-    async def controllerUpdates(self,data):
+    async def updateDevicesFromPatch(self,data):
             
         try:
             updates=[]
-            devicedone=[]
-            #self.log.info('Controller Updates: %s' % data)
             # Check to see if this is a new smart device that has not been added yet
             for item in data:
                 if len(item['path'].split('/'))>2: # ignore root level adds
-                    # This Device done makes devices with multiple properties miss all but the first check
-                    # if this is really needed, it probably needs to be moved somewhere else
-                    # but this might be solving a different problem I forgot about
-                    
-                    #if self.getObjectPath(item['path']) not in devicedone:
-                    #    devicedone.append(self.getObjectPath(item['path']))
-                    
-                    if 1==1:
-                        newDevice=False
-                        update=None
-                        if item['op']=='add':
-                            if hasattr(self.adapter, "addSmartDevice"):
-                                newDevice=await self.adapter.addSmartDevice(item['path'])
-                                if newDevice:
-                                    update=await self.updateDeviceState(self.getObjectPath(item['path']), newDevice=newDevice, patch=item)
-                                    if update:
-                                        self.log.info('new device update: %s' % update)
-                                        updates.append(update)
-                        else:
-                            update=await self.updateDeviceState(item['path'], newDevice=False, patch=item)
-                            if update:
-                                updates.append(update)
+                    newDevice=False
+                    update=None
+                    if item['op']=='add':
+                        if hasattr(self.adapter, "addSmartDevice"):
+                            newDevice=await self.adapter.addSmartDevice(item['path'])
+                            if newDevice:
+                                update=await self.updateDeviceState(self.getObjectPath(item['path']), newDevice=newDevice, patch=item)
+                                if update:
+                                    self.log.info('new device update: %s' % update)
+                                    updates.append(update)
+                    else:
+                        update=await self.updateDeviceState(item['path'], newDevice=False, patch=item)
+                        if update:
+                            updates.append(update)
             return updates
         except:
             self.log.error('Error with controllermap: %s ' % item['path'], exc_info=True)
@@ -326,14 +290,12 @@ class sofaDataset():
             if not smartDevice:
                 self.log.info(".? No device for %s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
                 # This device does not exist yet.  Some adapters may update out of order, and this change will be picked up
-                # when the device is created.
+                # when the device is created.  This has the side effect of indicating when an adapter is putting up possible
+                # devices that sofa is not handling, and might spam the logs.
                 return False
-            
                 
             if not controllers:
                 if hasattr(self.adapter, "virtualControllers"):
-                    curframe = inspect.currentframe()
-                    calframe = inspect.getouterframes(curframe, 2)
                     controllers=self.adapter.virtualControllers(path)
             
             for controller in controllers:
@@ -343,16 +305,17 @@ class sofaDataset():
                     smartProp=getattr(smartController, prop)
                     setattr(smartController, prop, self.adapter.virtualControllerProperty(nativeObject, prop))
                 
-            #self.log.info('Controller Updates ChangeReport controllers: %s' % controllers.keys())
-            
-            
-            
             if controllers:
                 changeReport=smartDevice.changeReport(controllers)
             else:
                 changeReport=None
                 
             if changeReport and not newDevice:
+                try:
+                    for prop in changeReport['payload']['change']['properties']:
+                        self.log.info('*> mqtt change: %s %s %s %s %s' % (changeReport['event']['endpoint']['cookie']['name'], changeReport['event']['endpoint']['endpointId'],prop['namespace'],prop['name'], prop['value'] ))
+                except:
+                    self.log.info('*> mqtt changereport: %s' % changeReport, exc_info=True)
                 await self.notify('sofa/updates',json.dumps(changeReport))
                 return changeReport
         
@@ -398,6 +361,13 @@ class sofaDataset():
             self.log.error('Error generating state report: %s' % path, exc_info=True)
             return {}
 
+    async def generateResponse(self, endpointId, correlationToken):
+            
+        try:
+            return self.getDeviceByEndpointId(endpointId).Response(correlationToken)
+        except:
+            self.log.error('Error generating response: %s' % endpointId, exc_info=True)
+            return {}
 
     async def requestReportState(self, endpointId, mqtt_topic=None):
         
@@ -458,15 +428,16 @@ class sofaDataset():
             self.log.error("Error requesting state for %s" % endpointId,exc_info=True)
             return {}
                
-
-    async def requestAlexaStateChange(self, data):
+    #async def requestAlexaStateChange(self, data):
+    async def sendDirectiveToAdapter(self, data):
     
         try:
             changereport={}
-            self.log.info('<< Sending Alexa state change request: %s' % data)
             adapter=data['directive']['endpoint']['endpointId'].split(":")[0]
+            directiveName=data['directive']['header']['name']
             url=self.adapters[adapter]['url']
             headers = { "Content-type": "text/xml" }
+            self.log.info('>> %s to %s: %s' % (directiveName, adapter, data))
             
             #self.log.info('URL: %s, Headers: %s, Data: %s' % (url,headers,data))
             
@@ -475,82 +446,48 @@ class sofaDataset():
                 changereport=await response.read()
                 if changereport and hasattr(self.adapter, "handleChangeReport"):
                     await self.adapter.handleChangeReport(json.loads(changereport.decode()))
-                    
+                self.log.info('<< %s %s response: %s' % (adapter, directiveName, changereport.decode()))    
                 return json.loads(changereport.decode())
 
         except:
             self.log.error("Error requesting state: %s" % data,exc_info=True)
         
 
-    async def requestStateChange(self, path, command, value):
-            
+    #async def handleStateChange(self, data):
+    async def handleDirective(self, data):
+        
         try:
-            self.log.info('This short form is deprecated and should be changed to use a full Alexa request: %s %s %s' % (path, command, value))
-            cmdMap={'BrightnessController':"SetBrightness", 'PowerController':'TurnOn', 'ColorTemperatureController':"SetColorTemperature", 'ColorController':'SetColor'}
-
-            if path.split("/")[1] not in self.localDevices:
-                self.log.warn('Could not identify endpointId for %s' % path.split("/")[1])
-                return False
-            else:
-                device=self.localDevices[path.split("/")[1]]
-                adapter=device['endpointId'].split(":")[0]
-                endpointId=device['endpointId']
-                controller=path.split("/")[2]
-                if len(path.split("/"))<4:
-                    payload={}
-                else:
-                    payload={ path.split("/")[3]: value}
-                    
-                if not command:
-                    command=cmdMap[controller]
-                    # love the exceptions
-                    if command=="TurnOn":
-                        payload={}
-                        if value==False:
-                            command="TurnOff"
-                            
-                url=self.adapters[adapter]['url']
-                        
-                header={"name": command, "namespace":"Alexa.%s" % controller, "payloadVersion":"3", "messageId": str(uuid.uuid1()), "correlationToken": str(uuid.uuid1())}
-                endpoint={"endpointId": endpointId, "cookie": {}, "scope":{ "type":"BearerToken", "token":"access-token-from-skill" }}
-                data=json.dumps({"directive": {"header": header, "endpoint": endpoint, "payload": payload }})
-                headers = { "Content-type": "text/xml" }
-                    
-                self.log.info('>> Sending state change request: %s' % data)
-                async with aiohttp.ClientSession() as client:
-                    response=await client.post(url, data=data, headers=headers)
-                    changereport=await response.read()
-                    if changereport and hasattr(self.adapter, "handleChangeReport"):
-                        await self.adapter.handleChangeReport(json.loads(changereport.decode()))
-        except:
-            self.log.error("Error requesting state for %s" % endpointId,exc_info=True)
+            endpointId=data['directive']['endpoint']['endpointId']
+            endpoint=data['directive']['endpoint']['endpointId'].split(":")[2]
+            controller=data['directive']['header']['namespace'].split('.')[1]
+            command=data['directive']['header']['name']
+            payload=data['directive']['payload']
+            correlationToken=data['directive']['header']['correlationToken']
+            cookie=data['directive']['endpoint']['cookie']
                 
-        
-    async def handleStateChange(self, data):
- 
-        endpointId=data['directive']['endpoint']['endpointId']
-        endpoint=data['directive']['endpoint']['endpointId'].split(":")[2]
-        controller=data['directive']['header']['namespace'].split('.')[1]
-        command=data['directive']['header']['name']
-        payload=data['directive']['payload']
+            #device=self.getDeviceByEndpointId(endpointId)
+    
+            changeReports=[]
             
-        #device=self.getDeviceByEndpointId(endpointId)
+            if hasattr(self.adapter, "nativeAlexaStateChange"):
+                changeReports=await self.adapter.nativeAlexaStateChange(data)
+            elif hasattr(self.adapter, "processDirective"):
+                response=await self.adapter.processDirective(endpointId, controller, command, payload, correlationToken=correlationToken, cookie=cookie)
+                return response
+            elif hasattr(self.adapter, "stateChange"):
+                changeReports=await self.adapter.stateChange(endpointId, controller, command, payload)
 
-        changeReports=[]
-        
-        if hasattr(self.adapter, "nativeAlexaStateChange"):
-            changeReports=await self.adapter.nativeAlexaStateChange(data)
-        elif hasattr(self.adapter, "stateChange"):
-            changeReports=await self.adapter.stateChange(endpointId, controller, command, payload)
+            if changeReports:
+                for report in changeReports:
+                    try:
+                        if report==None:
+                            self.log.info('No change report.  I blame dpath.merge for not getting deep key changes.')
+                        elif report['event']['endpoint']['endpointId']==data['directive']['endpoint']['endpointId']:
+                            return report
+                    except:
+                        self.log.info('Poorly formatted change report skipped: %s' % report, exc_info=True)
             
+        except:
+            self.log.error('Error handling directive', exc_info=True)
         
-        if changeReports:
-            for report in changeReports:
-                try:
-                    if report==None:
-                        self.log.info('No change report.  I blame dpath.merge for not getting deep key changes.')
-                    elif report['event']['endpoint']['endpointId']==data['directive']['endpoint']['endpointId']:
-                        return report
-                except:
-                    self.log.info('Poorly formatted change report skipped: %s' % report, exc_info=True)
         return {}

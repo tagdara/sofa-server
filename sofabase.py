@@ -227,7 +227,10 @@ class sofabase():
             self.loop.run_until_complete(self.adapter.start())
             #asyncio.ensure_future(self.adapter.start())
         else:
-            self.workload = asyncio.ensure_future(self.loop.run_in_executor(self.executor,self.adapter.start,))
+            try:
+                self.workload = asyncio.ensure_future(self.loop.run_in_executor(self.executor,self.adapter.start,))
+            except KeyboardInterrupt:  # pragma: no cover
+                pass
     
         self.restServer.adapter=self.adapter
         self.restServer.workloadData=self.adapter.dataset.data

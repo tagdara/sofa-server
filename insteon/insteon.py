@@ -188,20 +188,18 @@ class insteonCatalog():
                         
         try:
             self.log.info('Determining type for %s: %s %s' % (node['address'], node['pnode'], node['type']))
-            #if node['name'] in self.adapterconfig['exceptions']:
-            #    devtype=self.adapterconfig['exceptions'][node['name']]
-            if (node['pnode']!=node['address']) and node['type'] in devicetypes['light']:
+            devicetype=self.definitions.devicetypes[node['type']]
+        except:
+            self.log.error('Device type not found for node: %s' % node)
+            return 'unknown'
+        try:
+            if (node['pnode']!=node['address']) and devicetype in ['lightswitch','light']:
                 return "button"
-            elif node['type'] in devicetypes['button']:
-                return "button"
-            elif node['type'] in devicetypes['thermostat']:
-                return "thermostat"
-            elif node['type'] in devicetypes['device']:
-                return "device"
-            elif node['pnode']==node['address'] and (node['flag']=='128' or node['flag']=='144') and node['type'] in devicetypes['light']:
-                return "light"
+            # I'm sure there's a reason but it seems like this would work the same way
+            #elif node['pnode']==node['address'] and (node['flag']=='128' or node['flag']=='144') and devicetype in ['light','lightswitch']:
+            #    return devicetype
             else:
-                return "unknown"
+                return devicetype
         
         except:
             self.log.error('Error determining node type',exc_info=True)
@@ -227,8 +225,12 @@ class insteonCatalog():
                     else:
                         xnodes[xn][prop.tag]=prop.text
                 xnodes[xn]['devicetype']=self.getNodeType(xnodes[xn])
-                if xnodes[xn]['devicetype'] in ['light','thermostat']:
+                self.log.info('lightswitch? %s %s' % (xn, xnodes[xn]['devicetype']))
+                if xnodes[xn]['devicetype'] in ['light', 'lightswitch', 'thermostat']:
                     xnodes[xn]['property']=await self.getNodeProperties(xn)
+                if xnodes[xn]['devicetype']=='lightswitch':
+                    self.log.info('lightswitch %s' % xnodes[xn])
+                    xnodes[xn]['pressState']=='none'
                 if 'parent' in xnodes[xn]:
                     try:
                         if xnodes[xn]['parent'] in self.data['folder']:
@@ -263,6 +265,8 @@ class insteonCatalog():
                                         # fix for multi-button keypads
                                         if (item['pnode']!=item['address']):
                                             item['devicetype']='button'
+                                    if item['devicetype']=='lightswitch':
+                                        item['pressState']='none'
 
                             except:
                                 self.log.error('couldnt get property or find device type for: %s / %s' % (item['address'],item['type']), exc_info=True)
@@ -445,7 +449,7 @@ class insteonSubscription(asyncio.Protocol):
             if event['control']=='_0':
                 self.process_heartbeat(event)
             elif event['control']=='_1':
-                self.process_triggerevents(event)
+                await self.process_triggerevents(event)
             elif event['control']=='_3':
                 self.process_nodechanged(event)
             elif event['control']=='_4':
@@ -525,7 +529,7 @@ class insteonSubscription(asyncio.Protocol):
         except:
             self.log.warn('Error processing busy state: %s' % event,exc_info=True)
             
-    def process_triggerevents(self, event):
+    async def process_triggerevents(self, event):
         
         try:
             self.log.debug('Trigger Event > %s > %s' % (self.definitions.triggerEvents[event['action']], event['eventInfo']))
@@ -557,8 +561,9 @@ class insteonSubscription(asyncio.Protocol):
                         self.pendingChanges.remove(vEvent['node'])
                     if vEvent['command'] in ['DON','DOF','DFOF','DFON']:
                         self.log.info('Button command received on Insteon Bus: %s' % vEvent)
-                        asyncio.ensure_future(self.notify("insteon",json.dumps(vEvent)))
-
+                        self.log.info('Current native: %s' % self.dataset.nativeDevices['node'][vEvent['node']])
+                        await self.dataset.ingest({'node': { vEvent['node'] : {'pressState':vEvent['command'] }}})
+                        await self.dataset.ingest({'node': { vEvent['node'] : {'pressState':'none' }}})                          
         except:
             self.log.error('Error handling trigger event: %s' % event, exc_info=True)
 
@@ -728,14 +733,20 @@ class insteon(sofabase):
                         return self.dataset.addDevice(nativeObject['name'], devices.dimmableLight('insteon/node/%s' % deviceid, nativeObject['name']))
                     else:
                         return self.dataset.addDevice(nativeObject['name'], devices.simpleLight('insteon/node/%s' % deviceid, nativeObject['name']))
+                        
+                elif nativeObject["devicetype"]=="lightswitch":
+                    if nativeObject["property"]["ST"]["uom"].find("%")>-1:
+                        return self.dataset.addDevice(nativeObject['name'], devices.dimmableLightWithSwitch('insteon/node/%s' % deviceid, nativeObject['name']))
+                    else:
+                        return self.dataset.addDevice(nativeObject['name'], devices.simpleLightWithSwitch('insteon/node/%s' % deviceid, nativeObject['name']))
+                        
                 elif nativeObject["devicetype"]=="thermostat":
                     if nativeObject['pnode']==deviceid:
                         return self.dataset.addDevice(nativeObject['name'], devices.smartThermostat('insteon/node/%s' % deviceid, nativeObject['name'], supportedModes=["HEAT", "FAN", "OFF"] ))
             
             return False
 
-
-        async def stateChange(self, endpointId, controller, command, payload):
+        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
             
             try:
                 device=endpointId.split(":")[2]
@@ -753,45 +764,30 @@ class insteon(sofabase):
                     if command=="SetTargetTemperature":
                         nativeCommand['CLISPH']=int(payload['targetSetPoint'])*2
                     if command=="SetThermostatMode":
+                        nativeCommand['CLIMD']=self.definitions.thermostatModesByName(payload['thermostatMode'])
                         if payload['thermostatMode']=='OFF':
-                            nativeCommand['CLIMD']='0'
                             nativeCommand['CLIFS']='0'
-                        elif payload['thermostatMode']=='HEAT':
-                            nativeCommand['CLIMD']='1'
-                        elif payload['thermostatMode']=='COOL':
-                            nativeCommand['CLIMD']='2'
-                        elif payload['thermostatMode']=='AUTO':
-                            nativeCommand['CLIMD']='3'
-                        elif payload['thermostatMode']=='FAN':
-                            nativeCommand['CLIMD']='4'
-                        elif payload['thermostatMode']=='PROGRAM HEAT':
-                            nativeCommand['CLIMD']='5'
-                        elif payload['thermostatMode']=='PROGRAM COOL':
-                            nativeCommand['CLIMD']='6'
-                        elif payload['thermostatMode']=='PROGRAM AUTO':
-                            nativeCommand['CLIMD']='7'
-
 
                 if nativeCommand:
                     await self.setInsteon.setNode(device, nativeCommand)
-                    if device not in self.subscription.pendingChanges:
-                        self.subscription.pendingChanges.append(device)
                     await self.waitPendingChange(device)
                     updatedProperties=await self.insteonNodes.getNodeProperties(device)
-                    self.log.info('UpdatedProperties: %s' % updatedProperties)
-                    changeReport=await self.dataset.ingest({'node': { device: {'property':updatedProperties}}})
-                    self.log.info('Changereport: %s' % changeReport)
-                    return changeReport
+                    await self.dataset.ingest({'node': { device: {'property':updatedProperties}}})
+                    return await self.dataset.generateResponse(endpointId, correlationToken)
                 else:
                     self.log.info('Could not find a command for: %s %s %s %s' % (device, controller, command, payload) )
                     
             except:
                 self.log.error('Error executing state change.', exc_info=True)
-                
+
+
         async def waitPendingChange(self, device):
         
             # The ISY will send an update to the properties, but it takes .5-1 second to complete
             # Waitiing up to 2 seconds allows us to send back a change report for the change command
+            if device not in self.subscription.pendingChanges:
+                self.subscription.pendingChanges.append(device)
+
             count=0
             while device in self.subscription.pendingChanges and count<30:
                 #self.log.info('Waiting for update... %s %s' % (device, self.subscription.pendingChanges))
@@ -837,11 +833,15 @@ class insteon(sofabase):
                     detail=""
                     
                 controllerlist={}
-                if nativeObject["devicetype"]=="light":
+                
+                if nativeObject["devicetype"] in ["light", "lightswitch"]:
                     if detail=="property/ST/value" or detail=="":
                         controllerlist["PowerController"]=["powerState"]
                         if nativeObject["property"]["ST"]["uom"].find("%")>-1:
                             controllerlist["BrightnessController"]=["brightness"]
+                    
+                    if detail=='pressState':
+                        controllerlist["SwitchSensor"]=["pressState"]
                 
                 elif nativeObject["devicetype"]=="thermostat":
                     if detail=="property/ST/value" or detail=="":
@@ -886,6 +886,13 @@ class insteon(sofabase):
                         return "OFF"
                     return "ON" if int((float(nativeObj['property']['ST']['value'])/254)*100)>0 else "OFF"
 
+                elif controllerProp=='pressState':
+                    if nativeObj['pressState'] in ['DON','DFON']:
+                        return "ON"
+                    elif nativeObj['pressState'] in ['DOF','DFOF']:
+                        return "OFF"
+                    return "NONE"
+                    
 
                 elif controllerProp=='temperature':
                     if nativeObj['property']['ST']['value']==' ':

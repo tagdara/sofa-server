@@ -47,7 +47,11 @@ class logicServer(sofabase):
                 elif dp[0]=='scene':
                     result=await self.saveScene(dp[1], data)  
                 elif dp[0]=='schedule':
-                    result=await self.saveSchedule(dp[1], data)  
+                    result=await self.saveScheduleWeb(dp[1], data)  
+                elif dp[0]=='region':
+                    result=await self.saveRegion(dp[1], data)  
+                elif dp[0]=='area':
+                    result=await self.saveArea(dp[1], data)  
 
                 else:
                     return '{"status":"failed", "reason":"No Save Handler Available for type %s"}' % dp[0]
@@ -71,6 +75,10 @@ class logicServer(sofabase):
                     result=await self.delScene(dp[1])  
                 elif dp[0]=='schedule':
                     result=await self.delSchedule(dp[1])  
+                elif dp[0]=='region':
+                    result=await self.delRegion(dp[1])  
+                elif dp[0]=='area':
+                    result=await self.delRegion(dp[1])  
 
                 else:
                     return '{"status":"failed", "reason":"No Del Handler Available for type %s"}' % dp[0]
@@ -95,6 +103,11 @@ class logicServer(sofabase):
                     result=await self.saveScene(dp[1], data)  
                 elif dp[0]=='schedule':
                     result=await self.saveScheduleWeb(dp[1], data)  
+                elif dp[0]=='region':
+                    result=await self.saveRegion(dp[1], data)  
+                elif dp[0]=='area':
+                    result=await self.saveArea(dp[1], data)  
+
                 else:
                     return '{"status":"failed", "reason":"No Save Handler Available for type %s"}' % dp[0]
                     
@@ -127,19 +140,22 @@ class logicServer(sofabase):
                     self.automations[name]['actions']=data['actions']
                 if 'conditions' in data:
                     self.automations[name]['conditions']=data['conditions']
+                if 'triggers' in data:
+                    self.automations[name]['triggers']=data['triggers']
 
                 self.saveJSON('/opt/beta/config/automations.json',self.automations)
+                self.eventTriggers=self.buildTriggerList()
                 return True
             except:
                 self.log.error('Error saving automation: %s %s' % (name, data), exc_info=True)
                 return False
 
-        async def saveScene(self, area, name, data):
+        async def saveScene(self, name, data):
             
             try:
                 data=json.loads(data)
-                self.newscenes[name]=data
-                self.saveJSON('/opt/beta/config/scenes.json',self.automations)
+                self.scenes[name]=data
+                self.saveJSON('/opt/beta/config/scenes.json',self.scenes)
                 return True
             except:
                 self.log.error('Error saving automation: %s %s' % (name, data), exc_info=True)
@@ -165,7 +181,31 @@ class logicServer(sofabase):
                     del self.schedule[name]
                 
                 self.saveJSON('/opt/beta/config/schedule.json',self.schedule)
-                await self.calculateNextRun()
+                self.calculateNextRun()
+                return True
+            except:
+                self.log.error('Error deleting automation: %s' % name, exc_info=True)
+                return False
+
+        async def delRegion(self, name):
+            
+            try:
+                if name in self.regions:
+                    del self.regions[name]
+                
+                self.saveJSON('/opt/beta/config/regions.json',self.regions)
+                return True
+            except:
+                self.log.error('Error deleting automation: %s' % name, exc_info=True)
+                return False
+
+        async def delArea(self, name):
+            
+            try:
+                if name in self.areas:
+                    del self.areas[name]
+                
+                self.saveJSON('/opt/beta/config/areas.json',self.areas)
                 return True
             except:
                 self.log.error('Error deleting automation: %s' % name, exc_info=True)
@@ -181,30 +221,6 @@ class logicServer(sofabase):
                 self.log.error('Error loading pattern: %s' % jsonfilename,exc_info=True)
                 return {}
 
-        async def saveSchedule(self, name, data):
-            
-            try:
-                self.log.info('Saving Schedule: %s %s' % (name, data))
-                if type(data)==str:
-                    data=json.loads(data)
-                
-                self.log.info('Saving: %s %s' % (name, data))
-                if name not in self.schedule:
-                    self.log.info('not in sched')
-                    self.schedule[name]={"lastrun": "never", "enabled": True}
-                else:
-                    self.schedule[name]['lastrun']=data['lastrun']
-                    self.schedule[name]['enabled']=data['enabled']
-                self.schedule[name]['start']=data['start']
-                self.schedule[name]['type']=data['type']
-                self.schedule[name]['schedule']=data['schedule']
-                self.schedule[name]['action']=data['action']
-
-                self.saveJSON('/opt/beta/config/schedule.json',self.schedule)
-                return True
-            except:
-                self.log.error('Error saving schedule: %s %s' % (name, data), exc_info=True)
-                return False
 
         async def saveScheduleWeb(self, name, data):
             
@@ -216,11 +232,54 @@ class logicServer(sofabase):
                 self.schedule[name]=data
 
                 self.saveJSON('/opt/beta/config/schedule.json',self.schedule)
-                await self.calculateNextRun()
+                self.calculateNextRun()
                 return True
             except:
                 self.log.error('Error saving schedule: %s %s' % (name, data), exc_info=True)
                 return False
+
+        async def saveArea(self, name, data):
+            
+            try:
+                self.log.info('Saving Area: %s %s' % (name, data))
+                if type(data)==str:
+                    data=json.loads(data)
+                    
+                self.areas[name]=data
+
+                self.saveJSON('/opt/beta/config/areas.json',self.areas)
+
+                return True
+            except:
+                self.log.error('Error saving schedule: %s %s' % (name, data), exc_info=True)
+                return False
+
+        async def saveRegion(self, name, data):
+            
+            try:
+                if type(data)==str:
+                    data=json.loads(data)
+                    
+                self.log.info('Saving Region: %s %s' % (name, data['areas'].keys()))
+                    
+                if 'areas' in data:
+                    if type(data['areas'])!=list:
+                        data={'areas': list(data['areas'].keys()) }
+                    else:
+                        data={ 'areas': data['areas'] }
+                    
+                    self.regions[name]=data
+
+                    self.saveJSON('/opt/beta/config/regions.json',self.regions)
+                    return True
+                else:
+                    self.log.error('!~ No area data in region %s save: %s' % (name,data))
+                    return False
+                    
+            except:
+                self.log.error('Error saving region: %s %s' % (name, data), exc_info=True)
+                return False
+
 
         def fixdate(self, datetext):
             try:
@@ -235,7 +294,7 @@ class logicServer(sofabase):
                 
             
 
-        async def calculateNextRun(self, name=None):
+        def calculateNextRun(self, name=None):
             
             # This is all prototype code and should be cleaned up once it is functional
             
@@ -271,7 +330,7 @@ class logicServer(sofabase):
                                     
                             if self.schedule[sched]['lastrun']!='never':
                                 lastrun=self.fixdate(self.schedule[sched]['lastrun'])
-                                if lastrun.replace(hour=runtime.hour, minute=runtime.minute)+datetime.timedelta(days=1) > startdate:
+                                if lastrun.replace(hour=runtime.hour, minute=runtime.minute)+datetime.timedelta(days=1) >= startdate:
                                     startdate=lastrun.replace(hour=runtime.hour, minute=runtime.minute)+datetime.timedelta(days=1)
                                     
                             while wda[startdate.weekday()] not in self.schedule[sched]['schedule']['days']:
@@ -283,27 +342,29 @@ class logicServer(sofabase):
                         elif self.schedule[sched]['schedule']['daysType']=='interval':
                             if startdate>now:
                                 #self.log.info('Starts in the future: %s' % self.schedule[sched]['start'])
-                                if startdate.replace(hour=runtime.hour, minute=runtime.minute) > startdate:
+                                if startdate.replace(hour=runtime.hour, minute=runtime.minute) >= startdate:
                                     startdate=startdate.replace(hour=runtime.hour, minute=runtime.minute)
                                 else:
                                     startdate=startdate.replace(hour=runtime.hour, minute=runtime.minute)+datetime.timedelta(days=1)
                             else:
                                 delta = now - startdate
                                 interval=int(self.schedule[sched]['schedule']['interval'])
-                                self.log.info('Number of days since start: %s / %s / %s ' % ( delta.days, interval, delta.days/interval))
-                                if startdate.replace(hour=runtime.hour, minute=runtime.minute) > startdate:
+                                if startdate.replace(hour=runtime.hour, minute=runtime.minute) >= startdate:
                                     startdate=startdate.replace(hour=runtime.hour, minute=runtime.minute)
                                 else:
                                     startdate=startdate.replace(hour=runtime.hour, minute=runtime.minute)+datetime.timedelta(days=1)
                                 
                                 if self.schedule[sched]['lastrun']!='never':
                                     lastrun=self.fixdate(self.schedule[sched]['lastrun'])
-                                    if lastrun.replace(hour=runtime.hour, minute=runtime.minute) > startdate:
+                                    if lastrun.replace(hour=runtime.hour, minute=runtime.minute) >= startdate:
                                         startdate=lastrun.replace(hour=runtime.hour, minute=runtime.minute)
                                 
                                 while startdate < now:
                                     startdate=startdate+datetime.timedelta(days=interval)
-
+                                    
+                            self.log.info('** %s next start %s %s %s' % (sched, wda[startdate.weekday()], startdate, self.schedule[sched]))
+                            nextruns[sched]=startdate
+ 
                     elif self.schedule[sched]['type']=='interval':  
                         startdate = self.fixdate(self.schedule[sched]['start'])
                         if startdate>now:
@@ -367,55 +428,25 @@ class logicServer(sofabase):
             except:
                 self.log.error('Error adding logic commands', exc_info=True)
                 
-        def upgradeScenes(self):
-            
-            try:
-                self.newareas={}
-                self.newscenes={}
-                for area in self.scenes:
-                    self.newareas[area]={}
-                    if area in self.areas:
-                        self.newareas[area]=self.areas[area]
-                        if 'scenes' not in self.newareas[area]:
-                            self.newareas[area]['scenes']={}
-                        self.newareas[area]['shortcuts']={}
-                        for sc in self.scenes[area]['shortcuts']:
-                            self.newareas[area]['shortcuts'][sc]=area + " "+ self.scenes[area]['shortcuts'][sc]
-                            
-                        for scene in self.scenes[area]['scenes']:
-                            self.newareas[area]['scenes'][area+" "+scene]={'endpointId': "logic:scene:"+area+" "+scene}
-                            self.newscenes[area+" "+scene]=self.scenes[area]['scenes'][scene]
-                            for light in self.newscenes[area+" "+scene]:
-                                if 'set' in self.newscenes[area+" "+scene][light]:
-                                    self.newscenes[area+" "+scene][light]={"brightness": self.newscenes[area+" "+scene][light]['set']}
-                self.saveJSON('/opt/beta/config/areas.json', self.newareas)
-                self.saveJSON('/opt/beta/config/scenes.json', self.newscenes)   
-
-            except:
-                self.log.error('Error upgrading scene data', exc_info=True)
-                        
-                        
-                    
-            
+                
         async def start(self):
             self.polltime=1
             self.log.info('.. Starting Logic Manager')
             try:
                 self.mailconfig=self.loadJSON('mail')
                 self.mailsender=mailSender(self.log, self.mailconfig)
-                self.areas=self.loadJSON('areamap')
-                self.automations=self.loadJSON('automations')
-                self.scenes=self.loadJSON('scenemap')
-                self.upgradeScenes()
-                self.regions=self.loadJSON('regions')
-                self.schedule=self.loadJSON('schedule')
-                await self.calculateNextRun()
-                self.events=self.loadJSON('events')
                 self.users=self.loadJSON('users')
                 self.modes=self.loadJSON('modes')
+                self.areas=self.loadJSON('areas')
+                self.scenes=self.loadJSON('scenes')
+                self.automations=self.loadJSON('automations')
+                self.regions=self.loadJSON('regions')
+                self.schedule=self.loadJSON('schedule')
                 self.virtualDevices=self.loadJSON('virtualDevices')
                 self.log.info('self.users: %s' % self.users)
-                self.eventTriggers=self.buildTriggerList(self.events)
+                self.eventTriggers=self.buildTriggerList()
+                self.calculateNextRun()
+
                 self.capturedDevices={}
                 await self.buildLogicCommand()
                 
@@ -423,27 +454,30 @@ class logicServer(sofabase):
                     await self.dataset.ingest({"activity": { auto : self.automations[auto] }})
 
                 for mode in self.modes:
-                    self.log.info('Mode: %s - %s' % (mode,self.modes[mode]))
                     await self.dataset.ingest({"mode": { mode : self.modes[mode] }})
                     
-                for area in self.scenes:
-                    for scene in self.scenes[area]['scenes']:
-                        await self.dataset.ingest({"scene": { "%s %s" % (area, scene) : self.scenes[area]['scenes'][scene] }})
+                for scene in self.scenes:
+                    await self.dataset.ingest({"scene": { scene : self.scenes[scene] }})
                 
                 await self.pollSchedule()
-                
+            
+            except GeneratorExit:
+                self.running=False    
             except:
                 self.log.error('Error loading cached devices', exc_info=True)
                 
         async def pollSchedule(self):
             
-            while True:
+            while self.running:
                 try:
-                    #self.log.info("Polling schedule data")
                     await self.checkScheduledItems()
                     await asyncio.sleep(self.polltime)
+                except GeneratorExit:
+                    self.running=False
                 except:
                     self.log.error('Error polling schedule', exc_info=True)
+                    self.running=False
+
                 
         async def checkScheduledItems(self):
             try:
@@ -459,45 +493,6 @@ class logicServer(sofabase):
                 self.log.error('Error checking scheduled items', exc_info=True)
                     
                 
-        async def OldcheckScheduledItems(self):
-        
-            try:
-        
-                intervalConversion={'seconds':1, 'minutes':60, 'hours':3600, 'days':86400}
-                now = datetime.datetime.now()
-            
-                for item in self.schedule:
-                    if self.schedule[item]['enabled']==True:
-                        try:
-                            schedtime=datetime.datetime.strptime(self.schedule[item]['start'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                        except:
-                            schedtime=datetime.datetime.strptime(self.schedule[item]['start'], '%Y-%m-%dT%H:%MZ')
-                        if now>=schedtime:
-                            #self.log.info('After Launch Time: %s' % self.schedule[item]['start'])
-                            intervalsec=int(self.schedule[item]['interval'])*intervalConversion[self.schedule[item]['intervalunit']]
-                            if self.schedule[item]['lastrun']!='never':
-                                #self.log.info('Using lastrun: %s' % self.schedule[item]['lastrun'])
-                                delta = now-datetime.datetime.strptime(self.schedule[item]['lastrun'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                            else:
-                                #self.log.info('Using start: %s instead of %s' % (self.schedule[item]['start'],self.schedule[item]['lastrun']))
-                                delta = now-datetime.datetime.strptime(self.schedule[item]['start'], '%Y-%m-%dT%H:%M:%S.%fZ')
-                            
-                            #self.log.info('Delta vs intervalsec: %s %s' % (delta.seconds, intervalsec))
-                            if delta.seconds>intervalsec or self.schedule[item]['lastrun']=='never':
-                                self.log.info('Event to be triggered on schedule: %s %s' % (item, self.schedule[item]))
-                                action=self.schedule[item]['action']
-                                await self.sendAlexaCommand(action['command'], action['controller'], action['endpointId'], action['value'])
-                                self.schedule[item]['lastrun']=now.isoformat()+"Z"
-                                try:
-                                    await self.saveSchedule(item, self.schedule[item])
-                                except:
-                                    self.log.error('Error saving schedule  %s' % item, exc_info=True)
-            
-            except:
-                self.log.error('Error checking schedules', exc_info=True)
-
-
-
         # Adapter Overlays that will be called from dataset
         def addSmartDevice(self, path):
             
@@ -554,9 +549,11 @@ class logicServer(sofabase):
             
             return False
 
-        async def sendAlexaCommand(self, command, controller, endpointId, payloadvalue=None):
+
+        async def sendAlexaCommand(self, command, controller, endpointId, payloadvalue=None, cookie={}, trigger={}):
             
             try:
+                
                 #self.log.info('obj: %s' % getattr(devices,controller+'Interface')().commands)
                 objcommands=getattr(devices,controller+'Interface')().commands
                 if command in objcommands:
@@ -567,12 +564,16 @@ class logicServer(sofabase):
                 for prop in payload:
                     if payload[prop]=='value':
                         payload[prop]=payloadvalue
+                        
+                if trigger:
+                    cookie={ "trigger": trigger }
+
 
                 header={"name": command, "namespace":"Alexa." + controller, "payloadVersion":"3", "messageId": str(uuid.uuid1()), "correlationToken": str(uuid.uuid1())}
-                endpoint={"endpointId": endpointId, "cookie": {}, "scope":{ "type":"BearerToken", "token":"access-token-from-skill" }}
+                endpoint={"endpointId": endpointId, "cookie": cookie, "scope":{ "type":"BearerToken", "token":"access-token-from-skill" }}
                 data={"directive": {"header": header, "endpoint": endpoint, "payload": payload }}
                 
-                changereport=await self.dataset.requestAlexaStateChange(data)
+                changereport=await self.dataset.sendDirectiveToAdapter(data)
                 return changereport
             except:
                 self.log.error('Error executing Alexa Command', exc_info=True)
@@ -639,7 +640,7 @@ class logicServer(sofabase):
             
             
 
-        async def runActivityWait(self, activityName):
+        async def runActivityWait(self, activityName, trigger={}):
             
             try:
                 devstateCache={}
@@ -684,22 +685,35 @@ class logicServer(sofabase):
                     if not conditionMatch:           
                         self.log.info('Did not meet conditions')
                         return False
-                    else:
-                        self.log.info('Matched defined conditions')
                         
                 activity=self.automations[activityName]['actions']
                 chunk=[]
                 for action in activity:
-                    if action['command']=='Wait':
+                    if action['command']=="Delay":
+                        chunk.append(action)
+                        result=await self.runActivityChunk(chunk)
+                        self.log.info('Result of Pre-Delay chunk: %s' % result)
+                        chunk=[]
+                    elif action['command']=="Wait":
                         result=await self.runActivityChunk(chunk)
                         self.log.info('Result of chunk: %s' % result)
                         chunk=[]
+                    elif action['command']=="Alert":
+                        alert=action.copy()
+                        if trigger:
+                            if 'deviceName' in trigger:
+                                alert['value']=alert['value'].replace('[deviceName]',trigger['deviceName'])
+                            if 'value' in trigger:
+                                alert['value']=alert['value'].replace('[value]',trigger['value'])
+                        self.log.info('Result of Alert Macro: %s vs %s / trigger: %s ' % (alert,action, trigger))
+                        chunk.append(alert)
+                                
                     else:
                         chunk.append(action)
                 if chunk:
                     result=await self.runActivityChunk(chunk)
                     
-                self.log.info('Done with all chunks')
+                return result
                 
             except:
                 self.log.error('Error with chunky Activity', exc_info=True)
@@ -713,32 +727,17 @@ class logicServer(sofabase):
             except:
                 self.log.error('Error executing activity', exc_info=True)
             
-
-        async def runActivity(self, activityName ):
+        async def runScene(self, sceneName):
         
             try:
-                activity=self.automations[activityName]['actions']
-                allacts = asyncio.gather(*[self.sendAlexaCommand(action['command'], action['controller'], action['endpointId'], action['value']) for action in activity ])
-                self.log.info('activity %s result: %s' % (activityName, allacts))
-                return allacts
-            except:
-                self.log.error('Error executing activity', exc_info=True)
-
-        async def runScene(self, area, sceneName):
-        
-            try:
-                scene=self.scenes[area]['scenes'][sceneName]
+                scene=self.scenes[sceneName]
                 acts=[]
                 
                 for light in scene:
-                    if light in self.areas[area]['lights']:
-                        endpointId=self.areas[area]['lights'][light]['endpointId']
-                        if int(scene[light]['set'])==0:
-                            acts.append({'command':'TurnOff', 'controller':'PowerController', 'endpointId':endpointId, 'value': None})
-                        else:
-                            acts.append({'command':'SetBrightness', 'controller':'BrightnessController', 'endpointId':endpointId, 'value': int(scene[light]['set']) } )
+                    if int(scene[light]['brightness'])==0:
+                        acts.append({'command':'TurnOff', 'controller':'PowerController', 'endpointId':light, 'value': None})
                     else:
-                        self.log.info('Scene commands without an endpoint ID are not supported: %s %s' % (light, self.areas[area]['lights']))
+                        acts.append({'command':'SetBrightness', 'controller':'BrightnessController', 'endpointId':light, 'value': int(scene[light]['brightness']) } )
                         
                 allacts = await asyncio.gather(*[self.sendAlexaCommand(action['command'], action['controller'], action['endpointId'], action['value']) for action in acts ])
                 self.log.info('scene %s result: %s' % (sceneName, allacts))    
@@ -777,7 +776,7 @@ class logicServer(sofabase):
             try:
                 if message.startswith('Garage Door') or message.startswith('Garage Side Door'):
                     camera='driveway'
-                elif message.startswith('Doorbell') or message.startswith('Front Door') or message.startswith('Office Window'):
+                elif message.startswith('Doorbell') or message.startswith('Front Door') or message.startswith('Office Window') or message.startswith('Front Gate'):
                     camera='frontdoor'
                 elif message.startswith('Stairs Door'):
                     camera='garage'
@@ -794,12 +793,82 @@ class logicServer(sofabase):
             except:
                 self.log.error('Error sending alert', exc_info=True)
                         
+        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
+            
+            # CHEESE: This needs to be coded to properly handle activation responses and to move from changereports
+            # 
+            
+            try:
+                device=endpointId.split(":")[2]
+                nativeCommand={}
+                
+                if controller=="PowerController":
+                    if device in self.modes:
+                        self.log.info('Modes: %s ' % self.modes)
+                        if command=="TurnOn":
+                            changes=await self.dataset.ingest({ "mode" : { device: {'active':True }}})
+                            self.saveJSON('/opt/beta/config/modes.json',self.modes)
+                        if command=="TurnOff":
+                            
+                            changes=await self.dataset.ingest({ "mode" : { device: {'active':False }}})
+                            self.saveJSON('/opt/beta/config/modes.json',self.modes)
+                        self.log.info('Changes: %s' % changes)
+                        response=await self.dataset.generateResponse(endpointId, correlationToken)
+                        return response
+                        
+                
+                if controller=="LogicController":
+                    if command=='Alert':
+                        self.log.info('Sending Alert: %s' % payload['message'])
+                        await self.runAlert(payload['message'])
+                    if command=='Delay':
+                        self.log.info('Delaying for %s seconds' % payload['duration'])
+                        await asyncio.sleep(int(payload['duration']))
+                    if command=='Capture':
+                        await self.captureDeviceState(payload['device'])
+                    if command=='Reset':
+                        await self.resetCapturedDeviceState(payload['device'])
+                    else:
+                        # Not a supported command then
+                        return {}
+                        
+                    response=await self.dataset.generateResponse(endpointId, correlationToken)
+                    return response
+                        
+                if controller=="SceneController":
+                    if command=="Activate":
+                        trigger={}
+                        if 'trigger' in cookie:
+                            trigger=cookie['trigger']
 
-        async def stateChange(self, endpointId, controller, command, payload):
+                        if device in self.automations:
+                            await self.runActivityWait(device, trigger)
+                            # This should return the scene started ack
+                        elif device in self.scenes:
+                            await self.runScene(device)
+                            # This should return the scene started ack - i took out the await so maybe the response will go through?
+                        else:
+                            self.log.info('Could not find scene or activity: %s' % device)
+                            return {}
+                    
+                        response=await self.dataset.generateResponse(endpointId, correlationToken)
+                        return response
+                            
+                            
+                self.log.info('Could not find any supported action: %s' % device)
+                return {}
+                
+            except:
+                self.log.error('Error applying state change', exc_info=True)
+                return []
+                
+                
+
+        async def xstateChange(self, endpointId, controller, command, payload):
     
             try:
                 device=endpointId.split(":")[2]
-                self.log.info('Statechange: %s %s %s %s' % (device, controller, command, payload))
+                #self.log.info('Directive: %s %s %s %s' % (device, controller, command, payload))
 
                 if controller=="PowerController":
                     if device in self.modes:
@@ -821,7 +890,8 @@ class logicServer(sofabase):
                         await self.runAlert(payload['message'])
                         return []
                     if command=='Delay':
-                        asyncio.sleep(payload['duration'])
+                        self.log.info('Delaying for %s seconds' % payload['duration'])
+                        await asyncio.sleep(int(payload['duration']))
                         return []
                     if command=='Capture':
                         await self.captureDeviceState(payload['device'])
@@ -832,24 +902,14 @@ class logicServer(sofabase):
                         
                 if controller=="SceneController":
                     if command=="Activate":
-                        # This is heavy handed but it will make sure the current data is loaded
-                        # Until I can implement saving through this adapter
-                        
-                        # i did i think
-                        # self.automations=self.loadJSON('automations')
-                        self.scenes=self.loadJSON('scenemap')
-                           
                         if device in self.automations:
                             await self.runActivityWait(device)
-                            # This should return the scene ack
+                            # This should return the scene started ack
                             return []
-                        else:
-                            for area in self.scenes:
-                                for scene in self.scenes[area]['scenes']:
-                                    if ('%s %s' % (area,scene))==device:
-                                        await self.runScene(area,scene)
-                                        # This should return the scene ack
-                                        return []
+                        elif device in self.scenes:
+                            await self.runScene(device)
+                            # This should return the scene started ack
+                            return []
                             
                 self.log.info('Could not find scene or activity: %s' % device)
                 return []
@@ -882,81 +942,80 @@ class logicServer(sofabase):
         def virtualControllerProperty(self, nativeObj, controllerProp):
             
             try:
-                self.log.info('Checking controller prop: %s %s' % (controllerProp, nativeObj))
                 if controllerProp=='powerState':
                     return "ON" if nativeObj['active'] else "OFF"
+                if controllerProp=='time':
+                    return datetime.datetime.now()
+
             except:
                 self.log.error('Error converting virtual controller property: %s %s' % (controllerProp, nativeObj), exc_info=True)
                 return False
 
-        def buildTriggerList(self, events):
+        def buildTriggerList(self):
             
             triggerlist={}
             try:
-                for event in events:
-                    if 'triggers' in events[event]:
-                        for trigger in events[event]['triggers']:
-                            trigname="%s.%s.%s=%s" % (trigger['deviceName'], trigger['controller'], trigger['name'], trigger['value'])
+                for automation in self.automations:
+                    if 'triggers' in self.automations[automation]:
+                        for trigger in self.automations[automation]['triggers']:
+                            trigname="%s.%s.%s=%s" % (trigger['deviceName'], trigger['controller'], trigger['propertyName'], trigger['value'])
                             if trigname not in triggerlist:
                                 triggerlist[trigname]=[]
-                            triggerlist[trigname].append(event)
+                            triggerlist[trigname].append({ 'name':automation, 'type':'automation' })
                             
-                self.log.info('Triggerlist: %s' % triggerlist)
+                self.log.info('Triggers: %s' % len(triggerlist))
             except:
                 self.log.error('Error calculating trigger shorthand:', exc_info=True)
             
             return triggerlist
-                            
-        async def runEvents(self, events, trigger=''):
-            
-            try:
-                for event in events:
-                    action=self.events[event]['action']
-                    
-                    # cheese for alerts until the data type passing of multiple parameters can be fixed and 
-                    # allowing for macros to condense it all into one trigger
-                    if action['controller']=='LogicController' and action['command']=='Alert':
-                        self.log.info('Alert action running from trigger: %s' % trigger)
-                        aval=action['value'].replace('[deviceName]',trigger.split('.')[0])
-                        aval=aval.replace('[value]',trigger.split('=')[1])
-                    else:
-                        aval=action['value']
-                    
-                    self.log.info('Running event %s action: %s %s' % (event, aval, action))
-                    await self.sendAlexaCommand(action['command'], action['controller'], action['endpointId'], aval)
-            except:
-                self.log.error('Error running events: %s' % events, exc_info=True)
 
+        async def runEvents(self, events, change, trigger=''):
+        
+            try:
+                actions=[]
+                for event in events:
+                    self.log.info('.. Triggered Event: %s' % events)
+                    if event['type']=='event':
+                        action=self.events[event['name']]['action']
+                    elif event['type']=='automation':
+                        action={"controller": "SceneController", "command":"Activate", "endpointId":"logic:activity:"+event['name']}
+                    
+                    if "value" in action:
+                        aval=action['value']
+                    else:
+                        action['value']=''
+                        
+                    actions.append(action)
+                    
+                allacts = await asyncio.gather(*[self.sendAlexaCommand(action['command'], action['controller'], action['endpointId'], action['value'], trigger=change) for action in actions ])
+                self.log.info('.. Trigger %s result: %s' % (change, allacts))
+                return allacts
+            except:
+                self.log.error('Error executing event reactions', exc_info=True)
+                            
        
         async def virtualChangeHandler(self, deviceName, change):
             
             try:
+                change['deviceName']=deviceName
                 #self.log.info('Change detected for %s: %s' % (deviceName, change))
                 trigname="%s.%s.%s=%s" % (deviceName, change['namespace'].split('.')[1], change['name'], change['value'])
                 if trigname in self.eventTriggers:
                     self.log.info('!+ This is a trigger we are watching for: %s %s %s' % (trigname, deviceName, change))
-                    await self.runEvents(self.eventTriggers[trigname],trigname)
+                    await self.runEvents(self.eventTriggers[trigname], change, trigname)
             except:
                 self.log.error('Error in virtual change handler: %s %s' % (deviceName, change), exc_info=True)
 
         async def buildRegion(self, thisRegion=None):
             
             try:
-                
-                
-                if thisRegion:
-                    reg={thisRegion: self.regions[thisRegion].copy()}
-                else:
-                    reg=self.regions.copy()
-                self.log.info('Reg: %s' % reg)
-                for region in reg:
-                    self.log.info('Working on region %s' % region)
-                    reg[region]['areas']={}
-                    reg[region]['scenes']={}
-                    for room in reg[region]['rooms']:
-                        reg[region]['areas'][room]=self.newareas[room]
-                        for scene in self.newareas[room]['scenes']:
-                            reg[region]['scenes'][scene]=self.newscenes[scene]
+                reg={}
+                for region in self.regions:
+                    reg[region]={ 'scenes': {}, 'areas':{} }
+                    for area in self.regions[region]['areas']:
+                        reg[region]['areas'][area]=self.areas[area]
+                        for scene in self.areas[area]['scenes']:
+                            reg[region]['scenes'][scene]=self.scenes[scene]
                             
                 if thisRegion:
                     return reg[thisRegion]
@@ -977,13 +1036,14 @@ class logicServer(sofabase):
                     return self.schedule
                 
                 if itempath=="scenes":
-                    return self.newscenes
+                    return self.scenes
 
                 if itempath=="areas":
-                    return self.newareas
+                    return self.areas
 
                 if itempath=="events":
-                    return self.events
+                    self.loadEvents()
+                    return {"events": self.events, "triggers": self.eventTriggers}
                     
                 if itempath=="regions":
                     return await self.buildRegion()
@@ -996,13 +1056,16 @@ class logicServer(sofabase):
                     for auto in self.automations:
                         if 'conditions' not in self.automations[auto]:
                             self.automations[auto]['conditions']=[]
-                        al[auto]={ 'lastrun': self.automations[auto]['lastrun'], 'actionCount': len(self.automations[auto]['actions']), 'conditionCount': len(self.automations[auto]['conditions']), 'endpointId':'logic:activty:%s' % auto }
+                        if 'triggers' not in self.automations[auto]:
+                            self.automations[auto]['triggers']=[]
+
+                        al[auto]={ 'lastrun': self.automations[auto]['lastrun'], 'triggerCount': len(self.automations[auto]['triggers']), 'actionCount': len(self.automations[auto]['actions']), 'conditionCount': len(self.automations[auto]['conditions']), 'endpointId':'logic:activty:%s' % auto }
                     return al
 
                 if itempath=="arealist":
                     al={}
                     for area in self.areas:
-                        al[area]={ 'lights': self.areas[area]['lights'] }
+                        al[area]={ 'lights': self.areas[area]['lights'], 'scenes': self.areas[area]['lights'] }
                     return al
 
                 if itempath=="regionlist":
@@ -1010,7 +1073,6 @@ class logicServer(sofabase):
                     for region in self.regions:
                         al[region]={ 'count': len(self.regions[region]['rooms']) }
                     return al
-
                     
                 if '/' in itempath:
                     ip=itempath.split('/')
@@ -1018,16 +1080,19 @@ class logicServer(sofabase):
                         if ip[1] in self.automations:
                             return self.automations[ip[1]]
                     if ip[0]=='region':
-                        self.log.info('Regions: %s %s' % (ip[1],self.regions))
                         if ip[1] in self.regions:
                             return await self.buildRegion(ip[1])
                             #return self.regions[ip[1]]['rooms']
                     if ip[0]=='area':
                         if ip[1] in self.areas:
+                            return self.areas[ip[1]]
+
+                    if ip[0]=='arealights':
+                        if ip[1] in self.areas:
                             return self.areas[ip[1]]['lights']
                     if ip[0]=='areascenes':
-                        if ip[1] in self.scenes:
-                            result=self.scenes[ip[1]] 
+                        if ip[1] in self.areas:
+                            return self.areas[ip[1]]['scenes']
                         else:
                             result={}
 
@@ -1039,9 +1104,7 @@ class logicServer(sofabase):
 
             except:
                 self.log.error('Error getting virtual list for %s' % itempath, exc_info=True)
-
-
-        
+                
 
 if __name__ == '__main__':
     adapter=logicServer(port=8096, adaptername='logic', isAsync=True)

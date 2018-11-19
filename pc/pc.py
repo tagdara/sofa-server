@@ -82,7 +82,8 @@ class pcServer(sofabase):
                                     "payload": {}
                                 }
                             }
-                            await self.dataset.requestAlexaStateChange(command)
+                            await self.dataset.sendDirectiveToAdapter(command)
+                            #await self.dataset.requestAlexaStateChange(command)
                         
             except:
                 self.log.error('Error handling Adapter MQTT Data', exc_info=True)
@@ -138,33 +139,42 @@ class pcServer(sofabase):
             
             return False
             
-
-        async def nativeAlexaStateChange(self, event):
+        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
     
             try:
-                if 'directive' in event:
-                    pcname=event['directive']['endpoint']['endpointId'].split(':')[2]
-                    if event['directive']['header']['name']=='TurnOn':
-                        # should probably check to see if the machine is on, and if so also send the command so that
-                        # things like unlock or wake-from-just-monitor-sleep will work without WOL
-                        self.log.info('Alexa TurnOn Command')
-                        if pcname in self.dataset.config['cachedMacAddresses']:
-                            self.log.info('Sending Wake On LAN packet to: %s %s' % (pcname, self.dataset.config['cachedMacAddresses'][pcname]))
-                            self.wakeonlan(self.dataset.config['cachedMacAddresses'][pcname])
-                            return []
-                        else:
-                            self.log.info('Did not find MAC address for %s in %s' % ( pcname, self.dataset.config['cachedMacAddresses']))
-                    elif event['directive']['header']['name']=='TurnOff':         
-                        cmd={"op":"set", "property":"powerState", "value":"OFF", 'device': pcname }
-                        await self.notify('sofa/pc', json.dumps(cmd))
-                    elif event['directive']['header']['name']=='Lock':         
-                        cmd={"op":"set", "property":"lockState", "value":"LOCKED", 'device': pcname }
-                        await self.notify('sofa/pc', json.dumps(cmd))
-                    elif event['directive']['header']['name']=='Unlock':
-                        cmd={"op":"set", "property":"lockState", "value":"UNLOCKED", 'device': pcname }
-                        await self.notify('sofa/pc', json.dumps(cmd))
+                devicetype=endpointId.split(":")[1]
+                device=endpointId.split(":")[2]
+                nativeCommand=False
+                self.log.info("%s %s %s %s %s" % (endpointId, controller, command, payload, correlationToken))
+                if command=='TurnOn':
+                    # should probably check to see if the machine is on, and if so also send the command so that
+                    # things like unlock or wake-from-just-monitor-sleep will work without WOL
+                    self.log.info('Alexa TurnOn Command')
+                    if device in self.dataset.config['cachedMacAddresses']:
+                        self.log.info('Sending Wake On LAN packet to: %s %s' % (device, self.dataset.config['cachedMacAddresses'][device]))
+                        self.wakeonlan(self.dataset.config['cachedMacAddresses'][device])
+                    else:
+                        self.log.info('Did not find MAC address for %s in %s' % ( device, self.dataset.config['cachedMacAddresses']))
+                        return {}
 
-                return []
+
+                elif command=='TurnOff':
+                    cmd={"op":"set", "property":"powerState", "value":"OFF", 'device': device }
+                    await self.notify('sofa/pc', json.dumps(cmd)) 
+                    
+                elif command=='Lock':         
+                    cmd={"op":"set", "property":"lockState", "value":"LOCKED", 'device': device }
+                    await self.notify('sofa/pc', json.dumps(cmd))
+                    
+                elif command=='Unlock':
+                    cmd={"op":"set", "property":"lockState", "value":"UNLOCKED", 'device': device }
+                    await self.notify('sofa/pc', json.dumps(cmd))
+                else:
+                    return {}
+
+                response=await self.dataset.generateResponse(endpointId, correlationToken)
+                return response
+                    
             except:
                 self.log.error('Error executing state change.', exc_info=True)
 

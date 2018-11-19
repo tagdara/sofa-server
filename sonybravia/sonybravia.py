@@ -325,7 +325,8 @@ class sonybravia(sofabase):
                 self.log.error('Error getting remote code', exc_info=True)
                 return ''
 
-        async def stateChange(self, endpointId, controller, command, payload):
+        #async def stateChange(self, endpointId, controller, command, payload):
+        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
     
             try:
                 device=endpointId.split(":")[2]
@@ -347,6 +348,9 @@ class sonybravia(sofabase):
                 if sysinfo:      
                     self.log.info('-> command response: %s' % sysinfo)
                     await self.getUpdate()
+                    
+                response=await self.dataset.generateResponse(endpointId, correlationToken)
+                return response
                   
             except:
                 self.log.error('Error executing state change.', exc_info=True)

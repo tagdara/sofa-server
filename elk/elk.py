@@ -395,11 +395,7 @@ class Client(asyncio.Protocol):
                 outputstate='Off'
             else:
                 outputstate='On'
-            
             await self.dataset.ingest({'output': { str(int(elkoutput)): {'status': outputstate }}})
-            
-            self.log.info('outputChangeUpdate: %s = %s' % (elkoutput, outputstate))
-                    
         except:
             self.log.error("outputChangeUpdate",exc_info=True)
 
@@ -526,6 +522,9 @@ class elkm1(sofabase):
 
 
             try:
+                if controllerProp=='duration':
+                    return 1
+                
                 if controllerProp=='pressState':
                     if 'status' not in nativeObj:
                         return 'OFF'
@@ -555,28 +554,36 @@ class elkm1(sofabase):
             except:
                 self.log.error('Error getting virtualcontrollerproperty: %s %s' % (controllerProp, nativeObj), exc_info=True)
 
-
-        async def stateChange(self, endpointId, controller, command, payload):
+        async def processDirective(self, endpointId, controller, command, payload, correlationToken='',cookie={}):
     
             try:
                 devicetype=endpointId.split(":")[1]
                 device=endpointId.split(":")[2]
+                nativeCommand=False
                 
                 if controller=="ButtonController":
                     if command=='Press':
                         self.log.info('Button press: %s %s %s %s' % (endpointId, controller, command, payload))
                         if devicetype=='task':
+                            nativeCommand=True
                             await self.triggerTask(device)
                         elif devicetype=='output':
+                            nativeCommand=True
                             await self.triggerOutput(device)
                             
                     elif command=='Hold':
                         if devicetype=='output':
+                            nativeCommand=True
                             await self.triggerOutput(device, payload['duration'])
                     
                     elif command=='Release':
                         if devicetype=='output':
+                            nativeCommand=True
                             await self.releaseOutput(device)
+                
+                if nativeCommand:
+                    response=await self.dataset.generateResponse(endpointId, correlationToken)
+                    return response
                         
             except:
                 self.log.error('Error executing state change.', exc_info=True)

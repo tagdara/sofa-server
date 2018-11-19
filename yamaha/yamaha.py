@@ -278,7 +278,8 @@ class yamaha(sofabase):
             
             return False
 
-        async def stateChange(self, endpointId, controller, command, payload):
+
+        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
     
             try:
                 device=endpointId.split(":")[2]
@@ -306,6 +307,7 @@ class yamaha(sofabase):
                     response=await self.receiver.sendCommand(nativeCommand, '', payload)
                     self.log.info('<- %s' % response)
                     await self.updateEverything()
+                    return await self.dataset.generateResponse(endpointId, correlationToken)
                   
             except:
                 self.log.error('Error executing state change.', exc_info=True)

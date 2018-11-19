@@ -10,6 +10,8 @@ class Definitions():
 
     
     commands = {}
+    
+    thermostatModesByName = { 'HEAT':'1','COOL':'2','AUTO':'3','FAN':'4','PROGRAM HEAT':'5','PROGRAM COOL':'6','PROGRAM AUTO':'7' }       
 
     busyStates={
                     "0":"Not Busy",
@@ -70,13 +72,13 @@ class Definitions():
                     "1.14.58.0":"light",
                     "1.14.65.0":"light",
                     "1.25.56.0":"light",
-                    "1.25.64.0":"light",
+                    "1.25.64.0":"lightswitch",
                     "1.28.57.0":"light",
                     "1.32.64.0":"light",
-                    "1.32.65.0":"light",
+                    "1.32.65.0":"lightswitch",
                     "2.6.65.0":"light",
                     "2.9.0.0":"light",
-                    "2.42.67.0":"light",
+                    "2.42.67.0":"lightswitch",
                     "2.56.67.0":"light",
                     "2.31.65.0":"device",
                     "3.13.0.0":"device",

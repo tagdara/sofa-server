@@ -144,6 +144,27 @@ class SofaCollector(sofabase):
             return devicelist
 
 
+        async def handleResponse(self, message):
+            try:
+                if not message:
+                    return None
+
+                device=self.getDeviceByEndpointId(message['event']['endpoint']['endpointId'])
+                
+                # I'm no longer sure what this was designed to do, maybe create the shor
+                for prop in message['context']['properties']:
+                    field="discovery/%s/%s/%s" % (message['event']['endpoint']['cookie']['name'], prop['namespace'].split(".")[1], prop['name'])
+                    self.log.debug('Field: %s' % field)
+                    if self.dataset.getObjectFromPath(field, self.dataset.data['cache'])!={}:
+                        dpath.util.set(self.dataset.data, "cache/%s" % field, prop['value'])
+                    else:
+                        self.log.debug('%s was not in %s' % (field, self.dataset.data['cache']))
+                        
+                self.log.info('dataset data is now: %s' % self.dataset.data)
+            except:
+                self.log.error('Error updating from state report', exc_info=True)
+
+
         async def handleChangeReport(self, message):
             
             try:
@@ -157,16 +178,18 @@ class SofaCollector(sofabase):
                     return None
                 
                 #self.log.info('Received Change Report: %s %s' % (device['friendlyName'], message))
-
-                for prop in message['payload']['change']['properties']:
-                    field="discovery/%s/%s/%s" % (device['friendlyName'], prop['namespace'].split(".")[1], prop['name'])
-                    if self.dataset.getObjectFromPath(field, self.dataset.data['cache'])!={}:
-                        dpath.util.set(self.dataset.data, "cache/%s" % field, prop['value'])
-                    else:
-                        self.log.debug('%s was not in %s' % (field, self.dataset.data['cache']))
+                try:
+                    for prop in message['payload']['change']['properties']:
+                        field="discovery/%s/%s/%s" % (device['friendlyName'], prop['namespace'].split(".")[1], prop['name'])
+                        if self.dataset.getObjectFromPath(field, self.dataset.data['cache'])!={}:
+                            dpath.util.set(self.dataset.data, "cache/%s" % field, prop['value'])
+                        else:
+                            self.log.debug('%s was not in %s' % (field, self.dataset.data['cache']))
                         
-                    if hasattr(self, "virtualChangeHandler"):
-                        await self.virtualChangeHandler(device['friendlyName'], prop)
+                        if hasattr(self, "virtualChangeHandler"):
+                            await self.virtualChangeHandler(device['friendlyName'], prop)
+                except KeyError:
+                    pass
                         
                 # these should be unchanged but send em all right now to make sure
                 for prop in message['context']['properties']:

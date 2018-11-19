@@ -4,17 +4,46 @@ import datetime
 
 class smartInterface(object):
     
-    def __init__(self, controller, properties=[], commands=[], version="3", proactivelyReported=True, retrievable=True, namespace="Alexa"):
+    @property
+    def commands(self):
+        #deprecated
+        return self.props
+    
+    @property
+    def interface(self):
+        return "%s.%s" % (self.namespace, self.controller)
         
-        self.namespace=namespace
-        self.interface="%s.%s" % (namespace, controller)
-        self.version=version
-        self.capabilityType="%sInterface" % namespace
-        self.proactivelyReported=proactivelyReported
-        self.retrievable=retrievable
-        self.props=properties
-        self.cmds=commands
+    @property
+    def version(self):
+        if hasattr(self, '_version'):
+            return self._version
+        else:
+            return "3"
+            
+    @property
+    def capabilityType(self):
+        return "%sInterface" % self.namespace
+        
+    @property
+    def proactivelyReported(self):
+        if hasattr(self, '_proactivelyReported'):
+            return self._proactivelyReported
+        else:
+            return True
 
+    @property
+    def retrievable(self):
+        if hasattr(self, '_retrievable'):
+            return self._retrievable
+        else:
+            return True
+        
+    @property
+    def namespace(self):
+        if hasattr(self, '_namespace'):
+            return self._namespace
+        else:
+            return "Alexa"
             
     @property
     def properties(self):
@@ -34,10 +63,19 @@ class smartInterface(object):
     @property
     def configuration(self):
         return {}
+        
+    @property            
+    def directives(self):
+        return {}
 
+    @property          
+    def props(self):
+        return {}
+    
     @property
     def state(self):
         supported=[]
+
         for prop in self.props:
             try:
                 supported.append({
@@ -52,12 +90,13 @@ class smartInterface(object):
         return supported
 
 
+
 # Work in progress - very different from other device types        
 class cameraInterface(smartInterface):
 
     def __init__(self, controller, version="3", proactivelyReported=True, retrievable=True, namespace="Alexa", camerastreamconfigurations=[]):
-        
-        self.namespace=namespace
+        self.controller="CameraController"
+        self._namespace=namespace
         self.interface="%s.%s" % (namespace, controller)
         self.version=version
         self.capabilityType="%sInterface" % namespace
@@ -92,6 +131,14 @@ class cameraInterface(smartInterface):
     def properties(self):
         # not supported on cameras
         return {}
+
+    @property            
+    def directives(self):
+        return {}
+
+    @property          
+    def props(self):
+        return {}
     
         
 class CameraStreamControllerInterface(cameraInterface):
@@ -103,7 +150,7 @@ class CameraStreamControllerInterface(cameraInterface):
 class BrightnessControllerInterface(smartInterface):
     
     def __init__(self, brightness=0, SetBrightness=None):
-        smartInterface.__init__(self, "BrightnessController", ["brightness"], ["SetBrightness"])
+        self.controller="BrightnessController"
         self.brightness=brightness
         if SetBrightness:
             self.SetBrightness=SetBrightness
@@ -111,6 +158,14 @@ class BrightnessControllerInterface(smartInterface):
     @property            
     def commands(self):
         return {'SetBrightness': { 'brightness': 'value' }}
+
+    @property            
+    def directives(self):
+        return { 'SetBrightness' : { 'brightness': { "value": "integer" }}}
+
+    @property          
+    def props(self):
+        return { 'brightness' : { "value": "integer" }}
 
 
     def updateBrightness(self, value):
@@ -127,7 +182,7 @@ class BrightnessControllerInterface(smartInterface):
 class PowerLevelControllerInterface(smartInterface):
     
     def __init__(self, powerLevel=0, SetPowerLevel=None):
-        smartInterface.__init__(self, "PowerLevelController", ["powerLevel"], ["SetPowerLevel"])
+        self.controller="PowerLevelController"
         self.powerLevel=powerLevel
         if SetPowerLevel:
             self.SetPowerLevel=SetPowerLevel
@@ -135,6 +190,14 @@ class PowerLevelControllerInterface(smartInterface):
     @property            
     def commands(self):
         return {'SetPowerLevel': { 'powerLevel': 'value' }}
+
+    @property            
+    def directives(self):
+        return { 'SetPowerLevel' : { "value" : { "powerLevel": "integer" }}}
+
+    @property          
+    def props(self):
+        return { 'powerlevel' : { "value": "integer" }}
 
     def SetPowerLevel(self, value):
         if value<=100 and value>=0:
@@ -147,7 +210,7 @@ class PowerLevelControllerInterface(smartInterface):
 class ColorControllerInterface(smartInterface):
     
     def __init__(self, color={"hue":0, "saturation": 0, "brightness":0}, SetColor=None):
-        smartInterface.__init__(self, "ColorController", ["color"], ["SetColor"])
+        self.controller="ColorController"
         self.color=color
         if SetColor:
             self.SetColor=SetColor
@@ -155,6 +218,14 @@ class ColorControllerInterface(smartInterface):
     @property            
     def commands(self):
         return {'SetColor': { 'color': 'value' }}
+
+    @property            
+    def directives(self):
+        return { "SetColor" : { "color": { "value" : { "hue": "decimal", "saturation": 'decimal', "brightness": "decimal" }}}}
+
+    @property          
+    def props(self):
+        return { "color": { "value": { "hue": "decimal", "saturation": 'decimal', "brightness": "decimal" }}}
 
     def updateColor(self, value):
         # value should be a dict with hue, saturation, and brightness
@@ -169,19 +240,26 @@ class ColorControllerInterface(smartInterface):
 class ColorTemperatureControllerInterface(smartInterface):
     
     def __init__(self, colorTemperatureInKelvin=7000, SetColorTemperature=None):
-        smartInterface.__init__(self, "ColorTemperatureController", ["colorTemperatureInKelvin"], ["SetColorTemperature"])
+        self.controller="ColorTemperatureController"
         self.colorTemperatureInKelvin=colorTemperatureInKelvin
         if SetColorTemperature:
             self.SetColorTemperature=SetColorTemperature
 
     @property            
     def commands(self):
-        return {'SetColorTemperature': { 'colorTemperatureInKelvin': 'value' }}
+        return { 'SetColorTemperature': { 'colorTemperatureInKelvin': 'value' }}
+
+    @property            
+    def directives(self):
+        return { 'SetColorTemperature' : { "colorTemperatureInKelvin": {"value": "integer" }}}
+
+    @property          
+    def props(self):
+        return { 'colorTemperatureInKelvin': { "value": "integer" }}
 
     def updateColorTemperature(self, value):
         # value should be a number from 2-7k
         self.colorTemperatureInKelvin=value
-
         
     def SetColorTemperature(self, value):
         # value should be a number from 2-7k
@@ -191,7 +269,7 @@ class ColorTemperatureControllerInterface(smartInterface):
 class InputControllerInterface(smartInterface):
     
     def __init__(self, inputName="Input", SelectInput=None):
-        smartInterface.__init__(self, "InputController", ["input"], ["SelectInput"])
+        self.controller="InputController"
         self._input=inputName
         if SelectInput:
             self.SelectInput=SelectInput
@@ -199,6 +277,14 @@ class InputControllerInterface(smartInterface):
     @property            
     def commands(self):
         return {'SelectInput': { 'input': 'value' }}
+
+    @property            
+    def directives(self):
+        return { "SelectInput": { "input": { "value": "string" }}}
+
+    @property          
+    def props(self):
+        return { "input" : { "value" : "string" }}
 
     @property
     def input(self):
@@ -218,7 +304,7 @@ class InputControllerInterface(smartInterface):
 class LockControllerInterface(smartInterface):
     
     def __init__(self, lockState="LOCKED", Lock=None, Unlock=None):
-        smartInterface.__init__(self, "LockController", ["lockState"], ["Lock, Unlock"])
+        self.controller="LockController"
         self.lockState=lockState
         if Lock:
             self.Lock=Lock
@@ -228,6 +314,14 @@ class LockControllerInterface(smartInterface):
     @property            
     def commands(self):
         return {'Lock': {}, 'Unlock': {}}
+
+    @property            
+    def directives(self):
+        return { "Lock": {}, "Unlock": {} }
+
+    @property          
+    def props(self):
+        return { "lockState" : { "value" : "string" }}
 
     def updateLockState(self, value):
         if value in ['LOCKED','UNLOCKED','JAMMED']:
@@ -239,7 +333,7 @@ class LockControllerInterface(smartInterface):
 class PowerControllerInterface(smartInterface):
     
     def __init__(self, powerState="OFF", TurnOn=None, TurnOff=None):
-        smartInterface.__init__(self, "PowerController", ["powerState"], ["TurnOn","TurnOff"])
+        self.controller="PowerController"
         self.powerState=powerState
         if TurnOn:
             self.TurnOn=TurnOn
@@ -249,7 +343,15 @@ class PowerControllerInterface(smartInterface):
     @property            
     def commands(self):
         return {'TurnOn': {}, 'TurnOff': {}}
-        
+
+    @property            
+    def directives(self):
+        return { "TurnOn": {}, "TurnOff": {} }
+
+    @property          
+    def props(self):
+        return { "powerState" : { "value": "string" }}
+
     def updatePowerState(self, value):
         if value=="ON":
             self.powerState="ON"
@@ -264,20 +366,27 @@ class PowerControllerInterface(smartInterface):
     def TurnOff(self):
         self.powerState="OFF"
 
-        
+
 class ButtonControllerInterface(smartInterface):
     
-    def __init__(self, duration=1, Press=None, Hold=None):
-        smartInterface.__init__(self, "ButtonController", ["duration"], ["Press", "Hold", "Release"])
-        self.duration=duration
-        
+    def __init__(self, duration=1, pressState="none", Press=None, Hold=None):
+        self.controller="ButtonController"
+        self.pressState=pressState
         self.Press=Press
         self.Hold=Hold
         
     @property            
     def commands(self):
         return {'Press': {}, 'Hold': {'duration':'value'}, 'Release': {}}
-        
+
+    @property            
+    def directives(self):
+        return { "Press": {}, "Hold": { "duration" : { "value" : "integer", "unit" : "string" }}, "Release": {} }
+
+    @property          
+    def props(self):
+        return { "pressState" : { "value": "string" }}
+
     def updatePressState(self, value):
         if value=="ON":
             self.pressState="ON"
@@ -289,7 +398,7 @@ class ButtonControllerInterface(smartInterface):
 class SceneControllerInterface(smartInterface):
     
     def __init__(self, powerState="OFF", Activate=None, Deactivate=None):
-        smartInterface.__init__(self, "SceneController", [], ["Activate","Deactivate"])
+        self.controller="SceneController"
         self.powerState=powerState
         self.Activate=Activate
         self.Deactivate=Deactivate
@@ -297,15 +406,30 @@ class SceneControllerInterface(smartInterface):
     @property            
     def commands(self):
         return {'Activate': {}, 'Deactivate': {}}
-        
 
+    @property            
+    def directives(self):
+        return { "Activate": {}, "Deactivate": {} }
+
+    @property          
+    def props(self):
+        return {}
+        
 
 class TemperatureSensorInterface(smartInterface):
     
     def __init__(self, temperature=72, scale="FAHRENHEIT"):
-        smartInterface.__init__(self, "TemperatureSensor", ["temperature"])
+        self.controller="TemperatureSensor"
         self.scale=scale
         self.temperature=temperature
+
+    @property            
+    def directives(self):
+        return {}
+
+    @property          
+    def props(self):
+        return {"temperature": { "value" : "decimal", "scale":"string"}}
 
     @property
     def state(self):
@@ -315,11 +439,33 @@ class TemperatureSensorInterface(smartInterface):
                 item['scale']=self.scale
         return thisState
 
+class SwitchSensorInterface(smartInterface):
+    
+    def __init__(self, pressState="none"):
+        self.controller="SwitchSensor"
+        self.pressState=pressState
+        
+    @property            
+    def directives(self):
+        return {}
+
+    @property          
+    def props(self):
+        return { "pressState" : { "value": "string" }}
+
+    def updatePressState(self, value):
+        if value=="ON":
+            self.pressState="ON"
+        elif value=="OFF":
+            self.pressState="OFF"
+        else:
+            self.log.warn('Invalid PressState value: %s' % value)  
+
 
 class ThermostatControllerInterface(smartInterface):
     
     def __init__(self, targetSetPoint=70, lowerSetPoint=70, upperSetPoint=70, thermostatMode="AUTO", scale="FAHRENHEIT", supportedModes=["HEAT", "COOL", "AUTO", "OFF"], supportsScheduling=False):
-        smartInterface.__init__(self, "ThermostatController", ["targetSetPoint","lowerSetPoint","upperSetPoint","thermostatMode"], ["SetTargetTemperature", "SetThermostatMode"])
+        self.controller="ThermostatController"
         self.scale=scale
         self.targetSetPoint=targetSetPoint
         self.lowerSetPoint=lowerSetPoint
@@ -335,6 +481,15 @@ class ThermostatControllerInterface(smartInterface):
     @property            
     def commands(self):
         return {'SetTargetTemperature': {'targetSetPoint':'value', 'scale':'FAHRENHEIT' }, 'SetThermostatMode': {'thermostatMode':'value'}}
+
+    @property            
+    def directives(self):
+        return { "SetTargetTemperature": { "targetSetPoint": { "value":"integer", "scale":"string" }}, "SetThermostatMode": {'thermostatMode': {"value": "string"}} }
+        
+    @property          
+    def props(self):
+        return { "targetSetPoint" : { "value":"integer", "scale":"string" }, "thermostatMode": { "value" : "string" }}
+
 
     @property
     def state(self):
@@ -354,21 +509,39 @@ class ThermostatControllerInterface(smartInterface):
 class LogicControllerInterface(smartInterface):
     
     def __init__(self, duration=0, Delay=None, Alert=None, Capture=None, Reset=None, Wait=None, namespace="Sofa" ):
-        smartInterface.__init__(self, "LogicController", ['duration','message','device'], ["Delay","Alert","Capture","Reset","Wait"])
+        self.controller="LogicController"
         self.Delay=Delay
         self.Alert=Alert
         self.Reset=Reset
         self.Wait=Wait
+    
+    @property
+    def time(self):
+        return datetime.datetime.now()
         
     @property            
     def commands(self):
         return {'Delay': {'duration':'value'}, 'Alert': {'message':'value'}, 'Capture': {'device':'value'}, 'Reset': {'device':'value'}, "Wait":{}}
+    
+    @property            
+    def directives(self):
+        return {    "Delay": { "duration": { "value":"integer", "unit":"string" }}, 
+                    "Alert": { "message": { "value":"string", "image":"string" }},
+                    "Capture": { "device": { "name":"string" }},
+                    "Reset": { "device": { "name": "string" }},
+                    "Wait": {}
+                }
+        
+    @property          
+    def props(self):
+        return { "time": { "value":"time"}}
 
         
 class MusicControllerInterface(smartInterface):
     
     def __init__(self, artist="", title="", album="", url="", art="", linked=[], namespace="Sofa", playbackState='STOPPED', PlayFavorite=None, Play=None, Pause=None, Stop=None, Skip=None, Previous=None):
-        smartInterface.__init__(self, "MusicController", ["artist", "title", "album", "url", "art", "linked", "playbackState"], ["PlayFavorite","Play","Pause","Stop","Previous","Skip"])
+        self.controller="MusicController"
+        self._namespace="Sofa"
         self.artist=artist
         self.title=title
         self.album=album
@@ -386,6 +559,22 @@ class MusicControllerInterface(smartInterface):
     @property            
     def commands(self):
         return { 'PlayFavorite': {'favorite':'value'}, 'Play': {}, 'Pause': {}, 'Stop': {}, 'Previous': {}, 'Skip': {} }
+
+    @property            
+    def directives(self):
+        return {    "PlayFavorite": { "favorite": { "value" : "string" }}, 
+                    "Play": {},
+                    "Pause": {},
+                    "Stop": {},
+                    "Previous": {},
+                    "Skip": {}
+                }
+        
+    @property          
+    def props(self):
+        return {    "artist": { "value" : "string"}, "album": { "value" : "string"}, "title" : { "value" : "string"}, "url": { "value" : "string" },
+                    "art": { "value" : "string"}, "linked": { "value" : "string"}, "playbackState": { "value" : "string"},
+        }
             
     def updateArtist(self, value):
         self.artist=value
@@ -412,7 +601,8 @@ class MusicControllerInterface(smartInterface):
 class SpeakerControllerInterface(smartInterface):
     
     def __init__(self, volume=0, muted=False, SetVolume=None, SetMuted=None):
-        smartInterface.__init__(self, "SpeakerController", ["volume","muted"], ["SetVolume","SetMuted"])
+        self.controller="SpeakerController"
+        self._namespace="Sofa"
         self.volume=volume
         self.muted=muted
         if SetVolume:
@@ -424,6 +614,15 @@ class SpeakerControllerInterface(smartInterface):
     def commands(self):
         return { 'SetVolume': {'volume':'value'}, 'SetMuted': {'muted':'value'}}
 
+    @property            
+    def directives(self):
+        return {    "SetVolume": { "volume": { "value" : "percentage" }}, 
+                    "SetMuted": { "muted" : { "value": "string" }}
+                }
+        
+    @property          
+    def props(self):
+        return { "volume": { "value" : "percentage"}, "muted": { "value" : "string"}}
 
     def updateVolume(self, value):
         self.volume=value
@@ -443,7 +642,8 @@ class SpeakerControllerInterface(smartInterface):
 class SurroundControllerInterface(smartInterface):
     
     def __init__(self, surround="Straight", namespace="Sofa", decoder="Dolby", SetSurround=None, SetDecoder=None):
-        smartInterface.__init__(self, "SurroundController", ["surround","decoder"], ["SetSurround", "SetDecoder"])
+        self.controller="SurroundController"
+        self._namespace="Sofa"
         self.surround=surround
         self.decoder=decoder
 
@@ -453,6 +653,16 @@ class SurroundControllerInterface(smartInterface):
     @property            
     def commands(self):
         return { 'SetSurround': { 'surround':'value' }, 'SetDecoder': {'decoder': 'value'}}
+
+    @property            
+    def directives(self):
+        return {    "SetSurround": { "surround": { "value" : "string" }}, 
+                    "SetDecoder": { "decoder" : { "value": "string" }}
+                }
+        
+    @property          
+    def props(self):
+        return { "surround": { "value" : "string"}, "decoder": { "value" : "string"}}
 
     def updateSurround(self, value):
         self.surround=value
@@ -465,9 +675,19 @@ class SurroundControllerInterface(smartInterface):
 class ZoneSensorInterface(smartInterface):
     
     def __init__(self, position="open", type="unknown", namespace="Sofa"):
-        smartInterface.__init__(self, "ZoneSensor", ["position","type"], namespace="Sofa")
+        self.controller="ZoneSensor"
+        self._namespace="Sofa"
         self.position=position
         self.type=type
+
+    @property            
+    def directives(self):
+        return {}
+        
+    @property          
+    def props(self):
+        return { "position": { "value" : "string"}, "type": { "value" : "string" }}
+
 
    
 class smartObject(object):
@@ -617,6 +837,31 @@ class smartObject(object):
             }
         }
 
+
+    def Response(self, correlationToken=''):
+        return  {
+            "event": {
+                "header": {
+                    "name":"Response",
+                    "payloadVersion": self.payloadVersion,
+                    "messageId":str(uuid.uuid1()),
+                    "namespace":self.namespace,
+                    "correlationToken":correlationToken
+                },
+                "endpoint": {
+                    "endpointId": self.endpointId,
+                    "cookie": {
+                        "name": self.friendlyName
+                    }
+                }
+            },
+            "context": {
+                "properties": self.propertyStates
+            },
+            "payload": {}
+        }
+
+
             
 
 class basicDevice(smartObject):
@@ -681,6 +926,17 @@ class simpleLight(smartObject):
         self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
         self.interfaces=[self.PowerController]
 
+class simpleLightWithSwitch(smartObject):
+    
+    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, log=None):
+        smartObject.__init__(self, path, name)
+        self.displayCategories=["LIGHT"]
+        self.description=description
+        self.manufacturer=manufacturer
+        self.SwitchSensor=SwitchSensorInterface()
+        self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
+        self.interfaces=[self.SwitchSensor, self.PowerController]
+
         
 class dimmableLight(smartObject):
     
@@ -692,6 +948,29 @@ class dimmableLight(smartObject):
         self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
         self.BrightnessController=BrightnessControllerInterface(SetBrightness)
         self.interfaces=[self.PowerController, self.BrightnessController]
+
+class dimmableLightWithSwitch(smartObject):
+    
+    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, log=None):
+        smartObject.__init__(self, path, name)
+        self.displayCategories=["LIGHT"]
+        self.description=description
+        self.manufacturer=manufacturer
+        self.SwitchSensor=SwitchSensorInterface()
+        self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
+        self.BrightnessController=BrightnessControllerInterface(SetBrightness)
+        self.interfaces=[self.SwitchSensor, self.PowerController, self.BrightnessController]
+
+class lightSwitch(smartObject):
+    
+    def __init__(self, path, name, description="", manufacturer="sofa", log=None):
+        smartObject.__init__(self, path, name)
+        self.displayCategories=["SWITCH"]
+        self.description=description
+        self.manufacturer=manufacturer
+        self.SwitchSensor=SwitchSensorInterface()
+        self.interfaces=[self.SwitchSensor]
+
 
 
 class tunableLight(smartObject):

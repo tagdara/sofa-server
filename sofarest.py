@@ -18,11 +18,64 @@ import devices
 import sofamqtt
 import sofadataset
 
-
-
 class sofaRest():
         
     # The Sofa Rest Handler provides an http request framework for retrieving the current state of an adapter
+    
+    # API
+    #       /status         - Show basic status and health of the adapter
+    #       /native         - List native devices and their properties
+    #       /discovery      - List device discovery data in Alexa format
+    
+    
+    def initialize(self):
+            
+        try:
+            #self.log.info('Dataset: %s' % self.dataset.__dict__)
+            self.serverAddress=self.dataset.baseConfig['restAddress']
+            self.serverApp = web.Application()
+            self.serverApp.router.add_get('/', self.statusHandler)
+            self.serverApp.router.add_post('/', self.rootRequestHandler)
+            
+            self.serverApp.router.add_get('/native', self.nativeLookupHandler)
+            self.serverApp.router.add_get('/status', self.statusHandler)
+            
+            self.serverApp.router.add_get('/favicon.ico', self.iconHandler)
+            self.serverApp.router.add_get('/adapters', self.adapterLookupHandler)
+            
+            self.serverApp.router.add_get('/discovery', self.deviceLookupHandler)
+            self.serverApp.router.add_get('/discovery/{item}', self.deviceStateReportHandler)
+            
+            self.serverApp.router.add_get('/devices', self.deviceLookupHandler)            
+            self.serverApp.router.add_get('/devices/{item}', self.deviceStateReportHandler)
+            self.serverApp.router.add_get('/deviceState/{item}', self.deviceStateReportHandler)
+            self.serverApp.router.add_post('/deviceStates', self.deviceStatesReportHandler)
+            
+            self.serverApp.router.add_get('/image/{item:.+}', self.imageHandler)
+            self.serverApp.router.add_get('/thumbnail/{item:.+}', self.thumbnailHandler)
+            self.serverApp.router.add_get('/list/{list:.+}', self.listHandler)
+            self.serverApp.router.add_post('/list/{list:.+}', self.listPostHandler)
+
+            self.serverApp.router.add_get('/var/{list:.+}', self.varHandler)
+            
+            self.serverApp.router.add_post('/save/{save:.+}', self.saveHandler)
+            self.serverApp.router.add_post('/add/{add:.+}', self.addHandler)
+            self.serverApp.router.add_post('/del/{del:.+}', self.delHandler)            
+            
+            self.serverApp.router.add_get('/{category}', self.categoryLookupHandler)
+            self.serverApp.router.add_get('/{category}/{item:.+}', self.itemLookupHandler)
+            self.serverApp.router.add_post('/{category}/{item}', self.setHandler)
+
+
+            self.runner=aiohttp.web.AppRunner(self.serverApp)
+            self.loop.run_until_complete(self.runner.setup())
+
+            self.site = web.TCPSite(self.runner, self.serverAddress, self.port)
+            self.loop.run_until_complete(self.site.start())
+        except:
+            self.log.error('Error starting REST server', exc_info=True)
+
+
 
     def date_handler(self, obj):
         
@@ -116,7 +169,6 @@ class sofaRest():
                 except:
                     namepairs.append(item)
             lookup=list(namepairs)
-
                 
         return lookup
         
@@ -342,13 +394,14 @@ class sofaRest():
                         controllers=await self.getPathControllers(path)
                         response=self.dataset.generateStateReport(path, controllers, correlationToken=jsondata['directive'])
                     else:
-                        self.log.info('<< %s %s' % (jsondata['directive']['header']['name'],jsondata))
-                        response=await self.dataset.handleStateChange(jsondata)
-
+                        self.log.info('<< %s %s / %s' % (jsondata['directive']['header']['name'],jsondata['directive']['endpoint']['endpointId'], jsondata))
+                        response=await self.dataset.handleDirective(jsondata)
+                        if response:
+                            self.log.info('>> %s %s / %s' % (response['event']['header']['name'],response['event']['endpoint']['endpointId'], response))
             except:
                 self.log.error('Error handling root request: %s' % body,exc_info=True)
                 response={}
-
+                
         return web.Response(text=json.dumps(response, default=self.date_handler))
 
 
@@ -382,52 +435,6 @@ class sofaRest():
         return web.Response(text="")
 
 
-    def initialize(self):
-            
-        try:
-            #self.log.info('Dataset: %s' % self.dataset.__dict__)
-            self.serverAddress=self.dataset.baseConfig['restAddress']
-            self.serverApp = web.Application()
-            self.serverApp.router.add_get('/', self.statusHandler)
-            self.serverApp.router.add_post('/', self.rootRequestHandler)
-            
-            self.serverApp.router.add_get('/native', self.nativeLookupHandler)
-            self.serverApp.router.add_get('/status', self.statusHandler)
-            
-            self.serverApp.router.add_get('/favicon.ico', self.iconHandler)
-            self.serverApp.router.add_get('/adapters', self.adapterLookupHandler)
-            
-            self.serverApp.router.add_get('/discovery', self.deviceLookupHandler)
-            self.serverApp.router.add_get('/discovery/{item}', self.deviceStateReportHandler)
-            
-            self.serverApp.router.add_get('/devices', self.deviceLookupHandler)            
-            self.serverApp.router.add_get('/devices/{item}', self.deviceStateReportHandler)
-            self.serverApp.router.add_get('/deviceState/{item}', self.deviceStateReportHandler)
-            self.serverApp.router.add_post('/deviceStates', self.deviceStatesReportHandler)
-            
-            self.serverApp.router.add_get('/image/{item:.+}', self.imageHandler)
-            self.serverApp.router.add_get('/thumbnail/{item:.+}', self.thumbnailHandler)
-            self.serverApp.router.add_get('/list/{list:.+}', self.listHandler)
-            self.serverApp.router.add_post('/list/{list:.+}', self.listPostHandler)
-
-            self.serverApp.router.add_get('/var/{list:.+}', self.varHandler)
-            
-            self.serverApp.router.add_post('/save/{save:.+}', self.saveHandler)
-            self.serverApp.router.add_post('/add/{add:.+}', self.addHandler)
-            self.serverApp.router.add_post('/del/{del:.+}', self.delHandler)            
-            
-            self.serverApp.router.add_get('/{category}', self.categoryLookupHandler)
-            self.serverApp.router.add_get('/{category}/{item:.+}', self.itemLookupHandler)
-            self.serverApp.router.add_post('/{category}/{item}', self.setHandler)
-
-
-            self.runner=aiohttp.web.AppRunner(self.serverApp)
-            self.loop.run_until_complete(self.runner.setup())
-
-            self.site = web.TCPSite(self.runner, self.serverAddress, self.port)
-            self.loop.run_until_complete(self.site.start())
-        except:
-            self.log.error('Error starting REST server', exc_info=True)
 
         
     def shutdown(self):

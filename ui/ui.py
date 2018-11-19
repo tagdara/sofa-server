@@ -116,6 +116,54 @@ class sofaWebUI():
             return None
 
 
+    async def directivesHandler(self, request):
+        
+        # Walks through the list of current devices, identifies their controllers and extracts a list of 
+        # possible directives for each controller and outputs the full list.
+        
+        directives={}
+
+        for device in self.dataset.devices:
+            for cap in self.dataset.devices[device]['capabilities']:
+                capname=cap['interface'].split('.')[1]
+                if capname not in directives:
+                    try:
+                        controllerclass = getattr(devices, capname+"Interface")
+                        xc=controllerclass()
+                        try:
+                            directives[capname]=xc.directives
+                        except AttributeError:
+                            directives[capname]={}
+                    except:
+                        self.log.error('Error with getting directives from controller class', exc_info=True)
+            
+        return web.Response(text=json.dumps(directives))
+
+    async def propertiesHandler(self, request):
+        
+        # Walks through the list of current devices, identifies their controllers and extracts a list of 
+        # possible properties for each controller and outputs the full list.
+        
+        properties={}
+
+        for device in self.dataset.devices:
+            for cap in self.dataset.devices[device]['capabilities']:
+                capname=cap['interface'].split('.')[1]
+                if capname not in properties:
+                    try:
+                        controllerclass = getattr(devices, capname+"Interface")
+                        xc=controllerclass()
+                        try:
+                            properties[capname]=xc.props
+                        except AttributeError:
+                            properties[capname]={}
+                    except:
+                        self.log.error('Error with getting properties from controller class', exc_info=True)
+            
+        return web.Response(text=json.dumps(properties))
+
+        
+
     async def controllerHandler(self, request):
     
         controllerlist={}
@@ -135,7 +183,8 @@ class sofaWebUI():
                         self.log.error('Error with controller class', exc_info=True)
             
         return web.Response(text=json.dumps(controllerlist))
-        
+
+
     async def dataSender(self, item):
         
         try:
@@ -450,12 +499,7 @@ class sofaWebUI():
     async def configReaderHandler(self, request):
 
         try:
-            try:
-                peername=request.transport.get_extra_info('peername')[0]
-            except:
-                peername="(unknown)"
-
-            self.log.info('-> %s config %s' % (peername, request.match_info['config']))
+            self.log.info('<- %s config/%s' % (request.remote, request.match_info['config']))
             # this will need validation to prevent file system browsing
             async with aiofiles.open('/opt/beta/config/%s.json' % request.match_info['config'],  mode='r') as f:
                 result = await f.read()
@@ -555,22 +599,29 @@ class sofaWebUI():
 
             return web.Response(text=result)
 
-    async def commandHandler(self, request):
-            
-        if request.body_exists:
-            try:
+
+    async def directiveHandler(self, request):
+        
+        # Take alexa directive commands such as 'TurnOn' or 'SelectInput'
+        response={}
+        
+        try:
+            if request.body_exists:
                 body=await request.read()
-                if request.match_info['item']=='stateChange':
-                    data=json.loads(body.decode())
-                    self.log.info('Received post stateChange request: %s' % data)
-                    await self.dataset.requestAlexaStateChange(data)    
+                data=json.loads(body.decode())
+                if 'directive' in data:
+                    self.log.info("<- %s %s %s/%s" % (request.remote, data['directive']['header']['name'], data['directive']['endpoint']['endpointId'], data['directive']['header']['namespace'].split('.')[1]))
+
+                    #self.log.info('<- %s %s: %s' % (request.remote, data['directive']['header']['name'], data))
+                    response=await self.dataset.sendDirectiveToAdapter(data)
+                    return web.Response(text=json.dumps(response, default=self.date_handler))
                 else:
-                    await self.notify('sofa/macros', json.dumps({'op':'command', 'path':urllib.parse.unquote(request.match_info['item']), 'value':None}))
+                    return web.Response(text="{}")                    
 
-            except:
-                self.log.error('Error transferring command: %s' % body,exc_info=True)
+        except:
+            self.log.error('Error transferring directive: %s' % body,exc_info=True)
+            return web.Response(text="{}")
 
-            return web.Response(text=json.dumps({"value":"command sent", "path":urllib.parse.unquote(request.match_info['item']), "op":"response"}, default=self.date_handler))
     
     async def devicesHandler(self, request):
 
@@ -583,11 +634,10 @@ class sofaWebUI():
     async def deviceListHandler(self, request):
 
         try:
-            self.log.info('devices handler: %s ' % request)
+            self.log.info('<- %s devicelist request' % (request.remote))
             outlist=[]
             for dev in self.dataset.devices:
                 outlist.append(self.dataset.devices[dev])
-            
             return web.Response(text=json.dumps(outlist, default=self.date_handler))
         except:
             self.log.error('Error transferring list of devices: %s' % body,exc_info=True)
@@ -670,13 +720,16 @@ class sofaWebUI():
 
     async def websocket_handler(self, request):
 
+        # everything should be moved to the POST based API, and endpoints should not need to send commands via
+        # websocket.  The websocket is still needed for streaming updates from server to client.
+
         try:
             try:
                 peername=request.transport.get_extra_info('peername')
             except:
                 peername=("(unknown)",0)
                 
-            self.log.info('++ Websocket connected: %s %s' % peername)
+            self.log.info('++ %s/%s websocket connected' % peername)
             
             ws = web.WebSocketResponse()
             self.wsclients.append(ws)
@@ -688,14 +741,8 @@ class sofaWebUI():
                     try:
                         message=json.loads(msg.data)
                         if 'directive' in message:
-                            await self.dataset.requestAlexaStateChange(message)
-                        elif 'op' in message:
-                            if message['op']=='set':
-                                await self.dataset.requestStateChange(message['path'], message['command'], message['value'])
-                            if message['op']=='get':
-                                #await self.dataset.requestStateChange(message['path'], message['value'])
-                                response=await self.lookupCardField(message['path'])
-                                ws.send_str(json.dumps(response))
+                            await self.dataset.sendDirectiveToAdapter(message)
+
                     except:
                         self.log.error('!! Error decoding websocket message: %s' % msg.data, exc_info=True)
                     if msg.data == 'close':
@@ -718,7 +765,6 @@ class sofaWebUI():
             
             self.log.info('-- Websocket cancelled: %s %s (this is a normal close for mobile safari)' % peername)
             return ws
-
             
         except:
             try:
@@ -749,6 +795,7 @@ class sofaWebUI():
         self.fieldcache={}
         self.dataset=dataset
         self.wsclients=[]
+        self.wsclientInfo=[]
         self.allowCardCaching=False
         self.definitions=definitions.Definitions
         self.notify=notify
@@ -764,18 +811,23 @@ class sofaWebUI():
 
             self.serverApp.router.add_get('/', self.root_handler)
             self.serverApp.router.add_get('/index.html', self.root_handler)
-            self.serverApp.router.add_get('/beta.appcache', self.manifestHandler)
             self.serverApp.router.add_get('/dist/beta.appcache', self.manifestHandler)
+            self.serverApp.router.add_static('/react/', path='/opt/s/fullstack_template/static') # probably not needed
+
+            self.serverApp.router.add_get('/directives', self.directivesHandler)
+            self.serverApp.router.add_get('/properties', self.propertiesHandler)
+
             self.serverApp.router.add_get('/controllercommands', self.controllerHandler)
             self.serverApp.router.add_get('/data/{item:.+}', self.dataHandler)
             self.serverApp.router.add_get('/list/{list:.+}', self.listHandler)
             self.serverApp.router.add_get('/var/{list:.+}', self.varHandler)
             self.serverApp.router.add_post('/list/{list:.+}', self.listPostHandler)
             
+            self.serverApp.router.add_get('/adapters', self.adapterHandler)            
             self.serverApp.router.add_get('/devices', self.devicesHandler)      
             self.serverApp.router.add_get('/deviceList', self.deviceListHandler)
             self.serverApp.router.add_post('/deviceState', self.deviceStatePostHandler)
-            self.serverApp.router.add_get('/adapters', self.adapterHandler)
+            self.serverApp.router.add_post('/directive', self.directiveHandler) 
             
             self.serverApp.router.add_post('/add/{add:.+}', self.adapterAddHandler)
             self.serverApp.router.add_post('/del/{del:.+}', self.adapterDelHandler)   
@@ -788,11 +840,9 @@ class sofaWebUI():
             self.serverApp.router.add_get('/ws', self.websocket_handler)
             self.serverApp.router.add_get('/ws/', self.websocket_handler)    
             self.serverApp.router.add_get('/refresh', self.refresh_handler)  
-            self.serverApp.router.add_static('/css/', path='/opt/s/fullstack_template/static/css')
+            #self.serverApp.router.add_static('/css/', path='/opt/s/fullstack_template/static/css')
             self.serverApp.router.add_static('/dist/', path='/opt/s/fullstack_template/static/dist')
 
-            self.serverApp.router.add_static('/react/', path='/opt/s/fullstack_template/static')
-            self.serverApp.router.add_post('/command/{item:.+}', self.commandHandler)
             self.serverApp.router.add_post('/data/{item:.+}', self.dataPostHandler)
             self.serverApp.router.add_static('/log/', path='/opt/beta/log')
 
@@ -813,16 +863,22 @@ class sofaWebUI():
     async def wsBroadcast(self, message):
         
         try:
+            liveclients=[]
             openSocketList=[]
             for i, wsclient in enumerate(self.wsclients):
                 try:
                     if not wsclient.closed:
                         await wsclient.send_str(message)
                         openSocketList.append(wsclient)
+                        liveclients.append(wsclient._req.transport.get_extra_info('peername'))
                 except:
                     self.log.error('Something was wrong with websocket %s (%s), and it will be removed.' % (i, wsclient.__dict__))
                     
             # This purges the closed websockets
+            if self.wsclients!=openSocketList:
+                deadlist = list(set(self.wsclientInfo) - set(liveclients))
+                self.log.info('-> (wsbc) live: %s / dead: %s)' % (liveclients, deadlist))
+                self.wsclientInfo=liveclients
             self.wsclients=openSocketList
         except:
             self.log.error('Error broadcasting to websockets: %s' % message, exc_info=True)
@@ -870,8 +926,14 @@ class ui(sofabase):
             try:
                 super().handleChangeReport(message)
                 if message:
-                    self.log.info('-> ws changereport %s' % message)
-                    await self.uiServer.wsBroadcast(json.dumps(message))            
+                    try:
+                        crs=[]
+                        for prop in message['payload']['change']['properties']:
+                            crs.append("%s/%s/%s=%s" % (message['event']['endpoint']['endpointId'], prop['namespace'].split('.')[1], prop['name'], prop['value']))
+                            self.log.info('-> ws ChangeReport %s' % crs)
+                            await self.uiServer.wsBroadcast(json.dumps(message))
+                    except:
+                        self.log.warn('!. bad or empty ChangeReport message not sent to ws: %s' % message)
 
             except:
                 self.log.error('Error updating from change report', exc_info=True)

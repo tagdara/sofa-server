@@ -248,6 +248,54 @@ class hue(sofabase):
             except:
                 self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
 
+        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
+
+            try:
+                device=endpointId.split(":")[2]
+                nativeCommand={}
+                
+                if controller=="PowerController":
+                    if command=='TurnOn':
+                        nativeCommand['on']=True
+                    elif command=='TurnOff':
+                        nativeCommand['on']=False
+                elif controller=="BrightnessController":
+                    if command=="SetBrightness":
+                        if int(payload['brightness'])>0:
+                            nativeCommand['on']=True
+                            nativeCommand['bri']=self.percentage(int(payload['brightness']), 255)
+                        else:
+                            nativeCommand['on']=False
+                elif controller=="ColorController":
+                    if command=="SetColor":
+                        self.log.info('Setcolor with HSB: %s' % payload)
+                        if type(payload['color']) is not dict:
+                            payloadColor=json.loads(payload['color'])
+                            self.log.info('Fixed payload color: %s' % payloadColor)
+                        else:
+                            payloadColor=payload['color']
+                        nativeCommand["bri"]=int(payloadColor['brightness']*255)
+                        nativeCommand["sat"]=int(payloadColor['saturation']*255)
+                        nativeCommand["hue"]=int((payloadColor['hue']/360)*65536)
+                        nativeCommand["transitiontime"]=10
+                        nativeCommand['on']=True
+
+                        #nativeCommand['bri']=self.percentage(int(payload['brightness']), 255)
+
+                elif controller=="ColorTemperatureController":
+                    if command=="SetColorTemperature":
+                        # back from CtiK to Mireds for Alexa>Hue
+                        nativeCommand['ct']=int(1000000/float(payload['colorTemperatureInKelvin']))
+               
+                if nativeCommand:
+                    await self.setHueLight(device, nativeCommand)
+                    response=await self.dataset.generateResponse(endpointId, correlationToken)
+                    return response
+                    
+            except:
+                self.log.error('Error executing state change.', exc_info=True)
+
+
 
         async def stateChange(self, endpointId, controller, command, payload):
     
@@ -314,6 +362,9 @@ class hue(sofabase):
                         controllerlist["BrightnessController"]=["brightness"]
                     if detail=="state/xy/0" or detail=="":
                         controllerlist["ColorController"]=["color"]
+                    if detail=="state/ct" or detail=="":
+                        controllerlist["ColorTemperatureController"]=["colorTemperatureInKelvin"]
+
                 elif nativeObject["type"] in ["Color temperature light"]:
                     if detail=="state/on" or detail=="":
                         controllerlist["PowerController"]=["powerState"]
