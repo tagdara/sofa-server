@@ -392,7 +392,7 @@ class sofaRest():
                     if jsondata['directive']['header']['name']=='ReportState':
                         path="/"+"/".join(jsondata['directive']['endpoint']['endpointId'].split(":")[1:])
                         controllers=await self.getPathControllers(path)
-                        response=self.dataset.generateStateReport(path, controllers, correlationToken=jsondata['directive'])
+                        response=self.dataset.generateStateReport(path, controllers, correlationToken=jsondata['directive']['header']['correlationToken'])
                     else:
                         self.log.info('<< %s %s / %s' % (jsondata['directive']['header']['name'],jsondata['directive']['endpoint']['endpointId'], jsondata))
                         response=await self.dataset.handleDirective(jsondata)

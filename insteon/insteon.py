@@ -596,14 +596,12 @@ class insteonSetter():
         self.log=log
         self.basicauth="Basic %s" % base64.encodebytes(("%s:%s" % (self.username,self.password)).encode('utf-8')).decode()
 
-
-    @asyncio.coroutine
-    def insteonRestCommand(self, client, url):
+    async def insteonRestCommand(self, client, url):
         
         try:
             headers = { "Authorization": self.basicauth }
-            data = yield from client.get(url, headers=headers)
-            html = yield from data.read() 
+            data = await client.get(url, headers=headers)
+            html = await data.read() 
             return html
         except:
             self.log.error("insteonRestCommand failed: %s" % url,exc_info=True)
@@ -631,10 +629,11 @@ class insteonSetter():
                 else:
                     url="http://%s/rest/nodes/%s/%s/%s/%s" % (self.insteonAddress, node, "set", nodeattrib.upper(), data[nodeattrib])
                 
-                #self.log.info('Using url: %s' % url)
+                self.log.info('Using url: %s' % url)
                 async with aiohttp.ClientSession() as client:
                     html = await self.insteonRestCommand(client, url)
                     root=et.fromstring(html)
+                    self.log.info('Returned from Using url: %s' % url)
                     return html
         except:
             self.log.error('Insteon setNode error: %s %s' % (node, data), exc_info=True)
@@ -762,10 +761,10 @@ class insteon(sofabase):
                         nativeCommand['ST']=self.percentage(int(payload['brightness']), 255)
                 elif controller=="ThermostatController":
                     if command=="SetTargetTemperature":
-                        nativeCommand['CLISPH']=int(payload['targetSetPoint'])*2
+                        nativeCommand['CLISPH']=int(payload['targetSetpoint']['value'])*2
                     if command=="SetThermostatMode":
-                        nativeCommand['CLIMD']=self.definitions.thermostatModesByName(payload['thermostatMode'])
-                        if payload['thermostatMode']=='OFF':
+                        nativeCommand['CLIMD']=self.definitions.thermostatModesByName(payload['thermostatMode']['value'])
+                        if payload['thermostatMode']['value']=='OFF':
                             nativeCommand['CLIFS']='0'
 
                 if nativeCommand:
@@ -848,10 +847,10 @@ class insteon(sofabase):
                         controllerlist["TemperatureSensor"]=["temperature"]
 
                     if detail=="property/CLISPH/value" or detail=="":
-                        controllerlist["ThermostatController"]=["targetSetPoint","thermostatMode"]
+                        controllerlist["ThermostatController"]=["targetSetpoint","thermostatMode"]
                     
                     if detail=="property/CLIMD/value" or detail=="":
-                        controllerlist["ThermostatController"]=["targetSetPoint","thermostatMode"]
+                        controllerlist["ThermostatController"]=["targetSetpoint","thermostatMode"]
                         
                 return controllerlist
             except KeyError:
@@ -899,7 +898,7 @@ class insteon(sofabase):
                         return {}
                     return int(float(nativeObj['property']['ST']['value'])/2)
                 
-                elif controllerProp=='targetSetPoint':
+                elif controllerProp=='targetSetpoint':
                     if nativeObj['property']['CLISPH']['value']==' ':
                         return {}
                     return int(float(nativeObj['property']['CLISPH']['value'])/2)

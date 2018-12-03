@@ -355,7 +355,7 @@ class sofaDataset():
 
 
             stateReport={"event": {"header": header, "endpoint":endpoint}, "payload": {}, "context": { "properties": proplist}}
-            self.log.debug('State report: %s' % stateReport)         
+            #self.log.debug('State report: %s' % stateReport)         
             return stateReport
         except:
             self.log.error('Error generating state report: %s' % path, exc_info=True)

@@ -811,13 +811,12 @@ class sofaWebUI():
 
             self.serverApp.router.add_get('/', self.root_handler)
             self.serverApp.router.add_get('/index.html', self.root_handler)
-            self.serverApp.router.add_get('/dist/beta.appcache', self.manifestHandler)
-            self.serverApp.router.add_static('/react/', path='/opt/s/fullstack_template/static') # probably not needed
+            self.serverApp.router.add_get('/beta.appcache', self.manifestHandler)
 
             self.serverApp.router.add_get('/directives', self.directivesHandler)
             self.serverApp.router.add_get('/properties', self.propertiesHandler)
 
-            self.serverApp.router.add_get('/controllercommands', self.controllerHandler)
+            #self.serverApp.router.add_get('/controllercommands', self.controllerHandler)
             self.serverApp.router.add_get('/data/{item:.+}', self.dataHandler)
             self.serverApp.router.add_get('/list/{list:.+}', self.listHandler)
             self.serverApp.router.add_get('/var/{list:.+}', self.varHandler)
@@ -842,9 +841,9 @@ class sofaWebUI():
             self.serverApp.router.add_get('/refresh', self.refresh_handler)  
             #self.serverApp.router.add_static('/css/', path='/opt/s/fullstack_template/static/css')
             self.serverApp.router.add_static('/dist/', path='/opt/s/fullstack_template/static/dist')
-
             self.serverApp.router.add_post('/data/{item:.+}', self.dataPostHandler)
             self.serverApp.router.add_static('/log/', path='/opt/beta/log')
+            self.serverApp.router.add_static('/', path='/opt/s/fullstack_template/static/dist')
 
             self.runner=aiohttp.web.AppRunner(self.serverApp)
             await self.runner.setup()

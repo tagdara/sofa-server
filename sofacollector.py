@@ -170,7 +170,7 @@ class SofaCollector(sofabase):
             try:
                 if not message:
                     return None
-                #self.log.info('Change Report: %s' % message)
+                self.log.info('Change Report: %s' % message)
                 device=self.getDeviceByEndpointId(message['event']['endpoint']['endpointId'])
 
                 if not device:

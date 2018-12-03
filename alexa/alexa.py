@@ -126,10 +126,11 @@ class alexaBridge(sofabase):
                                 response=await self.activationStarted(event)  
                                 await self.SQSearlyResponse(response)
                             
-                            response=await self.dataset.requestAlexaStateChange(event)
+                            response=await self.dataset.sendDirectiveToAdapter(event)
 
                             if 'correlationToken' in event["directive"]["header"] and response:
-                                response=await self.convertChangeToResponse(response)
+                                if response['event']['header']['name']!='Response':
+                                    response=await self.convertChangeToResponse(response)
                                 response['event']['header']['correlationToken']=event["directive"]["header"]['correlationToken']
                                 response['event']['endpoint']['scope']=event["directive"]["endpoint"]['scope']
                                 #self.log.info('Response: %s' % response)
@@ -295,7 +296,7 @@ class alexaBridge(sofabase):
         def alexadevices(self):
             
             try:
-                allowed_types=["LIGHT","SCENE_TRIGGER","ACTIVITY_TRIGGER"]
+                allowed_types=["LIGHT","SCENE_TRIGGER","ACTIVITY_TRIGGER","DEVICE"]
                 alexadevs=[]
                 for dev in self.dataset.devices:
                     try:

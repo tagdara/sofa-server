@@ -147,12 +147,27 @@ class influxServer(sofabase):
         async def virtualList(self, itempath, query={}):
 
             try:
-                if itempath=="powerState":
+                itempath=itempath.split('/')
+                if itempath[0]=="powerState":
                     qry='select endpoint,powerState from controller_property'
+                    if len(itempath)>1:
+                        qry=qry+" where endpoint='%s'" % itempath[1]
+                    self.log.info('Running query: %s' % qry)
                     result=self.influxclient.query(qry,database='beta')
                     return result.raw
-                    
-                if itempath=="query":
+
+                if itempath[0]=="last":
+                    qry="select endpoint,last(%s) from controller_property where endpoint='%s'" % (itempath[2], itempath[1])
+                    self.log.info('Running query: %s' % qry)
+                    result=self.influxclient.query(qry,database='beta')
+                    response=list(result.get_points())[0]
+                    self.log.info('Response: %s' % response)
+                    #return result.raw
+                    return response
+
+
+                if itempath[0]=="query":
+                    self.log.info('influx query: %s' % query)
                     qry=query
                     result=self.influxclient.query(qry,database='beta')
                     return result.raw

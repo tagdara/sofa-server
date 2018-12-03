@@ -131,7 +131,7 @@ class dyson(sofabase):
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(path))
                 if nativeObject['name'] not in self.dataset.localDevices:
                     if nativeObject["product_type"]=="455":
-                        return self.dataset.addDevice(nativeObject['name'], devices.smartThermostatFan('dyson/fan/%s' % deviceid, nativeObject['name'], supportedModes=["HEAT", "FAN", "OFF"] ))
+                        return self.dataset.addDevice(nativeObject['name'], devices.smartThermostatFan('dyson/fan/%s' % deviceid, nativeObject['name'], supportedModes=["AUTO", "HEAT", "FAN", "OFF"] ))
             
             except:
                 self.log.error('Error adding smart device', exc_info=True)
@@ -181,22 +181,25 @@ class dyson(sofabase):
                             fanspeed=str(int(payload['powerLevel'])//10)
                             if fanspeed=='0':
                                 fanspeed='1'
+                            nativeCommand['fan_mode']=FanMode.FAN
                             nativeCommand['fan_speed']=getattr(FanSpeed, 'FAN_SPEED_%s' % fanspeed)
  
 
                 elif controller=="ThermostatController":
                     if command=="SetThermostatMode":
-                        if payload['thermostatMode']=='HEAT':
+                        if payload['thermostatMode']['value']=='AUTO':
+                            nativeCommand['fan_mode']=FanMode.AUTO
+                        if payload['thermostatMode']['value']=='HEAT':
                             nativeCommand['fan_mode']=FanMode.FAN
                             nativeCommand['heat_mode']=HeatMode.HEAT_ON
-                        elif payload['thermostatMode']=='FAN':
+                        elif payload['thermostatMode']['value']=='FAN':
                             nativeCommand['fan_mode']=FanMode.FAN
                             nativeCommand['heat_mode']=HeatMode.HEAT_OFF
-                        elif payload['thermostatMode']=='OFF':
+                        elif payload['thermostatMode']['value']=='OFF':
                             nativeCommand['fan_mode']=FanMode.OFF
                     if command=="SetTargetTemperature":
                         #nativeCommand['heat_mode']=HeatMode.HEAT_ON
-                        nativeCommand['heat_target']=HeatTarget.fahrenheit(int(payload['targetSetPoint']))
+                        nativeCommand['heat_target']=HeatTarget.fahrenheit(int(payload['targetSetpoint']['value']))
 
                 if nativeCommand:
                     await self.setDyson(device, nativeCommand)
@@ -212,60 +215,6 @@ class dyson(sofabase):
                 self.log.error('Error executing state change.', exc_info=True)
 
 
-        async def stateChange(self, endpointId, controller, command, payload):
-            
-            try:
-                device=endpointId.split(":")[2]
-                nativeCommand={}
-                
-                if controller=="PowerController":
-                    if command=='TurnOn':
-                        nativeCommand['fan_mode']=FanMode.FAN
-                    elif command=='TurnOff':
-                        nativeCommand['fan_mode']=FanMode.OFF
-
-                elif controller=="PowerLevelController":
-                    if command=="SetPowerLevel":
-                        self.log.info('Fanspeed: %s' % FanSpeed)
-                        if payload['powerLevel']=='AUTO':
-                            fanspeed='AUTO'
-                            nativeCommand['fan_mode']=FanMode.AUTO
-                        else:
-                            fanspeed=str(int(payload['powerLevel'])//10)
-                            if fanspeed=='0':
-                                fanspeed='1'
-                            nativeCommand['fan_speed']=getattr(FanSpeed, 'FAN_SPEED_%s' % fanspeed)
- 
-
-                elif controller=="ThermostatController":
-                    if command=="SetThermostatMode":
-                        if payload['thermostatMode']=='HEAT':
-                            nativeCommand['fan_mode']=FanMode.FAN
-                            nativeCommand['heat_mode']=HeatMode.HEAT_ON
-                        elif payload['thermostatMode']=='FAN':
-                            nativeCommand['fan_mode']=FanMode.FAN
-                            nativeCommand['heat_mode']=HeatMode.HEAT_OFF
-                        elif payload['thermostatMode']=='OFF':
-                            nativeCommand['fan_mode']=FanMode.OFF
-                    if command=="SetTargetTemperature":
-                        #nativeCommand['heat_mode']=HeatMode.HEAT_ON
-                        nativeCommand['heat_target']=HeatTarget.fahrenheit(int(payload['targetSetPoint']))
-
-                if nativeCommand:
-                    await self.setDyson(device, nativeCommand)
-                    if device not in self.pendingChanges:
-                        self.pendingChanges.append(device)
-                    await self.waitPendingChange(device)
-                    updatedProperties=await self.getFanProperties(device)
-                    self.log.info('UpdatedProperties: %s' % updatedProperties)
-                    changeReport=await self.dataset.ingest({'fan': { device: {'state':updatedProperties}}})
-                    return changeReport
-                else:
-                    self.log.info('Could not find a command for: %s %s %s %s' % (device, controller, command, payload) )
-                    
-            except:
-                self.log.error('Error executing state change.', exc_info=True)
-                
         async def waitPendingChange(self, device):
         
             if device not in self.pendingChanges:
@@ -298,8 +247,8 @@ class dyson(sofabase):
                     if detail=="state/heat_mode" or detail=="state/fan_mode" or detail=="":
                         controllerlist=self.addControllerProps(controllerlist,"ThermostatController","thermostatMode")
                     if detail=='state/heat_target' or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,"ThermostatController","targetSetPoint")
-                    if detail=="state/fan_state" or detail=="":
+                        controllerlist=self.addControllerProps(controllerlist,"ThermostatController","targetSetpoint")
+                    if detail=="state/fan_state" or detail=="state/speed" or detail=="":
                         controllerlist=self.addControllerProps(controllerlist,"PowerLevelController","powerLevel")
                 
                 return controllerlist
@@ -312,19 +261,22 @@ class dyson(sofabase):
         def virtualControllerProperty(self, nativeObj, controllerProp):
             
             try:
-
+                self.log.info('cp %s' % controllerProp)
                 if controllerProp=='temperature':
                     return int(self.ktof(int(nativeObj['state']['temperature'])))
                 
-                elif controllerProp=='targetSetPoint':
+                elif controllerProp=='targetSetpoint':
                     return int(self.ktof(int(nativeObj['state']['heat_target'])/10))
                 
                 elif controllerProp=='powerLevel':
                     if nativeObj['state']['speed']=='AUTO':
+                        self.log.info('auto detected')
                         return 50 # this is such a hack but need to find a way to get actual speed since alexa api powerlevel is an int
                     return int(nativeObj['state']['speed'])*10
                     
                 elif controllerProp=='thermostatMode':
+                    if nativeObj['state']['fan_mode']=="AUTO":
+                        return "AUTO"
                     if nativeObj['state']['fan_mode']=='OFF':
                         return "OFF"
                     if nativeObj['state']['heat_mode']=='OFF':

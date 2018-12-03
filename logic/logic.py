@@ -16,6 +16,7 @@ import time
 import uuid
 import aiohttp
 from aiohttp import web
+import copy
 
 
 class logicServer(sofabase):
@@ -57,7 +58,17 @@ class logicServer(sofabase):
                     return '{"status":"failed", "reason":"No Save Handler Available for type %s"}' % dp[0]
                     
                 if result:
+                    if dp[0]=='automation':
+                        for auto in self.automations:
+                            await self.dataset.ingest({"activity": { auto : self.automations[auto] }})
+                    elif dp[0]=='mode':
+                        for mode in self.modes:
+                            await self.dataset.ingest({"mode": { mode : self.modes[mode] }})
+                    elif dp[0]=='scene':    
+                        for scene in self.scenes:
+                            await self.dataset.ingest({"scene": { scene : self.scenes[scene] }})
                     return '{"status":"success", "reason":"Save Handler completed for %s"}' % datapath
+
                 else:
                     return '{"status":"failed", "reason":"Save Handler did not complete for %s"}' % datapath
             
@@ -553,17 +564,20 @@ class logicServer(sofabase):
         async def sendAlexaCommand(self, command, controller, endpointId, payloadvalue=None, cookie={}, trigger={}):
             
             try:
-                
-                #self.log.info('obj: %s' % getattr(devices,controller+'Interface')().commands)
-                objcommands=getattr(devices,controller+'Interface')().commands
-                if command in objcommands:
-                    payload=objcommands[command]
-                else:
-                    payload={}
+                if type(payloadvalue) is dict:
+                    payload=payloadvalue
                     
-                for prop in payload:
-                    if payload[prop]=='value':
-                        payload[prop]=payloadvalue
+                else:
+                    #self.log.info('obj: %s' % getattr(devices,controller+'Interface')().commands)
+                    objcommands=getattr(devices,controller+'Interface')().commands
+                    if command in objcommands:
+                        payload=objcommands[command]
+                    else:
+                        payload={}
+                        
+                    for prop in payload:
+                        if payload[prop]=='value':
+                            payload[prop]=payloadvalue
                         
                 if trigger:
                     cookie={ "trigger": trigger }
@@ -579,9 +593,9 @@ class logicServer(sofabase):
                 self.log.error('Error executing Alexa Command', exc_info=True)
                 return {}
 
-        async def captureDeviceState(self, deviceName):
+        async def captureDeviceState(self, endpointId, deviceName):
             
-            try:            
+            try:
                 device=self.getDeviceByfriendlyName(deviceName)
                 if device:
                     devprops=await self.dataset.requestReportState(device['endpointId'])
@@ -591,7 +605,7 @@ class logicServer(sofabase):
                 self.log.error('Error saving device state', exc_info=True)
 
 
-        async def resetCapturedDeviceState(self, deviceName):
+        async def resetCapturedDeviceState(self, endpointId, deviceName):
             
             try:
                 self.log.info('Attempting to reset %s' % deviceName)
@@ -618,9 +632,9 @@ class logicServer(sofabase):
                                 # Need to figure out how to get back to the command from the property, but for now this
                                 # mostly just applies to lights so will shim in this fix
                                 if prop=='Alexa.BrightnessController.brightness':
-                                    await self.sendAlexaCommand('SetBrightness', 'BrightnessController', endpointId, oldprops[prop])
+                                    await self.sendAlexaCommand('SetBrightness', 'BrightnessController', endpointId, {"brightness": oldprops[prop]})
                                 elif prop=='Alexa.ColorController.color':
-                                    await self.sendAlexaCommand('SetColor', 'ColorController', endpointId, oldprops[prop])
+                                    await self.sendAlexaCommand('SetColor', 'ColorController', endpointId, {"color" : oldprops[prop]} )
                                 elif prop=='Alexa.PowerController.powerState':
                                     if oldprops[prop]=='ON':
                                         await self.sendAlexaCommand('TurnOn', 'PowerController', endpointId)
@@ -651,39 +665,47 @@ class logicServer(sofabase):
                     for condition in conditions:
                         if condition['endpointId'] not in devstateCache:
                             devstate=await self.dataset.requestReportState(condition['endpointId'])
+                            self.log.info('Devstate: %s' % devstate)
                             devstateCache[condition['endpointId']]=devstate['context']['properties']
                         devstate=devstateCache[condition['endpointId']]
-                        self.log.info('Devstate from condition for %s: %s' % (condition['endpointId'], devstate))
+                        #self.log.info('Devstate: %s %s' % ( condition['endpointId'], devstate))
                         for prop in devstate:
-                            if prop['namespace'].split('.')[1]==condition['controller'] and prop['name']==condition['propertyName']:
-                                if condition['operator']=='=' or condition=='==':
-                                    if prop['value']==condition['value']:
-                                        break
-                                elif condition['operator']=='!=':
-                                    if prop['value']!=condition['value']:
-                                        break
-                                elif condition['operator']=='>':
-                                    if prop['value']>condition['value']:
-                                        break
-                                elif condition['operator']=='<':
-                                    if prop['value']<condition['value']:
-                                        break
-                                elif condition['operator']=='>=':
-                                    if prop['value']>=condition['value']:
-                                        break
-                                elif condition['operator']=='<=':
-                                    if prop['value']<=condition['value']:
-                                        break
-                                elif condition['operator']=='contains':
-                                    if str(condition['value']) in str(prop['value']):
-                                        break
-                                self.log.info('Did not meet condition: %s %s' % (prop, condition))
-                                conditionMatch=False
-                                break
+                            if 'value' in condition['value']:
+                                condval=condition['value']['value']
+                                if prop['namespace'].split('.')[1]==condition['controller'] and prop['name']==condition['propertyName']:
+                                    if condition['operator']=='=' or condition=='==':
+                                        if prop['value']==condval:
+                                            break
+                                    elif condition['operator']=='!=':
+                                        if prop['value']!=condval:
+                                            break
+                                    elif condition['operator']=='>':
+                                        if prop['value']>condval:
+                                            break
+                                    elif condition['operator']=='<':
+                                        if prop['value']<condval:
+                                            break
+                                    elif condition['operator']=='>=':
+                                        if prop['value']>=condval:
+                                            break
+                                    elif condition['operator']=='<=':
+                                        if prop['value']<=condval:
+                                            break
+                                    elif condition['operator']=='contains':
+                                        if str(condval) in str(prop['value']):
+                                            break
+                            elif 'end' in condition['value']:
+                                condval=condition['value']
+                                if condition['value']['start']<prop['value'] and condition['value']['end']>prop['value']:
+                                    break
+                                else:
+                                    self.log.info('Failed check: %s<%s<%s' % ( condition['value']['start'], prop['value'], condition['value']['end']))
+                                
+                            self.log.info('!. %s did not meet condition: %s vs %s' % (activityName, prop['value'], condval))
+                            conditionMatch=False
+                            break
                                     
-
                     if not conditionMatch:           
-                        self.log.info('Did not meet conditions')
                         return False
                         
                 activity=self.automations[activityName]['actions']
@@ -699,12 +721,12 @@ class logicServer(sofabase):
                         self.log.info('Result of chunk: %s' % result)
                         chunk=[]
                     elif action['command']=="Alert":
-                        alert=action.copy()
+                        alert=copy.deepcopy(action)
                         if trigger:
                             if 'deviceName' in trigger:
-                                alert['value']=alert['value'].replace('[deviceName]',trigger['deviceName'])
+                                alert['value']['message']['text']=alert['value']['message']['text'].replace('[deviceName]',trigger['deviceName'])
                             if 'value' in trigger:
-                                alert['value']=alert['value'].replace('[value]',trigger['value'])
+                                alert['value']['message']['text']=alert['value']['message']['text'].replace('[value]',trigger['value'])
                         self.log.info('Result of Alert Macro: %s vs %s / trigger: %s ' % (alert,action, trigger))
                         chunk.append(alert)
                                 
@@ -737,7 +759,7 @@ class logicServer(sofabase):
                     if int(scene[light]['brightness'])==0:
                         acts.append({'command':'TurnOff', 'controller':'PowerController', 'endpointId':light, 'value': None})
                     else:
-                        acts.append({'command':'SetBrightness', 'controller':'BrightnessController', 'endpointId':light, 'value': int(scene[light]['brightness']) } )
+                        acts.append({'command':'SetBrightness', 'controller':'BrightnessController', 'endpointId':light, 'value': { "brightness": int(scene[light]['brightness']) }} )
                         
                 allacts = await asyncio.gather(*[self.sendAlexaCommand(action['command'], action['controller'], action['endpointId'], action['value']) for action in acts ])
                 self.log.info('scene %s result: %s' % (sceneName, allacts))    
@@ -819,15 +841,15 @@ class logicServer(sofabase):
                 
                 if controller=="LogicController":
                     if command=='Alert':
-                        self.log.info('Sending Alert: %s' % payload['message'])
-                        await self.runAlert(payload['message'])
+                        self.log.info('Sending Alert: %s' % payload['message']['text'])
+                        await self.runAlert(payload['message']['text'])
                     if command=='Delay':
                         self.log.info('Delaying for %s seconds' % payload['duration'])
                         await asyncio.sleep(int(payload['duration']))
                     if command=='Capture':
-                        await self.captureDeviceState(payload['device'])
+                        await self.captureDeviceState(payload['device']['endpointId'],payload['device']['name'])
                     if command=='Reset':
-                        await self.resetCapturedDeviceState(payload['device'])
+                        await self.resetCapturedDeviceState(payload['device']['endpointId'],payload['device']['name'])
                     else:
                         # Not a supported command then
                         return {}
@@ -862,62 +884,7 @@ class logicServer(sofabase):
                 self.log.error('Error applying state change', exc_info=True)
                 return []
                 
-                
-
-        async def xstateChange(self, endpointId, controller, command, payload):
-    
-            try:
-                device=endpointId.split(":")[2]
-                #self.log.info('Directive: %s %s %s %s' % (device, controller, command, payload))
-
-                if controller=="PowerController":
-                    if device in self.modes:
-                        self.log.info('Modes: %s ' % self.modes)
-                        if command=="TurnOn":
-                            changes=await self.dataset.ingest({ "mode" : { device: {'active':True }}})
-                            self.saveJSON('/opt/beta/config/modes.json',self.modes)
-                        if command=="TurnOff":
-                            
-                            changes=await self.dataset.ingest({ "mode" : { device: {'active':False }}})
-                            self.saveJSON('/opt/beta/config/modes.json',self.modes)
-                        self.log.info('Changes: %s' % changes)
-                        return changes
-                        
-                
-                if controller=="LogicController":
-                    if command=='Alert':
-                        self.log.info('Sending Alert: %s' % payload['message'])
-                        await self.runAlert(payload['message'])
-                        return []
-                    if command=='Delay':
-                        self.log.info('Delaying for %s seconds' % payload['duration'])
-                        await asyncio.sleep(int(payload['duration']))
-                        return []
-                    if command=='Capture':
-                        await self.captureDeviceState(payload['device'])
-                        return []
-                    if command=='Reset':
-                        await self.resetCapturedDeviceState(payload['device'])
-                        return []
-                        
-                if controller=="SceneController":
-                    if command=="Activate":
-                        if device in self.automations:
-                            await self.runActivityWait(device)
-                            # This should return the scene started ack
-                            return []
-                        elif device in self.scenes:
-                            await self.runScene(device)
-                            # This should return the scene started ack
-                            return []
-                            
-                self.log.info('Could not find scene or activity: %s' % device)
-                return []
-                
-            except:
-                self.log.error('Error applying state change', exc_info=True)
-                return []
-
+            
         def virtualControllers(self, itempath):
 
             try:
@@ -929,9 +896,11 @@ class logicServer(sofabase):
                     detail=""
 
                 controllerlist={}
-                #self.log.info('Itempath / Detail: %s %s' % (itempath, detail))
                 if itempath.startswith('/mode'):
                     controllerlist["PowerController"]=["powerState"]
+                elif itempath.startswith('/logic'):
+                    if detail=='time' or detail=='':
+                        controllerlist["LogicController"]=["time"]
 
                 return controllerlist
             except KeyError:
@@ -945,7 +914,7 @@ class logicServer(sofabase):
                 if controllerProp=='powerState':
                     return "ON" if nativeObj['active'] else "OFF"
                 if controllerProp=='time':
-                    return datetime.datetime.now()
+                    return datetime.datetime.now().time()
 
             except:
                 self.log.error('Error converting virtual controller property: %s %s' % (controllerProp, nativeObj), exc_info=True)
@@ -963,7 +932,7 @@ class logicServer(sofabase):
                                 triggerlist[trigname]=[]
                             triggerlist[trigname].append({ 'name':automation, 'type':'automation' })
                             
-                self.log.info('Triggers: %s' % len(triggerlist))
+                self.log.info('Triggers: %s' % (len(triggerlist)))
             except:
                 self.log.error('Error calculating trigger shorthand:', exc_info=True)
             

@@ -195,7 +195,7 @@ class sonybravia(sofabase):
 
         async def processUPNP(self, message):
             try:
-                self.log.debug('SSDP Message: %s' % message)
+                #self.log.debug('SSDP Message: %s' % message)
                 await self.getUpdate()
             except:
                 self.log.error('Error processing UPNP: %s' % message, exc_info=True)
@@ -225,7 +225,6 @@ class sonybravia(sofabase):
                             sysinfo=await self.tv.getState(category, systemdata[category][interface]['command'])
                             
                         if sysinfo:
-
                             if 'listitem' in systemdata[category][interface]:
                                 await self.dataset.ingest({'tv': { self.tvName: { interface: sysinfo[systemdata[category][interface]['listitem']] }}})
                             else:
