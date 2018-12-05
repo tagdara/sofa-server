@@ -291,5 +291,6 @@ class dyson(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=dyson(port=8098, adaptername="dyson", isAsync=True)
+    adapter=dyson(name="dyson")
     adapter.start()
+    

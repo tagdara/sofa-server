@@ -7,14 +7,6 @@ class Definitions():
 
     tvs = ['TV']
 
-    globalScenes = [    "Evening TV",
-                        "Bedtime",
-                        "Night",
-                        "Shutdown",
-                        "Upstairs Full"
-                    ]
-
-
 
 
 

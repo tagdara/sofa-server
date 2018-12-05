@@ -430,5 +430,5 @@ class yamaha(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=yamaha(port=9087, adaptername="yamaha", isAsync=True)
+    adapter=yamaha(name="yamaha")
     adapter.start()

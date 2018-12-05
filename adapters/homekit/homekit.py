@@ -209,8 +209,9 @@ class homekit(sofabase):
             self.log=log
             self.notify=notify
             self.polltime=5
-            self.persistfile='/opt/beta/homekit/homekit.pickle'
-
+            self.persistfile=self.dataset.config['pickle_file']
+            self.accessorymap=self.dataset.config['accessory_map']
+            
             if not loop:
                 self.loop = asyncio.new_event_loop()
             else:
@@ -220,10 +221,10 @@ class homekit(sofabase):
 
         async def start(self):
             self.log.info('Starting homekit')
-            self.dataset.ingest({'accessorymap': self.loadJSON('/opt/beta/homekit/accessorymap.json')})
+            self.dataset.ingest({'accessorymap': self.loadJSON(self.dataset.config['accessory_map'])})
             self.accloop=asyncio.new_event_loop()
             self.getAccessorySet()
-            self.driver = AccessoryDriver(self.acc, 51826, persist_file=self.persistfile, loop=self.accloop)
+            self.driver = AccessoryDriver(self.acc, self.dataset.config['accessory_port'], persist_file=self.persistfile, loop=self.accloop)
 
             try:
                 await self.getDiscoveryAdapters()
@@ -243,8 +244,8 @@ class homekit(sofabase):
         
                 if not self.acc:
                     self.log.info('No persistence file, creating Bridge instance')
-                    address = ("", 51111)
-                    self.acc = Bridge(address=address, display_name="Sofa Bridge", pincode=b"203-23-999")
+                    address = ("", self.dataset.config['bridge_port'])
+                    self.acc = Bridge(address=address, display_name=self.dataset.config['display_name'], pincode=self.dataset.config['pin_code'])
                 else:
                     self.log.info('Loaded persistence file')
             except:
@@ -384,8 +385,7 @@ class homekit(sofabase):
                         self.acc.set_driver(self.driver) # without this, IOS clients do not get notifications
                     except:                
                         self.log.error('Error',exc_info=True)        
-
-                self.saveJSON('/opt/beta/homekit/accessorymap.json', self.dataset.data['accessorymap'])
+                self.saveJSON(self.dataset.config['accessory_map'], self.dataset.data['accessorymap'])
             except:
                 self.log.error('Error AddSofaToAccessories', exc_info=True)
 
@@ -456,5 +456,5 @@ class homekit(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=homekit(port=9011, adaptername='homekit', isAsync=True)
+    adapter=homekit(name='homekit')
     adapter.start()

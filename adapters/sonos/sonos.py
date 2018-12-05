@@ -58,13 +58,13 @@ class sonos(sofabase):
             self.readDarkLogoImage()
                 
         def readLightLogoImage(self):
-            sonoslogofile = open("/opt/beta/sonos/sonoslogo.png", "rb")
+            sonoslogofile = open(os.path.join(os.path.dirname(__file__),"sonoslogo.png"), "rb")
             self.sonoslogo = sonoslogofile.read()
             self.lightlogo = self.sonoslogo
 
         def readDarkLogoImage(self):
             try:
-                sonoslogofile = open("/opt/beta/sonos/sonosdark.png", "rb")
+                sonoslogofile = open(os.path.join(os.path.dirname(__file__),"sonosdark.png"), "rb")
                 self.darklogo = sonoslogofile.read()
             except:
                 self.log.error('Error getting dark logo', exc_info=True)
@@ -85,8 +85,9 @@ class sonos(sofabase):
                 self.log.error('Error starting sonos service',exc_info=True)
             
 
-        def sonosQuery(self, resmd="", uri="", player="192.168.0.94"):
+        def sonosQuery(self, resmd="", uri=""):
         
+            player=self.dataset.config['player_ip']
             parentsource="MediaRenderer/"
             source="AVTransport"
             command="SetAVTransportURI"
@@ -632,5 +633,5 @@ class sonos(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=sonos(port=9090, adaptername='sonos', isAsync=True)
+    adapter=sonos(name='sonos')
     adapter.start()

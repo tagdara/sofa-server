@@ -225,7 +225,7 @@ class pcServer(sofabase):
             try:
                 if itempath=="agentversion":
                     try:
-                        with open('/opt/beta/pc/sofaagent.py','r') as agentfile:
+                        with open(os.path.join(os.path.dirname(__file__), 'sofaagent.py'),'r') as agentfile:
                             line = agentfile.readline()
                             version='0000'
                             while line and version=='0000':
@@ -241,7 +241,7 @@ class pcServer(sofabase):
 
                 if itempath=="agent":
                     try:
-                        with open('/opt/beta/pc/sofaagent.py','r') as agentfile:
+                        with open(os.path.join(os.path.dirname(__file__), 'sofaagent.py'),'r') as agentfile:
                             return agentfile.read()
                     except:
                         self.log.error("Error loading agent file" ,exc_info=True)
@@ -286,5 +286,5 @@ class pcServer(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=pcServer(port=8097, adaptername='pc', isAsync=True)
+    adapter=pcServer(name='pc')
     adapter.start()

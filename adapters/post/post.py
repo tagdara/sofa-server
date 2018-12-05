@@ -34,7 +34,7 @@ class post(sofabase):
                 self.loop=loop
             
         async def start(self):
-            self.targets=self.loadJSON('/opt/beta/config/posttargets.json')
+            self.targets=self.loadJSON('posttargets')
             for target in self.targets:
                 await self.dataset.ingest({"target": { target : self.targets[target] }})
             self.log.info('.. Starting post')
@@ -156,5 +156,5 @@ class post(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=post(port=8103, adaptername='post', isAsync=True)
+    adapter=post(name='post')
     adapter.start()

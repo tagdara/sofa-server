@@ -412,7 +412,7 @@ class elkm1(sofabase):
     
         def __init__(self, log=None, dataset=None, notify=None, loop=None, **kwargs):
             self.dataset=dataset
-            self.elkAddress='security.dayton.home'
+            self.config=self.dataset.config
             self.log=log
             self.definitions=definitions.elkDefinitions
             self.notify=notify
@@ -426,7 +426,7 @@ class elkm1(sofabase):
 
             try:
                 self.elkClient = Client(loop=self.loop, log=self.log, notify=self.notify, dataset=self.dataset)
-                await self.loop.create_connection(lambda: self.elkClient, self.elkAddress, 2101)
+                await self.loop.create_connection(lambda: self.elkClient, self.config["elk_address"], self.config["elk_port"])
 
             except:
                 self.log.error('Error', exc_info=True)
@@ -677,5 +677,5 @@ class elkm1(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=elkm1(port=8082, adaptername="elk", isAsync=True)
+    adapter=elkm1(name="elk")
     adapter.start()

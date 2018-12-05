@@ -599,5 +599,5 @@ class dlink(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=dlink(port=8085, adaptername='dlink', isAsync=True)
+    adapter=dlink(name='dlink')
     adapter.start()

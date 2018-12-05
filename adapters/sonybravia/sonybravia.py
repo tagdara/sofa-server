@@ -404,5 +404,5 @@ class sonybravia(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=sonybravia(port=9089, adaptername="sonybravia", isAsync=True)
+    adapter=sonybravia(name="sonybravia")
     adapter.start()

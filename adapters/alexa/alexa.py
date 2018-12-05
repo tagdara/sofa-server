@@ -344,8 +344,6 @@ class alexaBridge(sofabase):
             # Scenes have no properties
             return None
 
-        
-
 if __name__ == '__main__':
-    adapter=alexaBridge(port=8095, adaptername='alexa', isAsync=True)
+    adapter=alexaBridge(name='alexa')
     adapter.start()

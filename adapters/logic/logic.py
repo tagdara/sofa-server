@@ -837,11 +837,11 @@ class logicServer(sofabase):
                         self.log.info('Modes: %s ' % self.modes)
                         if command=="TurnOn":
                             changes=await self.dataset.ingest({ "mode" : { device: {'active':True }}})
-                            self.saveJSON('/opt/beta/config/modes.json',self.modes)
+                            self.saveJSON('modes',self.modes)
                         if command=="TurnOff":
                             
                             changes=await self.dataset.ingest({ "mode" : { device: {'active':False }}})
-                            self.saveJSON('/opt/beta/config/modes.json',self.modes)
+                            self.saveJSON('modes',self.modes)
                         self.log.info('Changes: %s' % changes)
                         response=await self.dataset.generateResponse(endpointId, correlationToken)
                         return response
@@ -1084,5 +1084,5 @@ class logicServer(sofabase):
                 
 
 if __name__ == '__main__':
-    adapter=logicServer(port=8096, adaptername='logic', isAsync=True)
+    adapter=logicServer(name='logic')
     adapter.start()

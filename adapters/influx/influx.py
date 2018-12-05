@@ -1,3 +1,5 @@
+#!/usr/bin/python3
+
 import sys, os
 # Add relative paths for the directory where the adapter is located as well as the parent
 sys.path.append(os.path.dirname(__file__))
@@ -189,5 +191,5 @@ class influxServer(sofabase):
         
 
 if __name__ == '__main__':
-    adapter=influxServer(port=8094, adaptername='influx', isAsync=True)
+    adapter=influxServer(name='influx')
     adapter.start()

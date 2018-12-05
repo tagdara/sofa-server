@@ -386,5 +386,5 @@ class hue(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=hue(port=8081, adaptername='hue', isAsync=True)
+    adapter=hue(name='hue')
     adapter.start()

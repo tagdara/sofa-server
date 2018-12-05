@@ -109,5 +109,5 @@ class weather(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=weather(port=9088)
+    adapter=weather(name='weather')
     adapter.start()

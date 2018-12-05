@@ -37,6 +37,76 @@ import uuid
 
 class sofaWebUI():
     
+    def __init__(self, config=None, loop=None, log=None, request=None, dataset=None, notify=None, discover=None, adapter=None):
+        self.config=config
+        self.log=log
+        self.loop = loop
+        self.request=request
+        self.workloadData={}
+        self.adapter=adapter
+        self.filecache={}
+        self.cardcache={}
+        self.fieldcache={}
+        self.dataset=dataset
+        self.wsclients=[]
+        self.wsclientInfo=[]
+        self.allowCardCaching=False
+        self.definitions=definitions.Definitions
+        self.notify=notify
+        self.discover=discover
+        self.imageCache={}
+        self.stateReportCache={}
+
+    async def initialize(self):
+
+        try:
+            self.serverAddress=self.config['web_address']
+            self.serverApp = web.Application()
+
+            self.serverApp.router.add_get('/', self.root_handler)
+            self.serverApp.router.add_get('/index.html', self.root_handler)
+            self.serverApp.router.add_get('/sofa.appcache', self.manifestHandler)
+
+            self.serverApp.router.add_get('/directives', self.directivesHandler)
+            self.serverApp.router.add_get('/properties', self.propertiesHandler)
+
+            #self.serverApp.router.add_get('/controllercommands', self.controllerHandler)
+            self.serverApp.router.add_get('/data/{item:.+}', self.dataHandler)
+            self.serverApp.router.add_get('/list/{list:.+}', self.listHandler)
+            self.serverApp.router.add_get('/var/{list:.+}', self.varHandler)
+            self.serverApp.router.add_post('/list/{list:.+}', self.listPostHandler)
+            
+            self.serverApp.router.add_get('/adapters', self.adapterHandler)            
+            self.serverApp.router.add_get('/devices', self.devicesHandler)      
+            self.serverApp.router.add_get('/deviceList', self.deviceListHandler)
+            self.serverApp.router.add_post('/deviceState', self.deviceStatePostHandler)
+            self.serverApp.router.add_post('/directive', self.directiveHandler) 
+            
+            self.serverApp.router.add_post('/add/{add:.+}', self.adapterAddHandler)
+            self.serverApp.router.add_post('/del/{del:.+}', self.adapterDelHandler)   
+            self.serverApp.router.add_post('/save/{save:.+}', self.adapterSaveHandler)
+            
+            self.serverApp.router.add_get('/displayCategory/{category:.+}', self.displayCategoryHandler)
+            self.serverApp.router.add_get('/image/{item:.+}', self.imageHandler)
+            self.serverApp.router.add_get('/thumbnail/{item:.+}', self.imageHandler)
+            self.serverApp.router.add_get('/ws', self.websocket_handler)
+            self.serverApp.router.add_get('/ws/', self.websocket_handler)    
+            self.serverApp.router.add_get('/refresh', self.refresh_handler)  
+            self.serverApp.router.add_post('/data/{item:.+}', self.dataPostHandler)
+            self.serverApp.router.add_static('/log/', path=self.dataset.baseConfig['logDirectory'])
+            self.serverApp.router.add_static('/', path=self.config['client_directory'])
+
+            self.runner=aiohttp.web.AppRunner(self.serverApp)
+            await self.runner.setup()
+
+            self.ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            self.ssl_context.load_cert_chain(self.config['certificate'], self.config['certificate_key'])
+
+            self.site = web.TCPSite(self.runner, self.config['web_address'], self.config['port'], ssl_context=self.ssl_context)
+            await self.site.start()
+
+        except:
+            self.log.error('Error with ui server', exc_info=True)
 
     async def requestField(self, source, item, client=None):
 
@@ -210,10 +280,6 @@ class sofaWebUI():
                             sendData[area][device]=self.dataset.getObjectFromPath("/devices/%s" % device, trynames=True)
                             #sendData[area].append(self.dataset.getObjectFromPath("/devices/%s" % device, trynames=True))
 
-            elif item=="areamap":
-                sendData={}
-                sendData=self.definitions.areaMap
-
             elif item=='cameras':
                 sendData={}
                 sendData=self.definitions.cameras
@@ -228,18 +294,6 @@ class sofaWebUI():
                 #for camera in self.definitions.cameras:
                 #    sendData[camera]=self.dataset.getObjectFromPath("/devices/%s" % camera, trynames=True)
 
-
-            elif item=='lightmap':
-                sendData={}
-                sendData=self.definitions.lightmap
-                # hack for now
-                #for camera in self.definitions.cameras:
-                #    sendData[camera]=self.dataset.getObjectFromPath("/devices/%s" % camera, trynames=True)
-
-                        
-            elif item=="globalScenes":
-                sendData=self.definitions.globalScenes
-            
             elif item.find('devices')==0:
                 self.log.info('datasender-Device request: %s' % urllib.parse.unquote(item))
                 sendData=self.dataset.getObjectFromPath("/%s" % urllib.parse.unquote(item), trynames=True)
@@ -344,7 +398,7 @@ class sofaWebUI():
 
     async def manifestUpdate(self):
         try:
-            async with aiofiles.open('/opt/s/fullstack_template/static/dist/beta.appcache', mode='r') as f:
+            async with aiofiles.open(os.path.join(self.config['client_directory'], 'sofa.appcache'), mode='r') as f:
                 manifest = await f.read()
                                            # v-auto
                 manifest=manifest.replace('# v-auto', '# v%s' % datetime.datetime.now().strftime("%I:%M%p on %B %d, %Y"))
@@ -501,38 +555,6 @@ class sofaWebUI():
             return web.Response(text='')
 
 
-
-    async def configReaderHandler(self, request):
-
-        try:
-            self.log.info('<- %s config/%s' % (request.remote, request.match_info['config']))
-            # this will need validation to prevent file system browsing
-            async with aiofiles.open('/opt/beta/config/%s.json' % request.match_info['config'],  mode='r') as f:
-                result = await f.read()
-                jsonresult=json.loads(result)
-                return web.Response(text=json.dumps(jsonresult, default=self.date_handler))
-        except:
-            self.log.error('Error getting config data file: %s' % request.match_info['config'], exc_info=True)
-            return web.Response(text='{}')
-
-
-    async def configWriterHandler(self, request):
-
-        if request.body_exists:
-            try:
-                body=await request.read()
-                jsondata=json.loads(body.decode('utf-8'))
-                self.log.info('Config Writer handler: %s ' % request)
-                # this will need validation to prevent file system browsing
-                async with aiofiles.open('/opt/beta/config/%s.json' % request.match_info['config'],  mode='w') as f:
-                    result = await f.write(json.dumps(jsondata, default=self.date_handler))
-                    response={"status":"saved", "filename":"%s.json" % request.match_info['config']}
-                    return web.Response(text=json.dumps(response, default=self.date_handler))
-            except:
-                self.log.error('Error saving config data file: %s' % request.match_info['config'], exc_info=True)
-                response={"status":"failed", "filename":"%s.json" % request.match_info['config']}
-                return web.Response(text=json.dumps(response, default=self.date_handler))
-
     async def adapterSaveHandler(self, request):
             
         if request.body_exists:
@@ -556,6 +578,7 @@ class sofaWebUI():
                 self.log.error('Error transferring command: %s' % body,exc_info=True)
 
             return web.Response(text=result)
+
 
     async def adapterDelHandler(self, request):
             
@@ -786,85 +809,9 @@ class sofaWebUI():
                 
 
     async def root_handler(self, request):
-        return web.FileResponse('/opt/s/fullstack_template/static/dist/index.html')
+        return web.FileResponse(os.path.join(self.config['client_directory'],'index.html'))
 
 
-    def __init__(self, port, loop=None, log=None, request=None, dataset=None, notify=None, discover=None, adapter=None):
-        self.log=log
-        self.port = port
-        self.loop = loop
-        self.request=request
-        self.workloadData={}
-        self.adapter=adapter
-        self.filecache={}
-        self.cardcache={}
-        self.fieldcache={}
-        self.dataset=dataset
-        self.wsclients=[]
-        self.wsclientInfo=[]
-        self.allowCardCaching=False
-        self.definitions=definitions.Definitions
-        self.notify=notify
-        self.discover=discover
-        self.imageCache={}
-        self.stateReportCache={}
-
-    async def initialize(self):
-
-        try:
-            self.serverAddress=self.dataset.baseConfig['restAddress']
-            self.serverApp = web.Application()
-
-            self.serverApp.router.add_get('/', self.root_handler)
-            self.serverApp.router.add_get('/index.html', self.root_handler)
-            self.serverApp.router.add_get('/beta.appcache', self.manifestHandler)
-
-            self.serverApp.router.add_get('/directives', self.directivesHandler)
-            self.serverApp.router.add_get('/properties', self.propertiesHandler)
-
-            #self.serverApp.router.add_get('/controllercommands', self.controllerHandler)
-            self.serverApp.router.add_get('/data/{item:.+}', self.dataHandler)
-            self.serverApp.router.add_get('/list/{list:.+}', self.listHandler)
-            self.serverApp.router.add_get('/var/{list:.+}', self.varHandler)
-            self.serverApp.router.add_post('/list/{list:.+}', self.listPostHandler)
-            
-            self.serverApp.router.add_get('/adapters', self.adapterHandler)            
-            self.serverApp.router.add_get('/devices', self.devicesHandler)      
-            self.serverApp.router.add_get('/deviceList', self.deviceListHandler)
-            self.serverApp.router.add_post('/deviceState', self.deviceStatePostHandler)
-            self.serverApp.router.add_post('/directive', self.directiveHandler) 
-            
-            self.serverApp.router.add_post('/add/{add:.+}', self.adapterAddHandler)
-            self.serverApp.router.add_post('/del/{del:.+}', self.adapterDelHandler)   
-            self.serverApp.router.add_post('/save/{save:.+}', self.adapterSaveHandler)            
-            self.serverApp.router.add_get('/config/{config:.+}', self.configReaderHandler)
-            self.serverApp.router.add_post('/config/{config:.+}', self.configWriterHandler)
-            self.serverApp.router.add_get('/displayCategory/{category:.+}', self.displayCategoryHandler)
-            self.serverApp.router.add_get('/image/{item:.+}', self.imageHandler)
-            self.serverApp.router.add_get('/thumbnail/{item:.+}', self.imageHandler)
-            self.serverApp.router.add_get('/ws', self.websocket_handler)
-            self.serverApp.router.add_get('/ws/', self.websocket_handler)    
-            self.serverApp.router.add_get('/refresh', self.refresh_handler)  
-            #self.serverApp.router.add_static('/css/', path='/opt/s/fullstack_template/static/css')
-            self.serverApp.router.add_static('/dist/', path='/opt/s/fullstack_template/static/dist')
-            self.serverApp.router.add_post('/data/{item:.+}', self.dataPostHandler)
-            self.serverApp.router.add_static('/log/', path='/opt/beta/log')
-            self.serverApp.router.add_static('/', path='/opt/s/fullstack_template/static/dist')
-
-            self.runner=aiohttp.web.AppRunner(self.serverApp)
-            await self.runner.setup()
-
-            ssl_cert = '/opt/cert/home.pem'
-            ssl_key = '/opt/cert/home.key'
-            self.ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-            self.ssl_context.load_cert_chain(str(ssl_cert), str(ssl_key))
-
-            self.site = web.TCPSite(self.runner, self.serverAddress, self.port, ssl_context=self.ssl_context)
-            await self.site.start()
-
-        except:
-            self.log.error('Error with ui server', exc_info=True)
-    
     async def wsBroadcast(self, message):
         
         try:
@@ -895,12 +842,12 @@ class ui(sofabase):
 
         def __init__(self, log=None, loop=None, dataset=None, notify=None, discover=None, request=None,  **kwargs):
             self.dataset=dataset
+            self.config=self.dataset.config
             self.dataset.data['cache']={}
             self.log=log
             self.notify=notify
             self.request=request
             self.discover=discover
-            self.port=443
             #self.loop = asyncio.new_event_loop()
             if not loop:
                 self.loop = asyncio.new_event_loop()
@@ -910,11 +857,9 @@ class ui(sofabase):
             
         async def start(self):
             self.log.info('.. Starting ui server')
-
-            self.uiServer = sofaWebUI(port=self.port, loop=self.loop, log=self.log, request=self.request, dataset=self.dataset, notify=self.notify, discover=self.discover, adapter=self)
+            self.uiServer = sofaWebUI(config=self.config, loop=self.loop, log=self.log, request=self.request, dataset=self.dataset, notify=self.notify, discover=self.discover, adapter=self)
             await self.uiServer.initialize()
-            await self.discover('sofa')
-
+            #await self.discover('sofa')
 
         async def handleStateReport(self, message):
         
@@ -954,7 +899,6 @@ class ui(sofabase):
             return subset
 
 
-
 if __name__ == '__main__':
-    adapter=ui(port=8380, adaptername='ui', isAsync=True)
+    adapter=ui(name='ui')
     adapter.start()

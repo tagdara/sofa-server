@@ -966,5 +966,5 @@ class insteon(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=insteon(port=8083, adaptername="insteon", isAsync=True)
+    adapter=insteon(name="insteon")
     adapter.start()

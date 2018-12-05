@@ -126,10 +126,10 @@ class sofabase():
                 return json.loads(configdata)
         except FileNotFoundError:
             self.log.error('.! Config file was not found for: %s' % self.adaptername)
-            return {}
+            sys.exit(1)
         except:
             self.log.error('Did not load config: %s' % self.adaptername, exc_info=True)
-            return {}
+            sys.exit(1)
 
     def saveConfig(self):
 
@@ -168,29 +168,26 @@ class sofabase():
         except:
             print('Did not get base config properly')
             sys.exit(1)
-            #self.log.debug('Did not load base config', exc_info=True)
-            #return {}
        
-
-    def __init__(self, port=8081, adaptername='sofa', isAsync=False, loglevel="INFO"):
+       
+    def __init__(self, name=None, loglevel="INFO"):
         
-        self.adaptername=adaptername
+        if name==None:
+            print('Adapter name not provided')
+            sys.exit(1)
+            
+        self.adaptername=name
         self.configpath=".."
         self.baseConfig=self.readBaseConfig(self.configpath)
         self.basepath=self.baseConfig['baseDirectory']
-        self.logsetup(self.baseConfig['logDirectory'], adaptername, loglevel, errorOnly=['aiohttp.access','gmqtt.mqtt.protocol','gmqtt.mqtt.handler','gmqtt.mqtt.package'])
-        self.log.info('Base Config: %s' % self.baseConfig)
+        self.logsetup(self.baseConfig['logDirectory'], self.adaptername, loglevel, errorOnly=['aiohttp.access','gmqtt.mqtt.protocol','gmqtt.mqtt.handler','gmqtt.mqtt.package'])
         self.loop = asyncio.get_event_loop()
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=3,)
-        self.restPort=port
-        self.isAsync=isAsync
         
         
     def start(self):
         self.log.info('.. Sofa 2 Adapter module initialized and starting.')
-
         asyncio.set_event_loop(self.loop)
-        
         self.dataset=sofadataset.sofaDataset(self.log, adaptername=self.adaptername, loop=self.loop)
         #self.dataset.baseConfig=self.readBaseConfig()
         self.dataset.baseConfig=self.baseConfig
@@ -202,16 +199,17 @@ class sofabase():
         
         self.log.info('.. starting MQTT client')
         self.restAddress = self.dataset.baseConfig['restAddress']
+        self.restPort=self.dataset.config['rest_port']
+        
         #self.mqttServer = self.sofaMQTT(self.adaptername, self.restPort, self.restAddress, dataset=self.dataset )
         self.mqttServer = sofamqtt.sofaMQTT(self.adaptername, self.restPort, self.restAddress, dataset=self.dataset)
 
-        
         self.dataset.notify=self.mqttServer.notify
         self.dataset.notifyChanges=self.mqttServer.notifyChanges
         self.dataset.mqttRequestReply=self.mqttServer.requestReply
         
-        self.log.info('.. starting REST server on port %s' % self.restPort)
-        self.restServer = sofarest.sofaRest(port=self.restPort, loop=self.loop, log=self.log, dataset=self.dataset)
+        self.log.info('.. starting REST server on port %s' % self.dataset.config['rest_port'])
+        self.restServer = sofarest.sofaRest(port=self.dataset.config['rest_port'], loop=self.loop, log=self.log, dataset=self.dataset)
         self.restServer.initialize()
 
         self.log.info('.. starting main adapter %s' % self.adaptername)
@@ -225,22 +223,15 @@ class sofabase():
         self.loop.run_until_complete(self.mqttServer.topicSubscribe())
         self.loop.run_until_complete(self.mqttServer.subscribeAdapterTopics())
         
-        if self.isAsync:
-            self.adapter.running=True
-            self.loop.run_until_complete(self.adapter.start())
-            #asyncio.ensure_future(self.adapter.start())
-        else:
-            try:
-                self.workload = asyncio.ensure_future(self.loop.run_in_executor(self.executor,self.adapter.start,))
-            except KeyboardInterrupt:  # pragma: no cover
-                pass
-    
+        self.adapter.running=True
+        self.loop.run_until_complete(self.adapter.start())
+
         self.restServer.adapter=self.adapter
         self.restServer.workloadData=self.adapter.dataset.data
         
         try:
             self.loop.run_forever()
-        except KeyboardInterrupt:  # pragma: no cover
+        except KeyboardInterrupt:
             pass
         except:
             self.log.error('Loop terminated', exc_info=True)
