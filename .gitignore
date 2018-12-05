@@ -1,0 +1,8 @@
+
+node_modules
+config
+log
+__pycache__
+*.pickle
+gitpush
+test
