@@ -402,19 +402,20 @@ class TemperatureSensorInterface(smartInterface):
                 item['scale']=self.scale
         return thisState
 
-class SwitchSensorInterface(smartInterface):
+class SwitchControllerInterface(smartInterface):
     
-    def __init__(self, pressState="none"):
-        self.controller="SwitchSensor"
+    def __init__(self, pressState="none", onLevel=100, SetOnLevel=None):
+        self.controller="SwitchController"
         self.pressState=pressState
+        self.onLevel=onLevel
         
     @property            
     def directives(self):
-        return {}
+        return { "SetOnLevel": { "onLevel": "percentage"} }
 
     @property          
     def props(self):
-        return { "pressState" : { "value": "string" }}
+        return { "pressState" : { "value": "string" }, "onLevel": { "value": "percentage" }}
 
     def updatePressState(self, value):
         if value=="ON":
@@ -930,9 +931,9 @@ class simpleLightWithSwitch(smartObject):
         self._displayCategories=["LIGHT"]
         self._description=description
         self._manufacturer=manufacturer
-        self.SwitchSensor=SwitchSensorInterface()
+        self.SwitchController=SwitchControllerInterface()
         self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
-        self._interfaces=[self.SwitchSensor, self.PowerController]
+        self._interfaces=[self.SwitchController, self.PowerController]
         self._path=path
         
 class dimmableLight(smartObject):
@@ -954,10 +955,10 @@ class dimmableLightWithSwitch(smartObject):
         self._displayCategories=["LIGHT"]
         self._description=description
         self._manufacturer=manufacturer
-        self.SwitchSensor=SwitchSensorInterface()
+        self.SwitchController=SwitchControllerInterface()
         self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
         self.BrightnessController=BrightnessControllerInterface(SetBrightness)
-        self._interfaces=[self.SwitchSensor, self.PowerController, self.BrightnessController]
+        self._interfaces=[self.SwitchController, self.PowerController, self.BrightnessController]
         self._path=path
         
 class lightSwitch(smartObject):
@@ -967,8 +968,8 @@ class lightSwitch(smartObject):
         self._displayCategories=["SWITCH"]
         self._description=description
         self._manufacturer=manufacturer
-        self.SwitchSensor=SwitchSensorInterface()
-        self._interfaces=[self.SwitchSensor]
+        self.SwitchController=SwitchControllerInterface()
+        self._interfaces=[self.SwitchController]
         self._path=path
         
 class tunableLight(smartObject):

@@ -301,9 +301,12 @@ class sofaDataset():
             for controller in controllers:
                 #self.log.info('Change in controller: %s %s' % (controller, controllers[controller]))
                 for prop in controllers[controller]:
-                    smartController=getattr(smartDevice,controller)
-                    smartProp=getattr(smartController, prop)
-                    setattr(smartController, prop, self.adapter.virtualControllerProperty(nativeObject, prop))
+                    try:
+                        smartController=getattr(smartDevice,controller)
+                        smartProp=getattr(smartController, prop)
+                        setattr(smartController, prop, self.adapter.virtualControllerProperty(nativeObject, prop))
+                    except:
+                        self.log.info('Invalid controller: %s' % controller, exc_info=True)
                 
             if controllers:
                 changeReport=smartDevice.changeReport(controllers)
@@ -418,7 +421,7 @@ class sofaDataset():
                         statereports=json.loads(statereports)
                         return statereports
                     else:
-                        self.log.info('Adapter not upgraded: %s - %s' % (adapter,statereports))
+                        self.log.info('Adapter not upgraded: %s - %s %s %s %s' % (adapter, devicelist, url, statereports))
                         return {}
 
                         

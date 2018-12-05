@@ -1,8 +1,11 @@
 #!/usr/bin/python3
 
-import sys
-sys.path.append('/opt/beta')
-from sofabase import sofabase
+import sys, os
+# Add relative paths for the directory where the adapter is located as well as the parent
+sys.path.append(os.path.dirname(__file__))
+sys.path.append(os.path.join(os.path.dirname(__file__),'..'))
+
+from sofabase import sofabase,adapterbase
 import devices
 
 import math
@@ -16,33 +19,11 @@ import base64
 from collections import defaultdict
 import xml.etree.ElementTree as et
 import urllib.request
+import socket
 
 import deepdiff
 from deepdiff import DeepDiff
 
-
-class insteonAuthentication():
-    
-    async def authenticate(self, client):
-        async with aiohttp.ClientSession() as client:
-            html = await self.authenticate(client)
-            return html
-
-            self.insteonAddress='lights.dayton.home'
-            self.port=80
-            self.username="admin"
-            self.password="$$lights11"
-            self.payload='<s:Envelope><s:Body><u:Authenticate xmlns:u="urn:udi-com:service:X_Insteon_Lighting_Service:1"><name>%s</name><id>%s</id></u:Authenticate></s:Body></s:Envelope>\r\n' % (self.username, self.password)
-            self.basicauth="Basic %s" % base64.encodebytes(("%s:%s" % (self.username,self.password)).encode('utf-8')).decode()
-
-            url = 'http://%s' % self.insteonAddress
-            headers = { "Authorization": self.basicauth, 
-                        "SOAPACTION": '"urn:udi-com:service:X_Insteon_Lighting_Service:1#Authenticate"'}
-
-            return await client.post(url, data=self.payload, headers=headers)        
-
-
-            
 class insteonCatalog():
     
     def __init__(self, log=None, dataset=None):
@@ -348,23 +329,34 @@ class insteonSubscription(asyncio.Protocol):
         except:
             self.log.error('Error getting node properties: %s' % url, exc_info=True)
 
-    def Setloglevel(self, level, transport):
+    def set_debug_level(self, level):
 
         try:
-            logstr="<s:Envelope><s:Body><u:SetDebugLevel xmlns:u=\"urn:udi-com:service:X_Insteon_Lighting_service:1\"><option>"+level+"</option></u:SetDebugLevel></s:Body></s:Envelope>"
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.connect((self.insteonAddress,self.port))
+            sock.settimeout(10.0)
+
+            logstr="<s:Envelope><s:Body><u:SetDebugLevel><option>"+level+"</option></u:SetDebugLevel></s:Body></s:Envelope>"
             loghead="POST /services HTTP/1.1\r\n"
             loghead+="Host: %s:%u\r\n" % (self.insteonAddress,self.port)
             loghead+="Content-Length: %u\r\n" % len(logstr)
             loghead+="Content-Type: text/xml; charset=\"utf-8\"\r\n"	
-            loghead+="Authorization: Basic "+ self.basicauth
+            loghead+="Authorization: "+ self.basicauth
             loghead+="SOAPACTION:\"urn:udi-com:service:X_Insteon_Lighting_Service:1#SetDebugLevel\"\r\n\r\n"
             loghead+=logstr+"\r\n"
-            transport.write(loghead.encode())
-            
-            #sock.send(loghead.encode())
-            answer = transport.recv(1024).decode()
-            #sock.close()
-            self.log.info('answer: %s' % answer)
+            sock.send(loghead.encode())
+            answer = sock.recv(1024).decode()
+            answer = sock.recv(1024).decode()
+            sock.close()
+            event=self.etree_to_dict(et.fromstring(answer))
+            result=event['{http://www.w3.org/2003/05/soap-envelope}Envelope']['{http://www.w3.org/2003/05/soap-envelope}Body']['UDIDefaultResponse']['status']
+            if result=='200':
+                self.log.info('.. ISY controller debug level now set to %s' % level)
+                return True
+            else:
+                self.log.error('!. Error setting ISY controller debug level level: %s' % answer)
+                return False
             # print "Set Log Level response: "+answer
             #if (answer.find("HTTP/1.1 200 OK") == -1):
             #    self.adapter.forwardevent(action="info",data="Could not set log level")
@@ -375,9 +367,40 @@ class insteonSubscription(asyncio.Protocol):
             #    #self.adapter.forwardevent(action="info",data="Log level set to "+level)
             #    return True
         except:
-            self.log.error('Error setting ISY Log Level',exc_info=True)
+            self.log.error('Error setting ISY controller debug level',exc_info=True)
             return False        
-                
+            
+    def get_debug_level(self):
+
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.connect((self.insteonAddress,self.port))
+            sock.settimeout(10.0)
+            logstr="<s:Envelope><s:Body><u:GetDebugLevel /></s:Body></s:Envelope>"
+            loghead="POST /services HTTP/1.1\r\n"
+            loghead+="Host: %s:%u\r\n" % (self.insteonAddress,self.port)
+            loghead+="Content-Length: %u\r\n" % len(logstr)
+            loghead+="Content-Type: text/xml; charset=\"utf-8\"\r\n"	
+            loghead+="Authorization: "+ self.basicauth
+            loghead+="SOAPACTION:\"urn:udi-com:service:X_Insteon_Lighting_Service:1#GetDebugLevel\"\r\n\r\n"
+            loghead+=logstr+"\r\n"
+            sock.send(loghead.encode())
+            answer = sock.recv(1024).decode()
+            answer = sock.recv(1024).decode()
+            sock.close()
+            event=self.etree_to_dict(et.fromstring(answer))
+            try:
+                level=int(event['{http://www.w3.org/2003/05/soap-envelope}Envelope']['{http://www.w3.org/2003/05/soap-envelope}Body']['DBG']['current'])
+                self.log.info('.. ISY controller debug level is %s' % level)
+            except:
+                self.log.error('.! Error getting debug level', exc_info=True)
+                level=0
+            return level
+        except:
+            self.log.error('Error setting ISY debug level',exc_info=True)
+            return False        
+               
     def sendSubscribeRequest(self, transport):
         try:
             subscribestr="<s:Envelope><s:Body><u:Subscribe xmlns:u=\"urn:udi-com:service:X_Insteon_Lighting_Service:1\"></u:Subscribe></s:Body></s:Envelope>"
@@ -400,10 +423,12 @@ class insteonSubscription(asyncio.Protocol):
             self.transport = transport
             self.is_open = True
             #self.log.info('Sending log level request')
-            #self.Setloglevel('3',self.transport)
+            if self.get_debug_level() < 3:
+                self.set_debug_level('3')
             self.log.info('Sending subscription request')
             self.sendSubscribeRequest(self.transport)
             self.sema = asyncio.Semaphore(5)
+
         except:
             self.log.error('Insteon Subscriber Connection made but something went wrong.', exc_info=True)
         
@@ -424,7 +449,8 @@ class insteonSubscription(asyncio.Protocol):
 
 
     def data_received(self, data):
-
+        
+        #self.log.info('insteon > (%s)' % data)
         self.eventdata=self.eventdata+data.decode()
         
         while (self.eventdata.find("<Event") > -1):
@@ -480,6 +506,12 @@ class insteonSubscription(asyncio.Protocol):
                 # confirm the node has changed. 
                 # Since this issues a request for each message that is wasted, consider eliminating this altogether,
                 # but confirm that all functionality is handled by a _3 (thermostats, etc)
+                
+                # Note that _3 commands only appear when the log level is set high enough, and that the ISY does not report
+                # when the log level has been lowered under a number of circumstances
+                
+                # TODO: use this as a check for expected _3 messages and reset the log level if they do not arrive
+                # in a reasonable amount of time.
                 
                 try:
                     try:
@@ -671,7 +703,7 @@ class insteonSetter():
         
 class insteon(sofabase):
 
-    class adapterProcess():
+    class adapterProcess(adapterbase):
     
         def __init__(self, log=None, dataset=None, notify=None, request=None, loop=None, **kwargs):
             self.dataset=dataset
@@ -759,11 +791,17 @@ class insteon(sofabase):
                 elif controller=="BrightnessController":
                     if command=="SetBrightness":
                         nativeCommand['ST']=self.percentage(int(payload['brightness']), 255)
+                elif controller=="SwitchController":
+                    if command=="SetOnLevel":
+                        nativeCommand['OL']=self.percentage(int(payload['onLevel']), 255)
+                        self.log.info('requested OL: %s %s' % (int(payload['onLevel']), nativeCommand['OL']))
+
                 elif controller=="ThermostatController":
                     if command=="SetTargetTemperature":
                         nativeCommand['CLISPH']=int(payload['targetSetpoint']['value'])*2
                     if command=="SetThermostatMode":
-                        nativeCommand['CLIMD']=self.definitions.thermostatModesByName(payload['thermostatMode']['value'])
+                        self.log.info('requested mode: %s' % payload['thermostatMode']['value'])
+                        nativeCommand['CLIMD']=self.definitions.thermostatModesByName[payload['thermostatMode']['value']]
                         if payload['thermostatMode']['value']=='OFF':
                             nativeCommand['CLIFS']='0'
 
@@ -835,22 +873,28 @@ class insteon(sofabase):
                 
                 if nativeObject["devicetype"] in ["light", "lightswitch"]:
                     if detail=="property/ST/value" or detail=="":
-                        controllerlist["PowerController"]=["powerState"]
+                        controllerlist=self.addControllerProps(controllerlist,"PowerController","powerState")
                         if nativeObject["property"]["ST"]["uom"].find("%")>-1:
-                            controllerlist["BrightnessController"]=["brightness"]
+                            controllerlist=self.addControllerProps(controllerlist,"BrightnessController","brightness")
+
+                if nativeObject["devicetype"] in ["lightswitch"]:
                     
-                    if detail=='pressState':
-                        controllerlist["SwitchSensor"]=["pressState"]
+                    if detail=='pressState' or detail=="":
+                        controllerlist=self.addControllerProps(controllerlist,"SwitchController","pressState")
+
+                    if detail=='property/OL/value' or detail=="":
+                        controllerlist=self.addControllerProps(controllerlist,"SwitchController","onLevel")
+
                 
                 elif nativeObject["devicetype"]=="thermostat":
                     if detail=="property/ST/value" or detail=="":
-                        controllerlist["TemperatureSensor"]=["temperature"]
+                        controllerlist=self.addControllerProps(controllerlist,"TemperatureSensor","temperature")
 
                     if detail=="property/CLISPH/value" or detail=="":
-                        controllerlist["ThermostatController"]=["targetSetpoint","thermostatMode"]
+                        controllerlist=self.addControllerProps(controllerlist,"ThermostatController","targetSetpoint")
                     
                     if detail=="property/CLIMD/value" or detail=="":
-                        controllerlist["ThermostatController"]=["targetSetpoint","thermostatMode"]
+                        controllerlist=self.addControllerProps(controllerlist,"ThermostatController","thermostatMode")
                         
                 return controllerlist
             except KeyError:
@@ -891,7 +935,13 @@ class insteon(sofabase):
                     elif nativeObj['pressState'] in ['DOF','DFOF']:
                         return "OFF"
                     return "NONE"
-                    
+
+                elif controllerProp=='onLevel':
+                    if 'OL' not in nativeObj['property']:
+                        return 100
+                    if nativeObj['property']['OL']['value']==' ':
+                        return {}
+                    return  int((float(nativeObj['property']['OL']['value'])/254)*100)
 
                 elif controllerProp=='temperature':
                     if nativeObj['property']['ST']['value']==' ':

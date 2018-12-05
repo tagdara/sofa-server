@@ -11,7 +11,7 @@ class Definitions():
     
     commands = {}
     
-    thermostatModesByName = { 'HEAT':'1','COOL':'2','AUTO':'3','FAN':'4','PROGRAM HEAT':'5','PROGRAM COOL':'6','PROGRAM AUTO':'7' }       
+    thermostatModesByName = { 'OFF':'0','HEAT':'1','COOL':'2','AUTO':'3','FAN':'4','PROGRAM HEAT':'5','PROGRAM COOL':'6','PROGRAM AUTO':'7' }       
 
     busyStates={
                     "0":"Not Busy",
