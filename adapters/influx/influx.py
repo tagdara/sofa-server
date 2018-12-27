@@ -161,10 +161,23 @@ class influxServer(sofabase):
                     return result.raw
 
                 if itempath[0]=="last":
-                    qry="select endpoint,last(%s) from controller_property where endpoint='%s'" % (itempath[2], itempath[1])
+                    if query:
+                        elist=json.loads(query)
+                        rgx="~ /%s/" % "|".join(elist)
+                        qry="select endpoint,last(%s) from controller_property where endpoint=%s group by endpoint" % (itempath[1], rgx)
+                    else:
+                        qry="select endpoint,last(%s) from controller_property where endpoint='%s'" % (itempath[2], itempath[1])
                     self.log.info('Running query: %s' % qry)
                     result=self.influxclient.query(qry,database='beta')
-                    response=list(result.get_points())[0]
+
+                    if query:
+                        response={}
+                        responselist=list(result.get_points())
+                        for dp in responselist:
+                            response[dp['endpoint']]=dp
+                            
+                    else:
+                        response=list(result.get_points())[0]
                     self.log.info('Response: %s' % response)
                     #return result.raw
                     return response

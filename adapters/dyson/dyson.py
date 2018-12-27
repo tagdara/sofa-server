@@ -131,7 +131,7 @@ class dyson(sofabase):
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(path))
                 if nativeObject['name'] not in self.dataset.localDevices:
                     if nativeObject["product_type"]=="455":
-                        return self.dataset.addDevice(nativeObject['name'], devices.smartThermostatFan('dyson/fan/%s' % deviceid, nativeObject['name'], supportedModes=["AUTO", "HEAT", "FAN", "OFF"] ))
+                        return self.dataset.addDevice(nativeObject['name'], devices.smartThermostatSpeedFan('dyson/fan/%s' % deviceid, nativeObject['name'], supportedModes=["AUTO", "HEAT", "COOL", "OFF"] ))
             
             except:
                 self.log.error('Error adding smart device', exc_info=True)
@@ -189,10 +189,14 @@ class dyson(sofabase):
                     if command=="SetThermostatMode":
                         if payload['thermostatMode']['value']=='AUTO':
                             nativeCommand['fan_mode']=FanMode.AUTO
+                            nativeCommand['heat_mode']=HeatMode.HEAT_OFF
                         if payload['thermostatMode']['value']=='HEAT':
                             nativeCommand['fan_mode']=FanMode.FAN
                             nativeCommand['heat_mode']=HeatMode.HEAT_ON
                         elif payload['thermostatMode']['value']=='FAN':
+                            nativeCommand['fan_mode']=FanMode.FAN
+                            nativeCommand['heat_mode']=HeatMode.HEAT_OFF
+                        elif payload['thermostatMode']['value']=='COOL':
                             nativeCommand['fan_mode']=FanMode.FAN
                             nativeCommand['heat_mode']=HeatMode.HEAT_OFF
                         elif payload['thermostatMode']['value']=='OFF':
@@ -278,7 +282,7 @@ class dyson(sofabase):
                     if nativeObj['state']['fan_mode']=='OFF':
                         return "OFF"
                     if nativeObj['state']['heat_mode']=='OFF':
-                        return 'FAN'
+                        return "COOL"
                         
                     self.log.info('Returning heat where fan mode is %s and heat mode is %s' % (nativeObj['state']['fan_mode'],nativeObj['state']['heat_mode']))
                     return 'HEAT'

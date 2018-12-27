@@ -102,7 +102,12 @@ class Client(asyncio.Protocol):
 
         try:
             #Check to see if this is a formatted command or a custom text screen.
-            elkdl=int(data[0:2],16)
+            try:
+                elkdl=int(data[0:2],16)
+            except ValueError:
+                self.log.warn('Custom text instead of command: %s' % data)
+                return "Custom"
+                
             data=data[2:elkdl+2]
             elkCommandCode=data[0:2]
             if elkCommandCode in self.definitions.elkCommands:

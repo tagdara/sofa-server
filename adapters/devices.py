@@ -280,6 +280,24 @@ class InputControllerInterface(smartInterface):
     def SelectInput(self, value):
         self.inputName=value            
 
+
+class RemoteControllerInterface(smartInterface):
+    
+    def __init__(self, PressRemoteButton=None):
+        self.controller="RemoteController"
+        if PressRemoteButton:
+            self.PressRemoteButton=PressRemoteButton
+
+    @property            
+    def directives(self):
+        return { "PressRemoteButton": { "buttonName": "string" }}
+
+    @property          
+    def props(self):
+        return {}
+    
+
+
 class LockControllerInterface(smartInterface):
     
     def __init__(self, lockState="LOCKED", Lock=None, Unlock=None):
@@ -703,7 +721,7 @@ class smartObject(object):
 
     @property
     def capabilities(self):
-        caps=[]
+        caps=[{ "type": "AlexaInterface", "interface": "Alexa", "version": "3"}]
         for obj in self.interfaces:
             caps.append(obj.capability)
         return caps
@@ -1028,14 +1046,15 @@ class receiver(smartObject):
         
 class tv(smartObject):
 
-    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, SelectInput=None, log=None, native=None):
+    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, SelectInput=None, PressRemoteButton=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["TV"]
         self._description=description
         self._manufacturer=manufacturer
         self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
         self.InputController=InputControllerInterface(SelectInput)
-        self._interfaces=[self.PowerController, self.InputController]
+        self.RemoteController=RemoteControllerInterface(PressRemoteButton)
+        self._interfaces=[self.PowerController, self.InputController, self.RemoteController]
         self._path=path
 
 class smartSpeaker(smartObject):
@@ -1064,7 +1083,7 @@ class smartPC(smartObject):
         
 class simpleThermostat(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", log=None, native=None):
+    def __init__(self, path, name, description="Simple temperature sensor", manufacturer="sofa", log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["THERMOSTAT"]
         self._description=description
@@ -1092,11 +1111,25 @@ class smartThermostatFan(smartObject):
         self._displayCategories=["THERMOSTAT"]
         self._description=description
         self._manufacturer=manufacturer
+        self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
+        self.TemperatureSensor=TemperatureSensorInterface()
+        self.ThermostatController=ThermostatControllerInterface(SetTargetTemperature, supportedModes=supportedModes)
+        self._interfaces=[self.TemperatureSensor, self.ThermostatController, self.PowerController]
+        self._path=path
+
+class smartThermostatSpeedFan(smartObject):
+    
+    def __init__(self, path, name, description="", manufacturer="sofa", SetPowerLevel=None, SetTargetTemperature=None, supportedModes=["HEAT", "COOL", "AUTO", "OFF"], log=None, native=None):
+        self._friendlyName=name
+        self._displayCategories=["THERMOSTAT"]
+        self._description=description
+        self._manufacturer=manufacturer
         self.PowerLevelController=PowerLevelControllerInterface(SetPowerLevel)
         self.TemperatureSensor=TemperatureSensorInterface()
         self.ThermostatController=ThermostatControllerInterface(SetTargetTemperature, supportedModes=supportedModes)
         self._interfaces=[self.TemperatureSensor, self.ThermostatController, self.PowerLevelController]
         self._path=path
+
         
 class simpleZone(smartObject):
     

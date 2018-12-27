@@ -247,6 +247,7 @@ class sofaDataset():
             patch = jsonpatch.JsonPatch.from_diff(self.oldNativeDevices, self.nativeDevices)
             
             if patch:
+                #self.log.info('Patch: %s' % patch)
                 return await self.updateDevicesFromPatch(patch)
             return {}
                 
@@ -280,7 +281,7 @@ class sofaDataset():
         except:
             self.log.error('Error with controllermap: %s ' % item['path'], exc_info=True)
 
-                        
+                      
     async def updateDeviceState(self, path, controllers={}, newDevice=False, correlationToken=None, patch=""):
 
         try:
@@ -298,16 +299,28 @@ class sofaDataset():
                 if hasattr(self.adapter, "virtualControllers"):
                     controllers=self.adapter.virtualControllers(path)
             
-            for controller in controllers:
+            unchanged=[]
+
+            changecontrollers = copy.deepcopy(controllers)            
+            for controller in changecontrollers:
                 #self.log.info('Change in controller: %s %s' % (controller, controllers[controller]))
-                for prop in controllers[controller]:
+                for prop in changecontrollers[controller]:
                     try:
                         smartController=getattr(smartDevice,controller)
                         smartProp=getattr(smartController, prop)
                         setattr(smartController, prop, self.adapter.virtualControllerProperty(nativeObject, prop))
+                        newProp=getattr(smartController, prop)
+                        if newProp==smartProp:
+                            self.log.debug("Property didn't change: %s.%s" % (controller, prop))
+                            controllers[controller].remove(prop)
+                            if not controllers[controller]:
+                                del controllers[controller]
+                            
                     except:
                         self.log.info('Invalid controller: %s' % controller, exc_info=True)
-                
+            
+            self.log.debug('Cleaned up Controllers: %s' % controllers)
+            
             if controllers:
                 changeReport=smartDevice.changeReport(controllers)
             else:
@@ -316,9 +329,9 @@ class sofaDataset():
             if changeReport and not newDevice:
                 try:
                     for prop in changeReport['payload']['change']['properties']:
-                        self.log.info('*> mqtt change: %s %s %s %s %s' % (changeReport['event']['endpoint']['cookie']['name'], changeReport['event']['endpoint']['endpointId'],prop['namespace'],prop['name'], prop['value'] ))
+                        self.log.info('[> mqtt change: %s %s %s %s %s' % (changeReport['event']['endpoint']['cookie']['name'], changeReport['event']['endpoint']['endpointId'],prop['namespace'],prop['name'], prop['value'] ))
                 except:
-                    self.log.info('*> mqtt changereport: %s' % changeReport, exc_info=True)
+                    self.log.info('[> mqtt changereport: %s' % changeReport, exc_info=True)
                 await self.notify('sofa/updates',json.dumps(changeReport))
                 return changeReport
         

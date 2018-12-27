@@ -158,7 +158,7 @@ class sonos(sofabase):
                         if device.is_subscribed:
                             if not device.events.empty():
                                 update=self.unpackEvent(device.events.get())
-                                #self.log.info('Ingesting change: %s %s' % (device.service.soco.uid, device.service.service_id))
+                                #self.log.info('Ingesting change: %s %s - %s' % (device.service.soco.uid, device.service.service_id, update))
                                 if device.service.service_id=='ZoneGroupTopology' and update:
                                     #self.log.info('Replacing  %s ZoneGroupTopology with: %s' % (device.service.soco.uid, update))
                                     if 'zone_player_uui_ds_in_group' in update:
@@ -167,6 +167,9 @@ class sonos(sofabase):
                                             update['zone_player_uui_ds_in_group']=await self.getGroupUUIDs(device.service.soco.uid)
                                             # And we might as well fix the fucking label while we're at it since that gets skipped too
                                             update['zone_group_name']=await self.getGroupName(device.service.soco.uid)
+                                        self.log.debug('fixed a bunch of zone_player shit: %s' % update)
+                                    else:
+                                        self.log.debug('zoneplayer update: %s' % update)
                                     await self.dataset.ingest(update, overwriteLevel='player/%s/%s' % (device.service.soco.uid, device.service.service_id) )
                                 else:
                                     #self.log.info('.> Update from %s:%s - %s' % (device.service.soco.uid, device.service.service_id, update ))
@@ -419,41 +422,52 @@ class sonos(sofabase):
             try:
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
                 self.log.debug('Checking object for controllers: %s' % nativeObject)
-                self.log.debug('Checking object path: %s' % itempath)
                 try:
                     detail=itempath.split("/",3)[3]
                 except:
                     detail=""
+                #self.log.info('Checking object path: %s %s' % (itempath, detail))
 
                 controllerlist={}
                 if "speaker" in nativeObject:
 
-                    if detail=="ZoneGroupTopology/zone_player_uui_ds_in_group":
-                        controllerlist["InputController"]=["input"]
-                        controllerlist["MusicController"]=["linked"]
-                        
+                    if detail in ["ZoneGroupTopology/zone_player_uui_ds_in_group", "ZoneGroupTopology/zone_group_name", "ZoneGroupTopology/zone_group_id", "DeviceProperties/is_idle"]:
+                        controllerlist=self.addControllerProps(controllerlist, "InputController", "input")
+                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "linked")
+                    if detail.startswith("ZoneGroupTopology/zone_group_state/ZoneGroups"):
+                        controllerlist=self.addControllerProps(controllerlist, "InputController", "input")
+                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "linked")
+                    if detail=="AVTransport/current_track_meta_data": 
+                        # On the very first track after a stop, current_track_meta_data doesnt exist so the individual data points
+                        # are not present to update and the whole thing comes across as a single item due to the way patches are handled
+                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "playbackState")
+                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "artist")
+                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "title")
+                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "album")
+                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "art")
                     if detail=="AVTransport/transport_state":
-                        controllerlist["MusicController"]=["playbackState"]
+                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "playbackState")
                     if detail=="AVTransport/current_track_meta_data/creator":
-                        controllerlist["MusicController"]=["artist"]
+                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "artist")
                     if detail=="AVTransport/current_track_meta_data/title":
-                        controllerlist["MusicController"]=["title"]
+                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "title")
                     if detail=="AVTransport/current_track_meta_data/album":  
-                        controllerlist["MusicController"]=["album"]
+                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "album")
                     if detail=="AVTransport/current_track_meta_data/album_art_uri":
-                        controllerlist["MusicController"]=["art"]
+                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "art")
                     if detail=="AVTransport/current_track_uri":
-                        controllerlist["MusicController"]=["url"]
+                        controllerlist=self.addControllerProps(controllerlist,"MusicController", "url")
 
                     if detail=="RenderingControl/volume/Master":
-                        controllerlist["SpeakerController"]=["volume"]
+                        controllerlist=self.addControllerProps(controllerlist, "SpeakerController", "volume")
                     if detail=="RenderingControl/mute/Master":
-                        controllerlist["SpeakerController"]=["muted"]
+                        controllerlist=self.addControllerProps(controllerlist, "SpeakerController", "muted")
 
                     if detail=="":    
-                        controllerlist["MusicController"]=["artist", "title", "album", "url", "art", "linked", "playbackState"]
-                        controllerlist["SpeakerController"]=["volume","muted"]
-                        controllerlist["InputController"]=["input"]
+                        controllerlist={    "MusicController" : ["artist", "title", "album", "url", "art", "linked", "playbackState"],
+                                            "SpeakerController": ["volume","muted"],
+                                            "InputController": ["input"]
+                                        }
                         
                 return controllerlist
             except:
@@ -463,25 +477,34 @@ class sonos(sofabase):
         def getCoordinator(self, nativeObj):
             
             try:
+                #self.log.info('zonestatus: %s' %  nativeObj['ZoneGroupTopology'])
+                playername=nativeObj['name']
                 # Sonos doesn't always populate the zone_group_name field, even when a player is grouped.  It's probably just a Sonos
                 # thing, but it might be a Soco thing.  Anyway, here's Wonderwall.
                 if 'zone_group_state' not in nativeObj['ZoneGroupTopology']:
+                    self.log.debug('getCoordinator: Player %s/%s has no zone_group_state - returning self' % (nativeObj['name'], nativeObj['speaker']['uid']))
                     return nativeObj
                 for group in nativeObj['ZoneGroupTopology']['zone_group_state']['ZoneGroups']['ZoneGroup']:
                     if group['@Coordinator']==nativeObj['speaker']['uid']:
+                        self.log.debug('getCoordinator: Player %s/%s is a coordinator for %s - returning self' % (nativeObj['name'], nativeObj['speaker']['uid'], group['@ID']))
                         return nativeObj
                     #ugh so inconsistent
                     if type(group['ZoneGroupMember'])!=list:
                         group['ZoneGroupMember']=[group['ZoneGroupMember']]
+                    found=False
                     for member in group['ZoneGroupMember']:
                         try:
                             if member['@UUID']==nativeObj['speaker']['uid']:
-                                return self.dataset.nativeDevices['player'][group['@Coordinator']]
+                                self.log.debug('getCoordinator: Player %s/%s is a member of group %s - returning coordinator %s' % (nativeObj['name'], nativeObj['speaker']['uid'], group['@ID'], self.dataset.nativeDevices['player'][group['@Coordinator']]))
+                                currentbest=self.dataset.nativeDevices['player'][group['@Coordinator']]
+                                found=True
                         except:
                             self.log.info('Bad Member: %s %s' % (nativeObj['name'], member))
+                    if found==True:
+                        return currentbest
                         
                 # If not all of that, then lets just assume it's not grouped.
-                self.log.info('Didnt find coordinator for %s: %s' % (nativeObj['name'],nativeObj['ZoneGroupTopology']))
+                self.log.debug('getCoordinator: Player %s/%s didnt find coordinator for %s: %s - returning self' % (nativeObj['name'], nativeObj['speaker']['uid'], nativeObj['name'],nativeObj['ZoneGroupTopology']))
                 return nativeObj
 
             except:
@@ -490,7 +513,9 @@ class sonos(sofabase):
             
 
         def virtualControllerProperty(self, nativeObj, controllerProp):
-        
+            
+            coordinator=self.getCoordinator(nativeObj)
+            
             if controllerProp=='volume':
                 try:
                     return int(nativeObj['RenderingControl']['volume']['Master'])
@@ -515,7 +540,7 @@ class sonos(sofabase):
                     # Sonos doesn't always populate the zone_group_name field, even when a player is grouped.  It's probably just a Sonos
                     # thing, but it might be a Soco thing.  Anyway, here's Wonderwall.
                     #if nativeObj['ZoneGroupTopology']['zone_group_name']==None:
-                    return self.getCoordinator(nativeObj)['name']
+                    return coordinator['name']
 
                     # Sometimes it's right tho   
                     # But we're still not using it as it's kinda arbitrary
@@ -527,7 +552,7 @@ class sonos(sofabase):
             elif controllerProp=='artist':
                 
                 try:
-                    coordinator=self.getCoordinator(nativeObj)
+                    #self.log.info('Updating artist: %s %s' % (coordinator['AVTransport']['current_track_meta_data']['creator'], coordinator['AVTransport']['current_track_meta_data']))
                     return coordinator['AVTransport']['current_track_meta_data']['creator']
 
                 except:
@@ -536,7 +561,6 @@ class sonos(sofabase):
 
             elif controllerProp=='title':
                 try:                    
-                    coordinator=self.getCoordinator(nativeObj)
                     return coordinator['AVTransport']['current_track_meta_data']['title']
                 except:
                     self.log.debug('Error checking title')
@@ -544,7 +568,6 @@ class sonos(sofabase):
 
             elif controllerProp=='album':
                 try:
-                    coordinator=self.getCoordinator(nativeObj)
                     return coordinator['AVTransport']['current_track_meta_data']['album']
                 except:
                     self.log.debug('Error checking album')
@@ -552,7 +575,6 @@ class sonos(sofabase):
 
             elif controllerProp=='art':
                 try:
-                    coordinator=self.getCoordinator(nativeObj)
                     return "/image/sonos/player/%s/AVTransport/current_track_meta_data/album_art_uri?%s" % (coordinator['speaker']['uid'], coordinator['AVTransport']['current_track_meta_data']['album'])
                     #return coordinator['AVTransport']['current_track_meta_data']['album_art_uri']
                 except:
@@ -562,7 +584,6 @@ class sonos(sofabase):
 
             elif controllerProp=='url':
                 try:
-                    coordinator=self.getCoordinator(nativeObj)
                     return coordinator['AVTransport']['enqueued_transport_uri']
                 except:
                     self.log.debug('Error checking url')

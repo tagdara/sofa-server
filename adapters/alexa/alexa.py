@@ -117,9 +117,9 @@ class alexaBridge(sofabase):
                         command=event["directive"]["header"]['name']
                         if command=='Discover':
                             #self.log.info('Discover Request.  Building response')
-                            response=self.alexaDiscovery(messageId)
+                                response=self.alexaDiscovery(messageId)
                             #self.log.info('Discover response complete:'+str(response))
-                            return response
+                                return response
                         elif command=='ReportState':
                             response=await self.dataset.requestReportState(event['directive']['endpoint']['endpointId'])
                             #self.log.info('Reportstate: %s' % response)
@@ -300,14 +300,13 @@ class alexaBridge(sofabase):
         def alexadevices(self):
             
             try:
-                allowed_types=["LIGHT","SCENE_TRIGGER","ACTIVITY_TRIGGER","DEVICE"]
                 alexadevs=[]
                 for dev in self.dataset.devices:
                     try:
                         if dev in self.dataset.config['excluded_devices']:
                             alexadev=False
                         else:
-                            if self.dataset.devices[dev]['displayCategories'][0] in allowed_types:
+                            if self.dataset.devices[dev]['displayCategories'][0] in self.dataset.config['allowed_types']:
                                 alexadev=True
                                 for cap in self.dataset.devices[dev]['capabilities']:
                                     if not cap['interface'].startswith('Alexa'):

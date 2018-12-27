@@ -166,12 +166,24 @@ class SofaCollector(sofabase):
                 self.log.error('Error updating from state report', exc_info=True)
 
 
+        def shortLogChange(self, changereport):
+            
+            try:
+                shortchange=changereport['event']['endpoint']['endpointId']
+                for change in changereport['payload']['change']['properties']:
+                    shortchange+=(' %s.%s=%s' % (change['namespace'].split('.')[1], change['name'], change['value']))
+                return shortchange
+            except:
+                #self.log.error('Error with shortchange', exc_info=True)
+                return changereport
+                
+
         async def handleChangeReport(self, message):
             
             try:
                 if not message:
                     return None
-                self.log.info('Change Report: %s' % message)
+                self.log.info('Change Report: %s' % self.shortLogChange(message))
                 device=self.getDeviceByEndpointId(message['event']['endpoint']['endpointId'])
 
                 if not device:

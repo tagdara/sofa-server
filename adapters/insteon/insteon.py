@@ -773,7 +773,8 @@ class insteon(sofabase):
                         
                 elif nativeObject["devicetype"]=="thermostat":
                     if nativeObject['pnode']==deviceid:
-                        return self.dataset.addDevice(nativeObject['name'], devices.smartThermostat('insteon/node/%s' % deviceid, nativeObject['name'], supportedModes=["HEAT", "FAN", "OFF"] ))
+                        #return self.dataset.addDevice(nativeObject['name'], devices.smartThermostat('insteon/node/%s' % deviceid, nativeObject['name'], supportedModes=["HEAT", "FAN", "OFF"] ))
+                        return self.dataset.addDevice(nativeObject['name'], devices.smartThermostat('insteon/node/%s' % deviceid, nativeObject['name'], supportedModes=["HEAT", "OFF"] ))
             
             return False
 

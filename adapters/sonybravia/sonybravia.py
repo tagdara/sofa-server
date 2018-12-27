@@ -133,7 +133,7 @@ class sonyRest():
 
         else:
             tree = response.read()
-            self.log.info('<- command Sent: %s' % str(tree))
+            #self.log.info('<- command Sent: %s' % str(tree))
             return tree
 
 
@@ -181,7 +181,7 @@ class sonyRest():
 
 class sonybravia(sofabase):
 
-    class adapterProcess():
+    class adapterProcess(adapterbase):
 
 
         def __init__(self, log=None, dataset=None, notify=None, request=None, loop=None, **kwargs):
@@ -199,30 +199,33 @@ class sonybravia(sofabase):
 
         async def processUPNP(self, message):
             try:
-                #self.log.debug('SSDP Message: %s' % message)
                 await self.getUpdate()
             except:
                 self.log.error('Error processing UPNP: %s' % message, exc_info=True)
             
 
+        async def getInitialData(self):
+
+            systemdata={    'system':       {   'systemInformation': { 'command':'getSystemInformation', 'listitem':0 },
+                                                'remoteCommands': { 'command':'getRemoteControllerInfo', 'listitem':1 }},
+                            'appControl':   {   'applications': {'command':'getApplicationList'}}}
+            return await self.getStates(systemdata)
+
         async def getUpdate(self):
             
-            systemdata={    'system':       {   'power': { 'command':'getPowerStatus', 'listitem':0 },
-                                                'systemInformation': { 'command':'getSystemInformation', 'listitem':0 },
-                                                'remoteCommands': { 'command':'getRemoteControllerInfo', 'listitem':1 }
-                                            },
-                            'appControl':   {   'applications': {'command':'getApplicationList'}
-                                            },
+            systemdata={    'system':       {   'power': { 'command':'getPowerStatus', 'listitem':0 }},
                             'avContent':    {   'playingContent': {'command':'getPlayingContentInfo', 'listitem':0 },
-                                                'inputStatus': {'command':'getCurrentExternalInputsStatus', 'listitem':0 }
-                                            }
+                                                'inputStatus': {'command':'getCurrentExternalInputsStatus', 'listitem':0 }}}
+            return await self.getStates(systemdata)
 
-                        }
 
+        async def getStates(self, systemdata):
+            
+            alldata={}
+            
             try:
                 for category in systemdata:
                     for interface in systemdata[category]:
-                        self.log.debug('Interface: %s' % systemdata[category][interface])
                         if 'params' in systemdata[category][interface]:
                             sysinfo=await self.tv.getState(category, systemdata[category][interface]['command'], params=systemdata[category]['params'])
                         else:
@@ -233,24 +236,14 @@ class sonybravia(sofabase):
                                 await self.dataset.ingest({'tv': { self.tvName: { interface: sysinfo[systemdata[category][interface]['listitem']] }}})
                             else:
                                 await self.dataset.ingest({'tv': { self.tvName: { interface: sysinfo }}})
+                        if category not in alldata:
+                            alldata[category]={}
+                        alldata[category][interface]=sysinfo
+                return alldata
+                
             except:
                 self.log.error('error with update',exc_info=True)
 
-        async def oldupdate(self):    
-            
-                sysinfo=await self.tv.getState('system','getSystemInformation')
-                await self.dataset.ingest({'tv': {'systemInformation': sysinfo[0]}})
-                sysinfo=await self.tv.getState('system','getPowerStatus')
-                await self.dataset.ingest({'tv': {'status': sysinfo[0]}})
-                sysinfo=await self.tv.getState('system','getRemoteControllerInfo')
-                await self.dataset.ingest({'tv': {'remoteCommands': sysinfo[1]}})
-                syscmd=await self.tv.getState('system','getMethodTypes',params=['1.0'])
-                self.log.info('Syscmd: %s' % syscmd)
-                sysinfo=await self.tv.getState('appControl','getApplicationList')
-                #sysinfo=await self.tv.getState('appControl','getMethodTypes',params=['1.0'])
-                await self.dataset.ingest({'tv': {'appControl': sysinfo}})
-                #self.loop.run_until_complete(self.tv.getState('appControl','getMethodTypes',params=['1.0']))
-            
         async def getTVname(self):
             
             sysinfo=await self.tv.getState('system','getSystemInformation')
@@ -261,6 +254,7 @@ class sonybravia(sofabase):
             self.tvName=await self.getTVname()
 
             try:
+                await self.getInitialData()
                 await self.getUpdate()
             except:
                 self.log.error('error with update',exc_info=True)
@@ -309,7 +303,7 @@ class sonybravia(sofabase):
         def addSmartTV(self, deviceid, name="Bravia"):
             
             nativeObject=self.dataset.nativeDevices['tv'][deviceid]
-            if name not in self.dataset.devices:
+            if name not in self.dataset.localDevices:
                 if "systemInformation" in nativeObject and "power" in nativeObject:
                     return self.dataset.addDevice(name, devices.tv('sonybravia/tv/%s' % deviceid, name))
             
@@ -320,7 +314,7 @@ class sonybravia(sofabase):
             try:
                 for code in self.dataset.nativeDevices['tv']['BRAVIA']['remoteCommands']:
                     if code['name']==codename:
-                        self.log.info('Found code for %s: %s' % (codename, code['value']))
+                        #self.log.info('Found code for %s: %s' % (codename, code['value']))
                         return code['value']
                 self.log.info('No code found for %s' % codename)
                 return ''
@@ -347,10 +341,16 @@ class sonybravia(sofabase):
                             sysinfo=await self.tv.remoteControl(self.findRemoteCode('Home'))
                         else:
                             sysinfo=await self.tv.getState('avContent','setPlayContent',params={"uri":payload['input']})
-                        
-                if sysinfo:      
-                    self.log.info('-> command response: %s' % sysinfo)
-                    await self.getUpdate()
+                            if payload['input'].startswith('extInput:cec'):
+                                # takes slightly longer for CEC sources to switch than raw AV inputs
+                                await asyncio.sleep(.2)
+
+                if controller=="RemoteController":
+                    if command=='PressRemoteButton':
+                        if self.findRemoteCode(payload['buttonName']):
+                            sysinfo=await self.tv.remoteControl(self.findRemoteCode(payload['buttonName']))
+
+                await self.getUpdate()
                     
                 response=await self.dataset.generateResponse(endpointId, correlationToken)
                 return response
@@ -361,13 +361,25 @@ class sonybravia(sofabase):
 
                 
         def virtualControllers(self, itempath):
+            
+            nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
+                
+            try:
+                detail=itempath.split("/",3)[3]
+            except:
+                detail=""
 
+            controllerlist={}
+            
             try:
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
                 controllerlist={}
-                if "systemInformation" in nativeObject:
-                    controllerlist["PowerController"]=["powerState"]
-                    controllerlist["InputController"]=["input"]
+                
+                if detail=="power/status" or detail=="":
+                    controllerlist=self.addControllerProps(controllerlist,"PowerController","powerState")
+                if detail=="playingContent/uri" or detail=="":
+                    controllerlist=self.addControllerProps(controllerlist,"InputController","input")
+
                 return controllerlist
             except:
                 self.log.error('Error getting virtual controller types for %s' % nativeObj, exc_info=True)
@@ -384,7 +396,10 @@ class sonybravia(sofabase):
                 try:
                     return nativeObj['playingContent']['title']
                 except KeyError:
-                    return 'Off'
+                    if nativeObj['power']['status']=="active":
+                        return 'Android TV'
+                    else:
+                        return "Off"
                 except:
                     self.log.error('Error checking input status', exc_info=True)
                 
@@ -397,6 +412,10 @@ class sonybravia(sofabase):
             try:
                 if itempath=="inputs":
                     return self.dataset.nativeDevices['tv']['BRAVIA']['inputStatus']
+
+                if itempath=="status":
+                    return await self.getUpdate()
+
                 return {}
 
             except:

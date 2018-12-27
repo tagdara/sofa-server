@@ -56,6 +56,7 @@ class sofaWebUI():
         self.discover=discover
         self.imageCache={}
         self.stateReportCache={}
+        self.layout={}
 
     async def initialize(self):
 
@@ -69,6 +70,7 @@ class sofaWebUI():
 
             self.serverApp.router.add_get('/directives', self.directivesHandler)
             self.serverApp.router.add_get('/properties', self.propertiesHandler)
+            self.serverApp.router.add_get('/layout', self.layoutHandler)
 
             #self.serverApp.router.add_get('/controllercommands', self.controllerHandler)
             self.serverApp.router.add_get('/data/{item:.+}', self.dataHandler)
@@ -191,27 +193,45 @@ class sofaWebUI():
             self.log.error('Error looking up requested field: %s' % field, exc_info=True)
             return None
 
+    async def layoutUpdate(self):
+        try:
+            async with aiofiles.open(os.path.join(self.config['layout_directory'], 'layout.json'), mode='r') as f:
+                layout = await f.read()
+                return layout
+        except:
+            self.log.error('Error getting file for cache: %s' % filename, exc_info=True)
+
+    async def layoutHandler(self, request):
+        if not self.layout:
+            self.layout=await self.layoutUpdate()
+            
+        return web.Response(content_type="text/html", body=json.dumps(json.loads(self.layout)))
+
 
     async def directivesHandler(self, request):
         
         # Walks through the list of current devices, identifies their controllers and extracts a list of 
         # possible directives for each controller and outputs the full list.
-        
-        directives={}
 
-        for device in self.dataset.devices:
-            for cap in self.dataset.devices[device]['capabilities']:
-                capname=cap['interface'].split('.')[1]
-                if capname not in directives:
-                    try:
-                        controllerclass = getattr(devices, capname+"Interface")
-                        xc=controllerclass()
-                        try:
-                            directives[capname]=xc.directives
-                        except AttributeError:
-                            directives[capname]={}
-                    except:
-                        self.log.error('Error with getting directives from controller class', exc_info=True)
+        directives={}
+        try:
+            for device in self.dataset.devices:
+                for cap in self.dataset.devices[device]['capabilities']:
+                    if len(cap['interface'].split('.')) > 1:
+                        capname=cap['interface'].split('.')[1]
+                        if capname not in directives:
+                            try:
+                                controllerclass = getattr(devices, capname+"Interface")
+                                xc=controllerclass()
+                                try:
+                                    directives[capname]=xc.directives
+                                except AttributeError:
+                                    directives[capname]={}
+                            except:
+                                self.log.error('Error with getting directives from controller class', exc_info=True)
+
+        except:
+            self.log.error('Error creating list of Alexa directives', exc_info=True)
             
         return web.Response(text=json.dumps(directives))
 
@@ -224,17 +244,18 @@ class sofaWebUI():
 
         for device in self.dataset.devices:
             for cap in self.dataset.devices[device]['capabilities']:
-                capname=cap['interface'].split('.')[1]
-                if capname not in properties:
-                    try:
-                        controllerclass = getattr(devices, capname+"Interface")
-                        xc=controllerclass()
+                if len(cap['interface'].split('.')) > 1:
+                    capname=cap['interface'].split('.')[1]
+                    if capname not in properties:
                         try:
-                            properties[capname]=xc.props
-                        except AttributeError:
-                            properties[capname]={}
-                    except:
-                        self.log.error('Error with getting properties from controller class', exc_info=True)
+                            controllerclass = getattr(devices, capname+"Interface")
+                            xc=controllerclass()
+                            try:
+                                properties[capname]=xc.props
+                            except AttributeError:
+                                properties[capname]={}
+                        except:
+                            self.log.error('Error with getting properties from controller class', exc_info=True)
             
         return web.Response(text=json.dumps(properties))
 
