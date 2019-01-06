@@ -10,16 +10,14 @@ from sofabase import adapterbase
 import devices
 import definitions
 
-
 import math
 import random
 from collections import namedtuple
 
 import json
 from huecolor import ColorHelper, colorConverter
-from qhue import Bridge, QhueException, create_new_username
+from ahue import Bridge, QhueException, create_new_username
 import asyncio
-
 
 class hue(sofabase):
     
@@ -30,7 +28,6 @@ class hue(sofabase):
             self.dataset=dataset
             self.dataset.nativeDevices['lights']={}
             self.definitions=definitions.Definitions
-            self.adapterTopics=['sofa/hue']
             self.bridgeAddress=self.dataset.config['address']
             self.hueUser=self.dataset.config['user']
             self.log=log
@@ -46,7 +43,6 @@ class hue(sofabase):
             self.log.info('.. Starting hue')
             self.bridge = Bridge(self.bridgeAddress, self.hueUser)
             await self.pollHueBridge()
-
             
         async def pollHueBridge(self):
             while True:
@@ -62,17 +58,16 @@ class hue(sofabase):
             
             #self.log.info('Polling %s' % category)
             changes=[]
-            if category=="config" or category=="all":
-                await self.dataset.ingest({'config': self.getHueConfig()})
-            if category=="lights" or category=="all":
-                changes=await self.dataset.ingest({'lights': self.getHueLights()})
-            if category=="groups" or category=="all":
-                await self.dataset.ingest({'groups': self.getHueGroups()})
-            if category=="sensors" or category=="all":
-                await self.dataset.ingest({'sensors':self.getHueSensors()})
+            if category=="all":
+                await self.dataset.ingest(await self.getHueAll())
+            if category=="lights":
+                changes=await self.dataset.ingest({'lights': await self.getHueLights()})
+            if category=="groups":
+                await self.dataset.ingest({'groups': await self.getHueGroups()})
+            if category=="sensors":
+                await self.dataset.ingest({'sensors':await self.getHueSensors()})
                 
             return changes
-
             
         async def command(self, category, item, data):
             
@@ -100,12 +95,12 @@ class hue(sofabase):
                 return {}
 
 
-        def getHueLights(self, light=None):
+        async def getHueLights(self, light=None):
             
             try:
                 if light:
                     try:
-                        return self.bridge.lights[light]()
+                        return await self.bridge.lights[light]()
                     except:
                         for cachelight in self.dataset.nativeDevices['lights']:
                             try:
@@ -117,31 +112,37 @@ class hue(sofabase):
                         return None
                 else:
                     #self.log.info('Lights: %s' % json.dumps(self.bridge.lights()))
-                    return self.bridge.lights()
+                    return await self.bridge.lights()
             except:
                 self.log.error("Error getting hue config.",exc_info=True)
                 return {}
 
-
-        def getHueGroups(self):
+        async def getHueAll(self):
             try:
-                return self.bridge.groups()
+                return await self.bridge()
+            except:
+                self.log.error("Error getting hue data.",exc_info=True)
+                return {}
+
+        async def getHueGroups(self):
+            try:
+                return await self.bridge.groups()
             except:
                 self.log.error("Error getting hue config.",exc_info=True)
                 return {}
 
                 
-        def getHueSensors(self):
+        async def getHueSensors(self):
             try:
-                return self.bridge.sensors()
+                return await self.bridge.sensors()
             except:
                 self.log.error("Error getting hue config.",exc_info=True)
                 return {}
 
 
-        def getHueConfig(self):
+        async def getHueConfig(self):
             try:
-                bridgeconfig=self.bridge.config()
+                bridgeconfig=await self.bridge.config()
                 # removing items that would spam updates
                 del bridgeconfig['whitelist']
                 del bridgeconfig['UTC']
@@ -163,7 +164,7 @@ class hue(sofabase):
                             light=alight
                             break
 
-                self.bridge.lights[int(light)].state(**data)
+                await self.bridge.lights[int(light)].state(**data)
                 return await self.getHueBridgeData(category='lights')
 
             except:
@@ -172,26 +173,21 @@ class hue(sofabase):
 
         # Utility Functions
 
-        def createHueGroup(self,groupname,lights):
+        async def createHueGroup(self,groupname,lights):
             try:
-                bridge = Bridge(self.bridgeAddress, 'sofaautomation')
-                huedata=bridge.groups(**{"name":groupname, "lights":lights, "http_method":"post"})
+                huedata=await self.bridge.groups(**{"name":groupname, "lights":lights, "http_method":"post"})
             except:
                 self.log.error("Error creating group.",exc_info=True)
 
-        def deleteHueGroup(self,groupname):
+        async def deleteHueGroup(self,groupname):
             try:
-                bridge = Bridge(self.bridgeAddress, 'sofaautomation')
-                #if type(groupname)==int:
-                #    huedata=bridge.groups(str(groupname))(**{"http_method":"delete"})
-                #else:
-                huedata=bridge.groups[groupname](**{"http_method":"delete"})
+                huedata=await self.bridge.groups[groupname](**{"http_method":"delete"})
             except:
                 self.log.error("Error deleting group.",exc_info=True)
                 
-        def createHueUser(self):
+        async def createHueUser(self):
             b = Bridge(self.bridgeAddress)  # No username yet
-            b(devicetype="test user", username="sofaautomation", http_method="post")
+            await b(devicetype="Sofa", username="sofa", http_method="post")
 
 
         # Adapter Overlays that will be called from dataset

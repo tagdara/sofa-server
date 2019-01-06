@@ -96,7 +96,8 @@ class sofaWebUI():
             self.serverApp.router.add_get('/refresh', self.refresh_handler)  
             self.serverApp.router.add_post('/data/{item:.+}', self.dataPostHandler)
             self.serverApp.router.add_static('/log/', path=self.dataset.baseConfig['logDirectory'])
-            self.serverApp.router.add_static('/', path=self.config['client_directory'])
+            self.serverApp.router.add_static('/bundle', path=self.config['client_bundle_directory'])
+            self.serverApp.router.add_static('/', path=self.config['client_static_directory'])
 
             self.runner=aiohttp.web.AppRunner(self.serverApp)
             await self.runner.setup()
@@ -419,7 +420,7 @@ class sofaWebUI():
 
     async def manifestUpdate(self):
         try:
-            async with aiofiles.open(os.path.join(self.config['client_directory'], 'sofa.appcache'), mode='r') as f:
+            async with aiofiles.open(os.path.join(self.config['client_static_directory'], 'sofa.appcache'), mode='r') as f:
                 manifest = await f.read()
                                            # v-auto
                 manifest=manifest.replace('# v-auto', '# v%s' % datetime.datetime.now().strftime("%I:%M%p on %B %d, %Y"))
@@ -830,7 +831,7 @@ class sofaWebUI():
                 
 
     async def root_handler(self, request):
-        return web.FileResponse(os.path.join(self.config['client_directory'],'index.html'))
+        return web.FileResponse(os.path.join(self.config['client_static_directory'],'index.html'))
 
 
     async def wsBroadcast(self, message):

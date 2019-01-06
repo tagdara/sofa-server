@@ -153,6 +153,7 @@ class sonyRest():
                 response=await client.post(url, data=data, headers=headers)
                 result=await response.read()
                 result=json.loads(result.decode())
+                
                 if 'result' in result:
                     result=result['result']
                     return result
@@ -214,6 +215,7 @@ class sonybravia(sofabase):
         async def getUpdate(self):
             
             systemdata={    'system':       {   'power': { 'command':'getPowerStatus', 'listitem':0 }},
+                            'audio':        {   'audio': { 'command':'getVolumeInformation', 'listitem':0}},
                             'avContent':    {   'playingContent': {'command':'getPlayingContentInfo', 'listitem':0 },
                                                 'inputStatus': {'command':'getCurrentExternalInputsStatus', 'listitem':0 }}}
             return await self.getStates(systemdata)
@@ -379,6 +381,10 @@ class sonybravia(sofabase):
                     controllerlist=self.addControllerProps(controllerlist,"PowerController","powerState")
                 if detail=="playingContent/uri" or detail=="":
                     controllerlist=self.addControllerProps(controllerlist,"InputController","input")
+                #if detail=="playingContent/uri" or detail=="":
+                #    controllerlist=self.addControllerProps(controllerlist,"SpeakerController","volume")
+                #if detail==
+                #    controllerlist=self.addControllerProps(controllerlist,"SpeakerController","volume")
 
                 return controllerlist
             except:

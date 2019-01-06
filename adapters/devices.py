@@ -1046,15 +1046,16 @@ class receiver(smartObject):
         
 class tv(smartObject):
 
-    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, SelectInput=None, PressRemoteButton=None, log=None, native=None):
+    def __init__(self, path, name, description="", manufacturer="sofa", SetVolume=None, SetMute=None, TurnOn=None, TurnOff=None, SelectInput=None, PressRemoteButton=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["TV"]
         self._description=description
         self._manufacturer=manufacturer
         self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
         self.InputController=InputControllerInterface(SelectInput)
+        self.SpeakerController=SpeakerControllerInterface(SetVolume, SetMute)
         self.RemoteController=RemoteControllerInterface(PressRemoteButton)
-        self._interfaces=[self.PowerController, self.InputController, self.RemoteController]
+        self._interfaces=[self.PowerController, self.InputController, self.RemoteController, self.SpeakerController]
         self._path=path
 
 class smartSpeaker(smartObject):

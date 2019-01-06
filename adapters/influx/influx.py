@@ -178,7 +178,19 @@ class influxServer(sofabase):
                             
                     else:
                         response=list(result.get_points())[0]
-                    self.log.info('Response: %s' % response)
+                    #return result.raw
+                    return response
+
+                if itempath[0]=="history":
+                    if len(itempath)>3:
+                        offset=int(itempath[3])*50
+                    else:
+                        offset=0
+
+                    qry="select endpoint,%s from controller_property where endpoint='%s' ORDER BY time DESC LIMIT 50 OFFSET %s" % (itempath[2],itempath[1],offset)
+                    self.log.info('Running history query: %s' % qry)
+                    result=self.influxclient.query(qry,database='beta')
+                    response=list(result.get_points())
                     #return result.raw
                     return response
 

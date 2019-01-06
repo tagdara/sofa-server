@@ -33,6 +33,7 @@ class sofaDataset():
         self.log=log
         self.loop=loop
         self.mqtt={}
+        self.nodevices=[]
 
 
     def getObjectPath(self, path):
@@ -289,7 +290,9 @@ class sofaDataset():
             smartDevice=self.getDeviceByEndpointId("%s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
 
             if not smartDevice:
-                self.log.info(".? No device for %s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
+                if path not in self.nodevices:
+                    self.log.info(".? No device for %s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
+                    self.nodevices.append(path)
                 # This device does not exist yet.  Some adapters may update out of order, and this change will be picked up
                 # when the device is created.  This has the side effect of indicating when an adapter is putting up possible
                 # devices that sofa is not handling, and might spam the logs.
@@ -308,7 +311,10 @@ class sofaDataset():
                     try:
                         smartController=getattr(smartDevice,controller)
                         smartProp=getattr(smartController, prop)
-                        setattr(smartController, prop, self.adapter.virtualControllerProperty(nativeObject, prop))
+                        try:
+                            setattr(smartController, prop, self.adapter.virtualControllerProperty(nativeObject, prop))
+                        except AttributeError:
+                            self.log.warn('Not a settable property: %s/%s' % (controller, prop))
                         newProp=getattr(smartController, prop)
                         if newProp==smartProp:
                             self.log.debug("Property didn't change: %s.%s" % (controller, prop))
@@ -317,7 +323,7 @@ class sofaDataset():
                                 del controllers[controller]
                             
                     except:
-                        self.log.info('Invalid controller: %s' % controller, exc_info=True)
+                        self.log.info('Invalid controller: %s/%s' % (controller, prop), exc_info=True)
             
             self.log.debug('Cleaned up Controllers: %s' % controllers)
             
