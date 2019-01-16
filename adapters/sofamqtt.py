@@ -235,6 +235,13 @@ class sofaMQTT():
                             self.pendingRequests.remove(message['event']['header']['correlationToken'])
                     except:
                         self.log.error('Error handling a correlation token response: %s ' % message, exc_info=True)
+
+
+                elif message['event']['header']['name']=='DoorbellPress':
+                    if message['event']['endpoint']['endpointId'].split(":")[0]!=self.adaptername:
+                        self.log.info('%s Event: %s' % (message['event']['header']['name'], message['event']['endpoint']))
+                        if hasattr(self.adapter, "handleAlexaEvent"):
+                            await self.adapter.handleAlexaEvent(message)
             
                 elif message['event']['header']['name']=='StateReport':
                     if message['event']['endpoint']['endpointId'].split(":")[0]!=self.adaptername:

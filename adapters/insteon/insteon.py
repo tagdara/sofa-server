@@ -158,74 +158,8 @@ class insteonCatalog():
                 
         #self.log.info('Get props for '+str(address)+'='+str(nodeprops))
         return nodeprops
-        
-    def getNodeType(self,node):
-        
-        devicetypes={   'button': ["0.18.0.0","0.17.0.0","0.5.0.0"],
-                        'thermostat': ['5.11.11.0'],
-                        'light': ['1.9.43.0','1.0.51.0','1.1.53.0','1.6.51.0','1.14.58.0', '1.14.65.0','1.25.56.0','1.25.64.0','1.28.57.0','1.32.64.0','1.32.65.0','2.6.65.0','2.9.0.0','2.42.67.0','2.56.67.0'],
-                        'device': ["2.31.65.0","3.13.0.0","2.55.70.0"]
-                    }
-                        
-        try:
-            self.log.info('Determining type for %s: %s %s' % (node['address'], node['pnode'], node['type']))
-            devicetype=self.definitions.devicetypes[node['type']]
-        except:
-            self.log.error('Device type not found for node: %s' % node)
-            return 'unknown'
-        try:
-            if (node['pnode']!=node['address']) and devicetype in ['lightswitch','light']:
-                return "button"
-            # I'm sure there's a reason but it seems like this would work the same way
-            #elif node['pnode']==node['address'] and (node['flag']=='128' or node['flag']=='144') and devicetype in ['light','lightswitch']:
-            #    return devicetype
-            else:
-                return devicetype
-        
-        except:
-            self.log.error('Error determining node type',exc_info=True)
-            return 'unknown'
 
-         
-    async def getNodes(self, root):
 
-        try:
-            if 'node' not in self.dataset.nativeDevices:
-                self.dataset.nativeDevices['node']={}
-            xnodes={}
-            for node in root.findall('node'):
-                xn=node.find('address').text
-                xnodes[xn]=dict()
-                xnodes[xn]['property']=dict()
-                xnodes[xn]['flag']=node.get('flag')
-                for prop in node.iter():
-                    if prop.tag=='property':
-                        xnodes[xn]['property'][prop.get("id")]=prop.attrib
-                    elif prop.tag=='node':
-                        pass
-                    else:
-                        xnodes[xn][prop.tag]=prop.text
-                xnodes[xn]['devicetype']=self.getNodeType(xnodes[xn])
-                self.log.info('lightswitch? %s %s' % (xn, xnodes[xn]['devicetype']))
-                if xnodes[xn]['devicetype'] in ['light', 'lightswitch', 'thermostat']:
-                    xnodes[xn]['property']=await self.getNodeProperties(xn)
-                if xnodes[xn]['devicetype']=='lightswitch':
-                    self.log.info('lightswitch %s' % xnodes[xn])
-                    xnodes[xn]['pressState']=='none'
-                if 'parent' in xnodes[xn]:
-                    try:
-                        if xnodes[xn]['parent'] in self.data['folder']:
-                            xnodes[xn]['parentname']=self.dataset.nativeDevices['folder'][xnodes[xn]['parent']]['name']
-                        elif xnodes[xn]['parent'] in self.dataset.nativeDevices['node']:
-                            xnodes[xn]['parentname']=self.dataset.nativeDevices['node'][xnodes[xn]['parent']]['name']
-                    except:
-                        self.log.error('couldnt get parentname',exc_info=True)
-        except:
-            self.log.error('error making xnodes',exc_info=True)
-
-        return xnodes
-
-       
     async def main(self):
         async with aiohttp.ClientSession() as client:
             itemProperty=''
@@ -239,9 +173,18 @@ class insteonCatalog():
                     try:
                         for item in nodesJSON['nodes'][nodetype]:
                             try:
+                                if 'enabled' in item:
+                                    if item['enabled']=="false":
+                                        self.log.info('Skipping disabled device: %s' % (item['name']))
+                                        continue
                                 if 'property' in item:
                                     item['property']=await self.getNodeProperties(item['address']) # Replace subset of property with complete set
-                                    item['devicetype']=self.definitions.deviceTypes[item['type']]
+                                    if item['address'] in self.dataset.config['device_override']:
+                                        item['devicetype']=self.dataset.config['device_override'][item['address']]
+                                        self.log.info('Device type manually set for %s: %s' % (item['address'],item['devicetype']))
+                                    else:
+                                        item['devicetype']=self.definitions.deviceTypes[item['type']]
+
                                     if item['devicetype']=='light':
                                         # fix for multi-button keypads
                                         if (item['pnode']!=item['address']):
@@ -770,6 +713,9 @@ class insteon(sofabase):
                         return self.dataset.addDevice(nativeObject['name'], devices.dimmableLightWithSwitch('insteon/node/%s' % deviceid, nativeObject['name']))
                     else:
                         return self.dataset.addDevice(nativeObject['name'], devices.simpleLightWithSwitch('insteon/node/%s' % deviceid, nativeObject['name']))
+
+                elif nativeObject["devicetype"]=="button":
+                    return self.dataset.addDevice(nativeObject['name'], devices.lightSwitch('insteon/node/%s' % deviceid, nativeObject['name']))
                         
                 elif nativeObject["devicetype"]=="thermostat":
                     if nativeObject['pnode']==deviceid:
@@ -821,18 +767,21 @@ class insteon(sofabase):
 
         async def waitPendingChange(self, device):
         
-            # The ISY will send an update to the properties, but it takes .5-1 second to complete
-            # Waitiing up to 2 seconds allows us to send back a change report for the change command
-            if device not in self.subscription.pendingChanges:
-                self.subscription.pendingChanges.append(device)
-
             count=0
-            while device in self.subscription.pendingChanges and count<30:
-                #self.log.info('Waiting for update... %s %s' % (device, self.subscription.pendingChanges))
-                await asyncio.sleep(.1)
-                count=count+1
-            return True
-                
+            try:
+                # The ISY will send an update to the properties, but it takes .5-1 second to complete
+                # Waitiing up to 2 seconds allows us to send back a change report for the change command
+                if device not in self.subscription.pendingChanges:
+                    self.subscription.pendingChanges.append(device)
+
+                while device in self.subscription.pendingChanges and count<30:
+                    #self.log.info('Waiting for update... %s %s' % (device, self.subscription.pendingChanges))
+                    await asyncio.sleep(.1)
+                    count=count+1
+                return True
+            except:
+                self.log.error('Error during wait for pending change for %s (%s)' % (device, count), exc_info=True)
+                return True
                 
 
         async def virtualCategory(self, category):

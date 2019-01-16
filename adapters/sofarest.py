@@ -50,6 +50,7 @@ class sofaRest():
             self.serverApp.router.add_get('/devices/{item}', self.deviceStateReportHandler)
             self.serverApp.router.add_get('/deviceState/{item}', self.deviceStateReportHandler)
             self.serverApp.router.add_post('/deviceStates', self.deviceStatesReportHandler)
+            self.serverApp.router.add_get('/ReportState/{item}', self.deviceStateReportHandler)
             
             self.serverApp.router.add_get('/image/{item:.+}', self.imageHandler)
             self.serverApp.router.add_get('/thumbnail/{item:.+}', self.thumbnailHandler)
@@ -190,23 +191,35 @@ class sofaRest():
         return web.Response(text=json.dumps(lookup, default=self.date_handler))
             
     async def deviceStatesReportHandler(self, request):
-            
-        if request.body_exists:
-            try:
+        
+        body=''
+        try:
+            if request.body_exists:
                 body=await request.read()
-                devlist=json.loads(body.decode())
+                body=body.decode()
+                devlist=json.loads(body)
                 result={}
                 for dev in devlist:
-                    result[dev]=self.dataset.localDevices[dev].stateReport 
+                    try:
+                        result[dev]=self.dataset.getDeviceByfriendlyName(dev).StateReport()
+                        #result[dev]=self.dataset.localDevices[dev].StateReport 
+                    except:
+                        self.log.error('Error getting statereport for %s' % dev, exc_info=True)
+                #self.log.info('Returning: %s' % json.dumps(result, default=self.date_handler))
                 return web.Response(text=json.dumps(result, default=self.date_handler))
-                    
-            except:
-                self.log.error('Error delivering state report for %s' % urllib.parse.unquote(request.match_info['item']), exc_info=True)
+            else:
                 return web.Response(text="{}")        
+                
+        except:
+            self.log.error('Error delivering device states report: %s' % body, exc_info=True)
+            return web.Response(text="{}")        
 
     async def deviceStateReportHandler(self, request):
         try:
-            lookup=self.dataset.localDevices[urllib.parse.unquote(request.match_info['item'])].stateReport
+            dev=urllib.parse.unquote(request.match_info['item'])
+            lookup=self.dataset.getDeviceByfriendlyName(dev).StateReport()
+
+            #lookup=self.dataset.localDevices[urllib.parse.unquote(request.match_info['item'])].StateReport
             return web.Response(text=json.dumps(lookup, default=self.date_handler))
         except KeyError:
             self.log.error('Lookup error for %s' % urllib.parse.unquote(request.match_info['item']))
@@ -331,7 +344,7 @@ class sofaRest():
                         
             return web.Response(text='No image found')
         except:
-            self.log.error('Error getting image for: %s' % request.match_info['item'])
+            self.log.error('Error getting image for: %s' % request.match_info['item'], exc_info=True)
             return web.Response(text='No image found')
  
                 
@@ -390,9 +403,13 @@ class sofaRest():
                 self.log.debug('Post JSON: %s' % jsondata)
                 if 'directive' in jsondata:
                     if jsondata['directive']['header']['name']=='ReportState':
-                        path="/"+"/".join(jsondata['directive']['endpoint']['endpointId'].split(":")[1:])
-                        controllers=await self.getPathControllers(path)
-                        response=self.dataset.generateStateReport(path, controllers, correlationToken=jsondata['directive']['header']['correlationToken'])
+                        try:
+                            bearerToken=jsondata['directive']['endpoint']['scope']['token']
+                        except:
+                            self.log.info('No bearer token')
+                            bearerToken=''
+                        #self.log.info('Reportstate: %s %s' % (jsondata['directive']['endpoint']['endpointId'], jsondata['directive']['header']['correlationToken']))
+                        response=self.dataset.generateStateReport(jsondata['directive']['endpoint']['endpointId'], correlationToken=jsondata['directive']['header']['correlationToken'], bearerToken=bearerToken)
                     else:
                         self.log.info('<< %s %s / %s' % (jsondata['directive']['header']['name'],jsondata['directive']['endpoint']['endpointId'], jsondata))
                         response=await self.dataset.handleDirective(jsondata)

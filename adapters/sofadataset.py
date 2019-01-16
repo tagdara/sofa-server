@@ -35,6 +35,15 @@ class sofaDataset():
         self.mqtt={}
         self.nodevices=[]
 
+    def getDeviceFromPath(self, path):
+            
+        try:
+            smartDevice=self.getDeviceByEndpointId("%s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
+            return smartDevice
+        except:
+            self.log.error('Could not find device for path: %s' % path, exc_info=True)
+            return None
+   
 
     def getObjectPath(self, path):
             
@@ -275,6 +284,13 @@ class sofaDataset():
                                     self.log.info('new device update: %s' % update)
                                     updates.append(update)
                     else:
+                        if hasattr(self.adapter, "virtualEventSource"):
+                            event=self.adapter.virtualEventSource(item['path'], item)
+                            if event:
+                                self.log.info('[> mqtt event: %s' % event, exc_info=True)
+                                await self.notify('sofa/updates',json.dumps(event))
+
+
                         update=await self.updateDeviceState(item['path'], newDevice=False, patch=item)
                         if update:
                             updates.append(update)
@@ -297,7 +313,7 @@ class sofaDataset():
                 # when the device is created.  This has the side effect of indicating when an adapter is putting up possible
                 # devices that sofa is not handling, and might spam the logs.
                 return False
-                
+            
             if not controllers:
                 if hasattr(self.adapter, "virtualControllers"):
                     controllers=self.adapter.virtualControllers(path)
@@ -334,8 +350,9 @@ class sofaDataset():
                 
             if changeReport and not newDevice:
                 try:
+                    dev=self.getDeviceByEndpointId(changeReport['event']['endpoint']['endpointId'])
                     for prop in changeReport['payload']['change']['properties']:
-                        self.log.info('[> mqtt change: %s %s %s %s %s' % (changeReport['event']['endpoint']['cookie']['name'], changeReport['event']['endpoint']['endpointId'],prop['namespace'],prop['name'], prop['value'] ))
+                        self.log.info('[> mqtt change: %s %s %s %s %s' % (dev.friendlyName, dev.endpointId, prop['namespace'], prop['name'], prop['value'] ))
                 except:
                     self.log.info('[> mqtt changereport: %s' % changeReport, exc_info=True)
                 await self.notify('sofa/updates',json.dumps(changeReport))
@@ -350,54 +367,35 @@ class sofaDataset():
             self.log.error('Error with update device state', exc_info=True)
 
                         
-    def generateStateReport(self, path, controllers, correlationToken=None):
+    def generateStateReport(self, endpointId, correlationToken='', bearerToken=''):
             
         try:
-            nativeObject=self.getObjectFromPath(self.getObjectPath(path))
+            if not correlationToken:
+                correlationToken=str(uuid.uuid1())
 
-            if not nativeObject:
-                return {}
-
-            header={"name": "StateReport", "namespace":"Alexa", "payloadVersion":"3", "messageId": str(uuid.uuid1())}
-            if correlationToken:
-                header["correlationToken"]=correlationToken
-
-            endpoint={"endpointId":"%s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")), "cookie": {"adapter": self.adaptername, "path": self.getObjectPath(path)}}
-                
-            try:
-                endpoint["cookie"]["name"]=nativeObject["name"]
-            except:
-                pass
-
-            proplist=[]
-            #self.log.info('State Report Controllers: %s' % controllers)
-            for controller in controllers:
-                for prop in controllers[controller]:
-                    proplist.append({"namespace": "Alexa.%s" % controller, "name": prop, "value": self.adapter.virtualControllerProperty(nativeObject, prop), "timeOfSample":datetime.datetime.utcnow().isoformat() + 'Z', "uncertaintyInMilliseconds": 1000})
-
-
-            stateReport={"event": {"header": header, "endpoint":endpoint}, "payload": {}, "context": { "properties": proplist}}
-            #self.log.debug('State report: %s' % stateReport)         
+            stateReport=self.getDeviceByEndpointId(endpointId).StateReport(correlationToken, bearerToken)
+            #self.log.info('State report: %s' % stateReport)         
             return stateReport
         except:
             self.log.error('Error generating state report: %s' % path, exc_info=True)
             return {}
 
-    async def generateResponse(self, endpointId, correlationToken):
+    async def generateResponse(self, endpointId, correlationToken, controller=''):
             
         try:
-            return self.getDeviceByEndpointId(endpointId).Response(correlationToken)
+            return self.getDeviceByEndpointId(endpointId).Response(correlationToken, controller=controller)
         except:
             self.log.error('Error generating response: %s' % endpointId, exc_info=True)
             return {}
 
-    async def requestReportState(self, endpointId, mqtt_topic=None):
+    async def requestReportState(self, endpointId, mqtt_topic=None, correlationToken='', bearerToken=''):
         
         try:
-            correlationToken=str(uuid.uuid1())
+            if not correlationToken:
+                correlationToken=str(uuid.uuid1())
                 
             header={"name": "ReportState", "namespace":"Alexa", "payloadVersion":"3", "messageId": str(uuid.uuid1()), "correlationToken": correlationToken }
-            endpoint={"endpointId": endpointId, "cookie": {}, "scope":{ "type":"BearerToken", "token":"access-token-from-skill" }}
+            endpoint={"endpointId": endpointId, "cookie": {}, "scope":{ "type":"BearerToken", "token":bearerToken }}
             data=json.dumps({"directive": {"header": header, "endpoint": endpoint, "payload": {}}})
             
             if mqtt_topic:
@@ -414,6 +412,7 @@ class sofaDataset():
                         response=await client.post(url, data=data, headers=headers)
                         statereport=await response.read()
                         statereport=json.loads(statereport.decode())
+                        #self.log.info('report state response: %s' % statereport)
                         if statereport and hasattr(self.adapter, "handleStateReport"):
                             await self.adapter.handleStateReport(statereport)
                         return statereport
@@ -431,6 +430,7 @@ class sofaDataset():
             if adapter in self.adapters:
                 url=self.adapters[adapter]['url']+"/deviceStates"
                 headers = { "Content-type": "text/xml" }
+                #self.log.info('data: %s' % json.dumps(devicelist))
                 #self.log.info('Requesting report states: %s %s %s' % (adapter, devicelist, url))
                 async with aiohttp.ClientSession() as client:
                     response=await client.post(url, data=json.dumps(devicelist), headers=headers)
@@ -440,14 +440,14 @@ class sofaDataset():
                         statereports=json.loads(statereports)
                         return statereports
                     else:
-                        self.log.info('Adapter not upgraded: %s - %s %s %s %s' % (adapter, devicelist, url, statereports))
+                        self.log.info('Adapter not upgraded: %s %s %s %s' % (adapter, devicelist, url, statereports))
                         return {}
 
                         
             return {}
 
         except:
-            self.log.error("Error requesting state for %s" % endpointId,exc_info=True)
+            self.log.error("Error requesting state for %s (%s)" % (adapter, devicelist),exc_info=True)
             return {}
                
     #async def requestAlexaStateChange(self, data):
@@ -492,11 +492,13 @@ class sofaDataset():
             changeReports=[]
             
             if hasattr(self.adapter, "nativeAlexaStateChange"):
+                self.log.info('This adapter is using the deprecated nativeAlexaStateChange and should be moved to processDirective')
                 changeReports=await self.adapter.nativeAlexaStateChange(data)
             elif hasattr(self.adapter, "processDirective"):
                 response=await self.adapter.processDirective(endpointId, controller, command, payload, correlationToken=correlationToken, cookie=cookie)
                 return response
             elif hasattr(self.adapter, "stateChange"):
+                self.log.info('This adapter is using the deprecated stateChange and should be moved to processDirective')
                 changeReports=await self.adapter.stateChange(endpointId, controller, command, payload)
 
             if changeReports:

@@ -11,7 +11,7 @@ import devices
 
 
 from sofacollector import SofaCollector
-
+import subprocess
 import math
 import random
 import json
@@ -70,6 +70,7 @@ class sofaWebUI():
 
             self.serverApp.router.add_get('/directives', self.directivesHandler)
             self.serverApp.router.add_get('/properties', self.propertiesHandler)
+            self.serverApp.router.add_get('/events', self.eventsHandler)
             self.serverApp.router.add_get('/layout', self.layoutHandler)
 
             #self.serverApp.router.add_get('/controllercommands', self.controllerHandler)
@@ -78,7 +79,8 @@ class sofaWebUI():
             self.serverApp.router.add_get('/var/{list:.+}', self.varHandler)
             self.serverApp.router.add_post('/list/{list:.+}', self.listPostHandler)
             
-            self.serverApp.router.add_get('/adapters', self.adapterHandler)            
+            self.serverApp.router.add_get('/adapters', self.adapterHandler)   
+            self.serverApp.router.add_get('/restartadapter/{adapter:.+}', self.adapterRestartHandler)
             self.serverApp.router.add_get('/devices', self.devicesHandler)      
             self.serverApp.router.add_get('/deviceList', self.deviceListHandler)
             self.serverApp.router.add_post('/deviceState', self.deviceStatePostHandler)
@@ -260,6 +262,13 @@ class sofaWebUI():
             
         return web.Response(text=json.dumps(properties))
 
+    async def eventsHandler(self, request):
+        
+        # Walks through the list of current devices, identifies their controllers and extracts a list of 
+        # possible directives for each controller and outputs the full list.
+        eventSources={ 'DoorbellEventSource': { "event": "doorbellPress"}}
+
+        return web.Response(text=json.dumps(eventSources))
         
 
     async def controllerHandler(self, request):
@@ -766,7 +775,23 @@ class sofaWebUI():
             return web.Response(text='Discovery request failed')
             
     async def adapterHandler(self,request):
-        return web.Response(text=json.dumps(self.dataset.adapters, default=self.date_handler))
+        try:
+            for adapter in self.dataset.adapters:
+                self.dataset.adapters[adapter]['restart']="/restartadapter/%s" % adapter
+            return web.Response(text=json.dumps(self.dataset.adapters, default=self.date_handler))
+        except:
+            self.log.error('Error listing adapters', exc_info=True)
+            return web.Response(text="Error listing adapters")
+            
+    async def adapterRestartHandler(self, request):
+        try:
+            adapter=request.match_info['adapter']
+            stdoutdata = subprocess.getoutput("/opt/sofa-server/svc %s" % adapter)
+            return web.Response(text=stdoutdata)
+
+        except:
+            self.log.error('Error restarting adapter', exc_info=True)
+            return web.Response(text="Error restarting adapter %s" % adapter)
 
 
     async def websocket_handler(self, request):
@@ -803,8 +828,7 @@ class sofaWebUI():
                 elif msg.type == aiohttp.WSMsgType.ERROR:
                     self.log.error('-! ws connection closed with exception: %s' % ws.exception())
 
-
-            self.log.info('-- Websocket closed: %s %s' % peername)
+            self.log.info('-- %s/%s websocket closed' % peername)
             return ws
         except concurrent.futures._base.CancelledError:
             self.wsclients.remove(ws)
@@ -899,13 +923,12 @@ class ui(sofabase):
                 super().handleChangeReport(message)
                 if message:
                     try:
-                        crs=[]
-                        for prop in message['payload']['change']['properties']:
-                            crs.append("%s/%s/%s=%s" % (message['event']['endpoint']['endpointId'], prop['namespace'].split('.')[1], prop['name'], prop['value']))
-                            self.log.info('-> ws ChangeReport %s' % crs)
-                            await self.uiServer.wsBroadcast(json.dumps(message))
+                        if 'log_change_reports' in self.dataset.config:
+                            self.log.info('-> ws %s %s' % (message['event']['header']['name'],message))
+                        
+                        await self.uiServer.wsBroadcast(json.dumps(message))
                     except:
-                        self.log.warn('!. bad or empty ChangeReport message not sent to ws: %s' % message)
+                        self.log.warn('!. bad or empty ChangeReport message not sent to ws: %s' % message, exc_info=True)
 
             except:
                 self.log.error('Error updating from change report', exc_info=True)

@@ -105,7 +105,7 @@ class Client(asyncio.Protocol):
             try:
                 elkdl=int(data[0:2],16)
             except ValueError:
-                self.log.warn('Custom text instead of command: %s' % data)
+                #self.log.warn('Custom text instead of command: %s' % data)
                 return "Custom"
                 
             data=data[2:elkdl+2]
@@ -382,7 +382,13 @@ class Client(asyncio.Protocol):
             elkzones=data[2:-4]
             for i,zone in enumerate(elkzones):
                 if (zone!='0' and i<208):
-                    await self.dataset.ingest({'zone': { str(int(i+1)): {'zonetype': self.definitions.zoneDefinitionTypes[zone] }}})
+                    if int(i+1) in self.dataset.config['motion_zones']:
+                        mode='motion'
+                    elif int(i+1) in self.dataset.config['doorbells']:
+                        mode='doorbell'
+                    else:
+                        mode='contact'
+                    await self.dataset.ingest({'zone': { str(int(i+1)): {'mode': mode, 'zonetype': self.definitions.zoneDefinitionTypes[zone] }}})
                     
         except:
             self.log.error("zoneDefinitionReport Error",exc_info=True)
@@ -458,11 +464,16 @@ class elkm1(sofabase):
                     return False
                 if nativeObject['name'] not in self.dataset.localDevices:
                     if nativeObject["zonetype"].find("Temperature")>-1:
-                        return self.dataset.addDevice(nativeObject['name'], devices.simpleThermostat('elk/zone/%s' % deviceid, nativeObject['name']))
-                    elif nativeObject["zonetype"].find("Burglar")==0:
-                        return self.dataset.addDevice(nativeObject['name'], devices.simpleZone('elk/zone/%s' % deviceid, nativeObject['name']))
-                    elif nativeObject["zonetype"].find("Non Alarm")==0:
-                        return self.dataset.addDevice(nativeObject['name'], devices.simpleZone('elk/zone/%s' % deviceid, nativeObject['name']))
+                        return self.dataset.addDevice(nativeObject['name'], devices.TemperatureSensorDevice('elk/zone/%s' % deviceid, nativeObject['name']))
+                        #return self.dataset.addDevice(nativeObject['name'], devices.simpleThermostat('elk/zone/%s' % deviceid, nativeObject['name']))
+                    elif nativeObject["zonetype"].find("Burglar")==0 or nativeObject["zonetype"].find("Non Alarm")==0:
+                        if nativeObject["mode"]=="motion":
+                            return self.dataset.addDevice(nativeObject['name'], devices.MotionSensorDevice('elk/zone/%s' % deviceid, nativeObject['name']))
+                        if nativeObject["mode"]=="doorbell":
+                            return self.dataset.addDevice(nativeObject['name'], devices.DoorbellDevice('elk/zone/%s' % deviceid, nativeObject['name']))
+                        else:
+                            return self.dataset.addDevice(nativeObject['name'], devices.ContactSensorDevice('elk/zone/%s' % deviceid, nativeObject['name']))
+
                     else:
                         self.log.info('Zonetype no match for %s' % nativeObject['zonetype'])
                         
@@ -497,8 +508,23 @@ class elkm1(sofabase):
             except:
                 self.log.error('Error adding Smart Button %s' % deviceid, exc_info=True)
 
+        def virtualEventSource(self, itempath, item):
+            try:
+                nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
+                   
+                if nativeObject["mode"]=="doorbell":
+                    if item['value']=='Violated':
+                        device=self.dataset.getDeviceFromPath(itempath)
+                        if hasattr(device, "doorbellPress"):
+                            return device.doorbellPress(device.endpointId)
+                        else:
+                            self.log.info('Device does not seem to have a doorbell press: %s' % device.__dict__, exc_info=True)
+                        
+                    self.log.info('Item: %s' % item)
+            except:
+                self.log.error('Error getting virtual controller types for %s' % nativeObject, exc_info=True)
+                    
             
-
         def virtualControllers(self, itempath):
 
             try:
@@ -516,11 +542,18 @@ class elkm1(sofabase):
                     controllerlist=self.addControllerProps(controllerlist,"ButtonController","pressState")
                 elif nativeObject["zonetype"].find("Temperature")>-1:
                     controllerlist=self.addControllerProps(controllerlist,"TemperatureSensor","temperature")
+
                 elif nativeObject["zonetype"].find("Non Alarm")==0 or nativeObject["zonetype"].find("Burglar")==0:
-                    if detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,"ZoneSensor","type")
-                    if detail=="status" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,"ZoneSensor","position")
+                    if nativeObject["mode"]=="doorbell":
+                        pass
+                    elif nativeObject["mode"]=="motion":
+                        if detail=="status" or detail=="":
+                            controllerlist=self.addControllerProps(controllerlist,"MotionSensor","detectionState")
+                    elif nativeObject["mode"]=="contact":
+                        if detail=="status" or detail=="":
+                            controllerlist=self.addControllerProps(controllerlist,"ContactSensor","detectionState")
+                        
+                        #controllerlist=self.addControllerProps(controllerlist,"ZoneSensor","position")
 
                 return controllerlist
             except:
@@ -551,11 +584,18 @@ class elkm1(sofabase):
                         return 'Alarm'
                     elif nativeObj["zonetype"].find("Non Alarm")==0:
                         return 'Automation'
+
                 if controllerProp=='position':
                     if nativeObj['status']=='Normal':
                         return 'closed'
                     elif nativeObj['status']=='Violated':
                         return 'open'
+                        
+                if controllerProp=='detectionState':
+                    if nativeObj['status']=='Normal':
+                        return 'NOT_DETECTED'
+                    elif nativeObj['status']=='Violated':
+                        return 'DETECTED'
 
                 else:
                     self.log.info('Unknown controller property mapping: %s' % controllerProp)

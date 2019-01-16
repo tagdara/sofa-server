@@ -52,8 +52,14 @@ class influxServer(sofabase):
             try:
                 endpointId=message['event']['endpoint']['endpointId']
                 for change in message['payload']['change']['properties']:
-                    if type(change['value']) in [list, dict]:
+
+                    if type(change['value'])==dict:
+                        if 'value' in change['value']:
+                            change['value']=change['value']['value']
+                                
+                    if type(change['value'])==list:
                         change['value']=str(change['value'])
+
                     if change['value']:
                         line=[{  "measurement":"controller_property", 
                             "tags": {"endpoint":endpointId, "namespace":change['namespace'].split('.')[0], "controller": change['namespace'].split('.')[1] },
@@ -62,8 +68,10 @@ class influxServer(sofabase):
                         }]
                         self.influxclient.write_points(line,database='beta')
                         self.log.info('<< Influx: %s' % line)
+                
             except:
-                self.log.info("Error handling change report for %s" % message,exc_info=True)            
+                self.log.warn('Problem with value data: %s of type %s' % (change['value'], type(change['value'])))
+                self.log.error("Error handling change report for %s" % message,exc_info=True)            
 
 
         def retryDatabase(self, dbname):

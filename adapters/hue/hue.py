@@ -59,12 +59,13 @@ class hue(sofabase):
             #self.log.info('Polling %s' % category)
             changes=[]
             if category=="all":
-                await self.dataset.ingest(await self.getHueAll())
-            if category=="lights":
+                alldata=await self.getHueAll()
+                changes=await self.dataset.ingest({'lights':alldata['lights'], 'sensors':alldata['sensors'], 'groups':alldata['groups']})
+            elif category=="lights":
                 changes=await self.dataset.ingest({'lights': await self.getHueLights()})
-            if category=="groups":
+            elif category=="groups":
                 await self.dataset.ingest({'groups': await self.getHueGroups()})
-            if category=="sensors":
+            elif category=="sensors":
                 await self.dataset.ingest({'sensors':await self.getHueSensors()})
                 
             return changes

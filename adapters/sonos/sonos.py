@@ -410,7 +410,8 @@ class sonos(sofabase):
                         #await self.dataset.ingest({"player": { spinfo["uid"]: { "speaker": spinfo, "name":player.player_name, "ip_address":player.ip_address }}})
                         response=await self.dataset.generateResponse(endpointId, correlationToken)
                         return response
-
+            except soco.exceptions.SoCoSlaveException:
+                self.log.error('Error from Soco while trying to issue command to a non-coordinator', exc_info=True)
             except soco.exceptions.SoCoUPnPException:
                 self.log.error('Error from Soco while trying to issue command', exc_info=True)
             except:

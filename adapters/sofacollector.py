@@ -53,6 +53,39 @@ class SofaCollector(sofabase):
                     return self.dataset.devices[device]['friendlyName']
                 
             return None
+            
+        def getDeviceByEndpointId(self, endpointId):
+            
+            for device in self.dataset.devices:
+                if self.dataset.devices[device]['endpointId']==endpointId:
+                    return self.dataset.devices[device]
+                
+            return None
+            
+        def getObjectsByDisplayCategory(self, category):
+            
+            devicelist=[]
+            for device in self.dataset.devices:
+                try:
+                    if category.upper() in self.dataset.devices[device].displayCategories:
+                        devicelist.append(self.dataset.devices[device])
+                    else:
+                        self.log.info('%s not in %s' % (category.upper(), self.dataset.devices[device].displayCategories))
+                except:
+                    self.log.error('%s not?' % category.upper(), exc_info=True)
+                
+            return devicelist
+
+        def shortLogChange(self, changereport):
+            
+            try:
+                shortchange=changereport['event']['endpoint']['endpointId']
+                for change in changereport['payload']['change']['properties']:
+                    shortchange+=(' %s.%s=%s' % (change['namespace'].split('.')[1], change['name'], change['value']))
+                return shortchange
+            except:
+                #self.log.error('Error with shortchange', exc_info=True)
+                return changereport
                 
         async def handleAdapterAnnouncement(self, adapterdata, patch=[]):
             
@@ -105,6 +138,11 @@ class SofaCollector(sofabase):
 
         async def handleStateReport(self, message):
             
+            #self.log.info('.. handleStateReport - Is this still needed? %s' % message)
+            pass
+        
+        async def oldhandleStateReport(self, message):
+            
             try:
                 #self.log.info('Received State Report: %s' % message['event']['endpoint']['endpointId'])
                 if self.dataset.getDeviceByEndpointId(message['event']['endpoint']['endpointId']):
@@ -122,30 +160,25 @@ class SofaCollector(sofabase):
             except:
                 self.log.error('Error updating from state report: %s' % message, exc_info=True)
         
-        def getDeviceByEndpointId(self, endpointId):
-            
-            for device in self.dataset.devices:
-                if self.dataset.devices[device]['endpointId']==endpointId:
-                    return self.dataset.devices[device]
-                
-            return None
-            
-        def getObjectsByDisplayCategory(self, category):
-            
-            devicelist=[]
-            for device in self.dataset.devices:
-                try:
-                    if category.upper() in self.dataset.devices[device].displayCategories:
-                        devicelist.append(self.dataset.devices[device])
-                    else:
-                        self.log.info('%s not in %s' % (category.upper(), self.dataset.devices[device].displayCategories))
-                except:
-                    self.log.error('%s not?' % category.upper(), exc_info=True)
-                
-            return devicelist
-
-
         async def handleResponse(self, message):
+            
+            self.log.info('.. handleResponse - Is this still needed? %s' % message)
+
+        async def handleAlexaEvent(self, message):
+            
+            try:
+                self.log.info('Event detected: %s' % message)
+                eventtype=message['event']['header']['name']
+                endpointId=message['event']['endpoint']['endpointId']
+                source=message['event']['header']['namespace'].split('.')[1]
+                if hasattr(self, "virtualEventHandler"):
+                    self.log.info('Adapter has virtualeventhandler')
+                    await self.virtualEventHandler(eventtype, source, endpointId, message)
+            except:
+                self.log.error('Error handling Alexa Event', exc_info=True)
+
+
+        async def oldhandleResponse(self, message):
             try:
                 if not message:
                     return None
@@ -166,24 +199,35 @@ class SofaCollector(sofabase):
                 self.log.error('Error updating from state report', exc_info=True)
 
 
-        def shortLogChange(self, changereport):
-            
-            try:
-                shortchange=changereport['event']['endpoint']['endpointId']
-                for change in changereport['payload']['change']['properties']:
-                    shortchange+=(' %s.%s=%s' % (change['namespace'].split('.')[1], change['name'], change['value']))
-                return shortchange
-            except:
-                #self.log.error('Error with shortchange', exc_info=True)
-                return changereport
-                
-
         async def handleChangeReport(self, message):
+            
+            #self.log.info('.. handleChangeReport - Is this still needed? %s' % message)
+            try:
+                if not message:
+                    return None
+                    
+                if 'change' not in message['payload']:
+                    return None
+                    
+                if 'log_change_reports' in self.dataset.config:
+                    if self.dataset.config['log_change_reports']==True:
+                        self.log.info('Change Report Prop: %s' % self.shortLogChange(message))
+                        
+                for prop in message['payload']['change']['properties']:
+                    if hasattr(self, "virtualChangeHandler"):
+                        # This is mostly just for logic but other adapters could hook this eventually
+                        await self.virtualChangeHandler(message['event']['endpoint']['endpointId'], prop)
+            except:
+                self.log.error('Error processing Change Report', exc_info=True)
+
+        async def oldhandleChangeReport(self, message):
             
             try:
                 if not message:
                     return None
-                self.log.info('Change Report: %s' % self.shortLogChange(message))
+                if 'log_change_reports' in self.dataset.config:
+                    if self.dataset.config['log_change_reports']==True:
+                        self.log.info('Change Report: %s' % self.shortLogChange(message))
                 device=self.getDeviceByEndpointId(message['event']['endpoint']['endpointId'])
 
                 if not device:
@@ -206,7 +250,7 @@ class SofaCollector(sofabase):
                         
                 # these should be unchanged but send em all right now to make sure
                 for prop in message['context']['properties']:
-                    field="discovery/%s/%s/%s" % (message['event']['endpoint']['cookie']['name'], prop['namespace'].split(".")[1], prop['name'])
+                    field="discovery/%s/%s/%s" % (device['friendlyName'], prop['namespace'].split(".")[1], prop['name'])
                     self.log.debug('Field: %s' % field)
                     if self.dataset.getObjectFromPath(field, self.dataset.data['cache'])!={}:
                         dpath.util.set(self.dataset.data, "cache/%s" % field, prop['value'])
@@ -216,20 +260,3 @@ class SofaCollector(sofabase):
                             
             except:
                 self.log.error('Error updating from state report', exc_info=True)
-
-                
-        async def deprecated_handleSofaChanges(self, message):
-
-            try:
-                # Get the existing value to see if the key is already there
-                existvalue=self.dataset.getObjectFromPath('/cache/%s' % message["path"])
-                self.log.debug('Updating field in cache:  %s to %s' % (message['path'], message['value']))
-                dpath.util.set(self.dataset.data, 'cache/%s' % message["path"], message["value"])
-                await self.uiServer.wsBroadcast(json.dumps([message]))
-            except KeyError:
-                # Data not needed for clients if it hasn't already been requested
-                #self.log.warn('Data not needed for clients: %s' % message['path'])
-                pass
-            
-            except:
-                self.log.error('Error handling Sofa Change: %s' % message, exc_info=True)

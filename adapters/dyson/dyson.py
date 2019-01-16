@@ -35,6 +35,9 @@ class dyson(sofabase):
             self.pendingChanges=[]
             self.inUse=False
             self.backlog=[]
+            self.polltime=30
+            self.logged_in=False
+            self.connected=False
             if not loop:
                 self.loop = asyncio.new_event_loop()
             else:
@@ -73,27 +76,45 @@ class dyson(sofabase):
             
             self.log.info('Starting Dyson')
             try:
-                self.logged_in=self.account.login()
-                if self.logged_in:
-                    self.dyson_devices = self.account.devices()
-                    self.log.info('Devices: %s' % self.dyson_devices)
-                    for device in self.dyson_devices:
-                        devconfig={}
-                        settings=["serial","active","name","version","auto_update","new_version_available","product_type","network_device"]
-                        for setting in settings:
-                            if setting=="name":
-                                devconfig[setting]=getattr(device,setting)+" fan"
-                            else:
-                                devconfig[setting]=getattr(device,setting)
-
-                        connected = device.connect("192.168.0.87")
-                        if connected:
-                            self.dyson_devices[0].add_message_listener(self.on_message)
-                            devconfig['state']=await self.getFanProperties(self.dyson_devices[0])
-                            await self.dataset.ingest({'fan': {device.name+" fan": devconfig}})
-                    self.log.info('State: %s' % devconfig)                        
+                await self.keep_logged_in()
             except:
                 self.log.error('Error', exc_info=True)
+                self.logged_in=False
+
+        async def connect_dyson(self):
+            try:
+                if not self.logged_in:
+                    self.logged_in=self.account.login()
+                    if self.logged_in:
+                        self.dyson_devices = self.account.devices()
+                        self.log.info('Devices: %s' % self.dyson_devices)
+                        for device in self.dyson_devices:
+                            devconfig={}
+                            settings=["serial","active","name","version","auto_update","new_version_available","product_type","network_device"]
+                            for setting in settings:
+                                if setting=="name":
+                                    devconfig[setting]=getattr(device,setting)+" fan"
+                                else:
+                                    devconfig[setting]=getattr(device,setting)
+    
+                            self.connected = device.connect("192.168.0.87")
+                            if self.connected:
+                                self.dyson_devices[0].add_message_listener(self.on_message)
+                                devconfig['state']=await self.getFanProperties(self.dyson_devices[0])
+                                await self.dataset.ingest({'fan': {device.name+" fan": devconfig}})
+            except:
+                self.log.error('Error', exc_info=True)
+
+        async def keep_logged_in(self):
+            
+            while True:
+                try:
+                    if not self.logged_in:
+                        await self.connect_dyson()
+                    await asyncio.sleep(self.polltime)
+                except:
+                    self.log.error('Error fetching Hue Bridge Data', exc_info=True)
+                    self.logged_in=False
 
         async def setDyson(self, device, command):
             #devices[0].set_configuration(heat_mode=HeatMode.HEAT_ON, heat_target=HeatTarget.fahrenheit(80), fan_speed=FanSpeed.FAN_SPEED_5)
@@ -210,7 +231,7 @@ class dyson(sofabase):
                     await self.waitPendingChange(device)
                     updatedProperties=await self.getFanProperties(device)
                     await self.dataset.ingest({'fan': { device: {'state':updatedProperties}}})
-                    return await self.dataset.generateResponse(endpointId, correlationToken)
+                    return await self.dataset.generateResponse(endpointId, correlationToken, controller=controller)
                 else:
                     self.log.info('Could not find a command for: %s %s %s %s' % (device, controller, command, payload) )
                     return {}

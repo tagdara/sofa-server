@@ -331,7 +331,34 @@ class logicServer(sofabase):
                 await self.dataset.ingest(logicCommand)
             except:
                 self.log.error('Error adding logic commands', exc_info=True)
-                
+             
+        async def fixAutomationTypes(self):
+            
+            try:
+                for auto in self.automations:
+                    changes=False
+                    for trigger in self.automations[auto]['triggers']:
+                        if "type" not in trigger:
+                            trigger['type']="property"
+                            changes=True
+                    for cond in self.automations[auto]['conditions']:
+                        if "type" not in cond:
+                            cond['type']="property"
+                            changes=True
+                    for action in self.automations[auto]['actions']:
+                        if "type" not in action:
+                            action['type']="command"
+                            changes=True
+                        elif action['type']=='property':
+                            action['type']='command'
+                            changes=True
+                    
+                    if changes:
+                        await self.saveAutomation(auto, json.dumps(self.automations[auto]))
+            except:
+                self.log.error('Error fixing automations', exc_info=True)
+                    
+                        
                 
         async def start(self):
             self.polltime=1
@@ -343,7 +370,9 @@ class logicServer(sofabase):
                 self.modes=self.loadJSON('modes')
                 self.areas=self.loadJSON('areas')
                 self.scenes=self.loadJSON('scenes')
+                self.security=self.loadJSON('security')
                 self.automations=self.loadJSON('automations')
+                await self.fixAutomationTypes()
                 self.regions=self.loadJSON('regions')
                 self.virtualDevices=self.loadJSON('virtualDevices')
                 self.log.info('self.users: %s' % self.users)
@@ -484,10 +513,9 @@ class logicServer(sofabase):
                     for prop in payload:
                         if payload[prop]=='value':
                             payload[prop]=payloadvalue
-                        
+                
                 if trigger:
-                    cookie={ "trigger": trigger }
-
+                    cookie={"trigger" : trigger}
 
                 header={"name": command, "namespace":"Alexa." + controller, "payloadVersion":"3", "messageId": str(uuid.uuid1()), "correlationToken": str(uuid.uuid1())}
                 endpoint={"endpointId": endpointId, "cookie": cookie, "scope":{ "type":"BearerToken", "token":"access-token-from-skill" }}
@@ -600,7 +628,7 @@ class logicServer(sofabase):
                 self.log.error('Error comparing condition: %s %s %s' % (conditionValue, operator, propertyValue), exc_info=True)
             
 
-        async def runActivityWait(self, activityName, trigger={}):
+        async def runActivityWait(self, activityName, trigger={}, triggerEndpointId=''):
             
             try:
                 devstateCache={}
@@ -630,10 +658,14 @@ class logicServer(sofabase):
                             
                         elif 'end' in condition['value']:
                             condval=condition['value']
-                            if condition['value']['start']<prop['value'] and condition['value']['end']>prop['value']:
+                            st=datetime.datetime.strptime(condition['value']['start'],"%H:%M").time()
+                            et=datetime.datetime.strptime(condition['value']['end'],"%H:%M").time()
+                            ct=self.fixdate(prop['value']).time()
+                            if st<ct and et>ct:
+                                self.log.info('Passed time check: %s<%s<%s' % (st, ct, et))
                                 pass
                             else:
-                                self.log.info('Failed check: %s<%s<%s' % ( condition['value']['start'], prop['value'], condition['value']['end']))
+                                self.log.info('Failed time check: %s<%s<%s' % (st, ct, et))
                                 conditionMatch=False
                                 break
 
@@ -655,10 +687,13 @@ class logicServer(sofabase):
                     elif action['command']=="Alert":
                         alert=copy.deepcopy(action)
                         if trigger:
-                            if 'deviceName' in trigger:
-                                alert['value']['message']['text']=alert['value']['message']['text'].replace('[deviceName]',trigger['deviceName'])
+                            self.log.info('Trigger: %s' % trigger)
+                            if 'endpointId' in trigger:
+                                deviceName=self.getfriendlyNamebyendpointId(trigger['endpointId'])
+                                alert['value']['message']['text']=alert['value']['message']['text'].replace('[deviceName]',deviceName)
                             if 'value' in trigger:
-                                alert['value']['message']['text']=alert['value']['message']['text'].replace('[value]',trigger['value'])
+                                avals={'DETECTED':'open', 'NOT_DETECTED':'closed'}
+                                alert['value']['message']['text']=alert['value']['message']['text'].replace('[value]',avals[trigger['value']])
                         self.log.info('Result of Alert Macro: %s vs %s / trigger: %s ' % (alert,action, trigger))
                         chunk.append(alert)
                                 
@@ -794,9 +829,11 @@ class logicServer(sofabase):
                         trigger={}
                         if 'trigger' in cookie:
                             trigger=cookie['trigger']
-
+                        triggerEndPointId=''
+                        if 'triggerEndpointId' in cookie:
+                            triggerEndPointId=cookie['triggerEndPointId']
                         if device in self.automations:
-                            await self.runActivityWait(device, trigger)
+                            await self.runActivityWait(device, trigger,triggerEndPointId)
                             # This should return the scene started ack
                         elif device in self.scenes:
                             await self.runScene(device)
@@ -860,7 +897,14 @@ class logicServer(sofabase):
                     if 'triggers' in self.automations[automation]:
                         for trigger in self.automations[automation]['triggers']:
                             try:
-                                trigname="%s.%s.%s=%s" % (trigger['deviceName'], trigger['controller'], trigger['propertyName'], trigger['value'])
+                                if trigger['type']=='property':
+                                    trigname="%s.%s.%s=%s" % (trigger['endpointId'], trigger['controller'], trigger['propertyName'], trigger['value'])
+                                elif trigger['type']=='event':
+                                    trigname="event=%s.%s.%s" % (trigger['endpointId'], trigger['controller'], trigger['propertyName'])
+                                    self.log.info('Event trigger: %s' % trigname)
+                                else:
+                                    self.log.info('Skipping unknown trigger type: %s' % trigger)
+                                    continue
                                 if trigname not in triggerlist:
                                     triggerlist[trigname]=[]
                                 triggerlist[trigname].append({ 'name':automation, 'type':'automation' })
@@ -898,17 +942,28 @@ class logicServer(sofabase):
                 self.log.error('Error executing event reactions', exc_info=True)
                             
        
-        async def virtualChangeHandler(self, deviceName, change):
+        async def virtualChangeHandler(self, deviceId, change):
             
             try:
-                change['deviceName']=deviceName
-                #self.log.info('Change detected for %s: %s' % (deviceName, change))
-                trigname="%s.%s.%s=%s" % (deviceName, change['namespace'].split('.')[1], change['name'], change['value'])
+                trigname="%s.%s.%s=%s" % (deviceId, change['namespace'].split('.')[1], change['name'], change['value'])
                 if trigname in self.eventTriggers:
-                    self.log.info('!+ This is a trigger we are watching for: %s %s %s' % (trigname, deviceName, change))
+                    self.log.info('!+ This is a trigger we are watching for: %s %s' % (trigname, change))
+                    change['endpointId']=deviceId
                     await self.runEvents(self.eventTriggers[trigname], change, trigname)
             except:
                 self.log.error('Error in virtual change handler: %s %s' % (deviceName, change), exc_info=True)
+
+        async def virtualEventHandler(self, event, source, deviceId, message):
+            
+            try:
+                trigname="event=%s.%s.%s" % (deviceId, source, event)
+                self.log.info('Event trigger: %s' % trigname)
+                if trigname in self.eventTriggers:
+                    self.log.info('!+ This is a trigger we are watching for: %s %s' % (trigname, message))
+                    await self.runEvents(self.eventTriggers[trigname], message, trigname)
+            except:
+                self.log.error('Error in virtual event handler: %s %s %s' % (event, deviceId, message), exc_info=True)
+
 
         async def buildRegion(self, thisRegion=None):
             
@@ -941,7 +996,7 @@ class logicServer(sofabase):
                     for automation in self.automations:
                         try:
                             if self.automations[automation]['nextrun']:
-                                scheduled.append({"name":automation, "nextrun":self.automations[automation]['nextrun'], "lastrun": self.automations[automation]['lastrun']})
+                                scheduled.append({"name":automation, "nextrun":self.automations[automation]['nextrun'], "lastrun": self.automations[automation]['lastrun'], "schedule":self.automations[automation]['schedules']})
                         except:
                             self.log.info('Not including %s' % automation,exc_info=True)
                     ss = sorted(scheduled, key=itemgetter('nextrun'))
@@ -950,6 +1005,9 @@ class logicServer(sofabase):
                     return ss                
                 if itempath=="scenes":
                     return self.scenes
+
+                if itempath=="security":
+                    return self.security
 
                 if itempath=="areas":
                     return self.areas

@@ -50,7 +50,10 @@ class smartInterface(object):
         supported=[]
         for prop in self.props:
             supported.append({"name": prop})
-        return { "proactivelyReported": self.proactivelyReported, "retrievable": self.retrievable, "supported": supported}
+        if supported:
+            return { "proactivelyReported": self.proactivelyReported, "retrievable": self.retrievable, "supported": supported}
+        else:
+            return { "proactivelyReported": self.proactivelyReported, "retrievable": self.retrievable }
 
     @property
     def capability(self):
@@ -82,8 +85,9 @@ class smartInterface(object):
                         "name": prop,
                         "value": getattr(self, prop),
                         "namespace":self.interface, 
-                        "uncertaintyInMilliseconds": 1000, 
-                        "timeOfSample":datetime.datetime.utcnow().isoformat() + 'Z'})
+                        "uncertaintyInMilliseconds": 0, 
+                        "timeOfSample":datetime.datetime.now(datetime.timezone.utc).isoformat()[:-10]+"Z"
+                    })
             except:
                 print('Error adding property to state report: %s %s' % (prop, sys.exc_info()))
         
@@ -284,6 +288,7 @@ class InputControllerInterface(smartInterface):
 class RemoteControllerInterface(smartInterface):
     
     def __init__(self, PressRemoteButton=None):
+        self._namespace="Sofa"
         self.controller="RemoteController"
         if PressRemoteButton:
             self.PressRemoteButton=PressRemoteButton
@@ -416,8 +421,9 @@ class TemperatureSensorInterface(smartInterface):
     def state(self):
         thisState=super().state
         for item in thisState:
-            if item['name']=='temperature':
-                item['scale']=self.scale
+            if item['name'] in ["temperature", "targetSetpoint", "lowerSetpoint", "upperSetpoint"]:
+                item['value']={'value': item['value'], 'scale':self.scale}
+                
         return thisState
 
 class SwitchControllerInterface(smartInterface):
@@ -473,8 +479,9 @@ class ThermostatControllerInterface(smartInterface):
     def state(self):
         thisState=super().state
         for item in thisState:
-            if item['name'] in ["targetSetpoint","lowerSetpoint","upperSetpoint"]:
-                item['scale']=self.scale
+            if item['name'] in ["temperature", "targetSetpoint", "lowerSetpoint", "upperSetpoint"]:
+                item['value']={'value': item['value'], 'scale':self.scale}
+                
         return thisState
         
     def SetTargetTemperature(self, value):
@@ -495,6 +502,7 @@ class LogicControllerInterface(smartInterface):
     
     @property
     def time(self):
+        # should we really be returning UTC? datetime.datetime.now(datetime.timezone.utc).isoformat()[:-10]+"Z"
         return datetime.datetime.now()
         
     @property            
@@ -650,8 +658,106 @@ class ZoneSensorInterface(smartInterface):
     def props(self):
         return { "position": { "value" : "string"}, "type": { "value" : "string" }}
 
+class MotionSensorInterface(smartInterface):
+    
+    def __init__(self, detectionState="NOT_DETECTED", namespace="Alexa"):
+        self.controller="MotionSensor"
+        self.detectionState=detectionState
 
-   
+    @property            
+    def directives(self):
+        return {}
+        
+    @property          
+    def props(self):
+        return { "detectionState": { "value" : "string"}}
+
+class ContactSensorInterface(smartInterface):
+    
+    def __init__(self, detectionState="NOT_DETECTED", namespace="Alexa"):
+        self.controller="ContactSensor"
+        self.detectionState=detectionState
+
+    @property            
+    def directives(self):
+        return {}
+        
+    @property          
+    def props(self):
+        return { "detectionState": { "value" : "string"}}
+
+class DoorbellEventSourceInterface(smartInterface):
+
+    def __init__(self, endpointId='', namespace="Alexa"):
+        self.controller="DoorbellEventSource"
+        self.endpointId=endpointId
+        pass
+
+    @property            
+    def directives(self):
+        return {}
+        
+    @property          
+    def props(self):
+        return {}
+        
+    @property
+    def capability(self):
+        # DoorbellEventSource is Quirks mode stuff: https://developer.amazon.com/docs/device-apis/alexa-doorbelleventsource.html
+        return {"interface":self.interface, "version": self.version, "type": self.capabilityType, "proactivelyReported": True}
+
+        
+    def press(self, endpointId):
+        return {
+                    "context": {},
+                    "event": {
+                        "header": {
+                            "messageId": str(uuid.uuid1()),
+                            "namespace" : "Alexa.DoorbellEventSource",
+                            "name": "DoorbellPress",
+                            "payloadVersion": "3"
+                        },
+                        "endpoint": {
+                            "scope": {
+                                "type": "BearerToken",
+                                "token": ""
+                            },
+                            "endpointId": endpointId
+                        },
+                        "payload" : {
+                            "cause": {
+                                "type": "PHYSICAL_INTERACTION"
+                            },
+                            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()[:-10]+"Z"
+                        }
+                    }
+                }
+
+    
+
+class EndpointHealthInterface(smartInterface):
+    
+    def __init__(self, connectivity="OK", namespace="Alexa"):
+        self.controller="EndpointHealth"
+        self.connectivity=connectivity
+
+    @property
+    def state(self):
+        thisState=super().state
+        for item in thisState:
+            if item['name'] in ["connectivity"]:
+                item['value']={'value': item['value']}
+                
+        return thisState
+
+    @property            
+    def directives(self):
+        return {}
+
+    @property          
+    def props(self):
+        return { "connectivity": { "value": "string"} }
+
 class smartObject(object):
     
     @property
@@ -721,7 +827,10 @@ class smartObject(object):
 
     @property
     def capabilities(self):
-        caps=[{ "type": "AlexaInterface", "interface": "Alexa", "version": "3"}]
+        if hasattr(self, '_noAlexaInterface'):
+            caps=[]
+        else:
+            caps=[{ "type": "AlexaInterface", "interface": "Alexa", "version": "3"}]
         for obj in self.interfaces:
             caps.append(obj.capability)
         return caps
@@ -764,27 +873,30 @@ class smartObject(object):
             "capabilities": self.capabilities,
         }
         
-    @property
-    def stateReport(self):
+
+    def StateReport(self, correlationToken='' , bearerToken=''):
         return  {
             "event": {
                 "header": {
                     "name":"StateReport",
                     "payloadVersion": self.payloadVersion,
                     "messageId":str(uuid.uuid1()),
-                    "namespace":self.namespace
+                    "namespace":self.namespace,
+                    "correlationToken":correlationToken
                 },
                 "endpoint": {
                     "endpointId": self.endpointId,
-                    "cookie": {
-                        "name": self.friendlyName
-                    }
-                }
+                    "scope": {
+                        "type": "BearerToken",
+                        "token": bearerToken
+                    },     
+                    "cookie": {}
+                },
+                "payload": {}
             },
             "context": {
                 "properties": self.propertyStates
-            },
-            "payload": {}
+            }
         }
         
     @property
@@ -850,8 +962,9 @@ class smartObject(object):
         }
 
 
-    def Response(self, correlationToken=''):
-        return  {
+    def Response(self, correlationToken='', controller=''):
+
+        return {
             "event": {
                 "header": {
                     "name":"Response",
@@ -861,24 +974,20 @@ class smartObject(object):
                     "correlationToken":correlationToken
                 },
                 "endpoint": {
-                    "endpointId": self.endpointId,
-                    "cookie": {
-                        "name": self.friendlyName
-                    }
+                    "endpointId": self.endpointId
                 }
             },
             "context": {
-                "properties": self.propertyStates
+                "properties": [prop for prop in self.propertyStates if (prop['namespace'].split('.')[1]==controller or not controller)]
             },
             "payload": {}
         }
-
 
             
 
 class basicDevice(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", log=None, native=None):
+    def __init__(self, path, name, description="Device", manufacturer="sofa", log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["DEVICE"]
         self.PowerController=PowerControllerInterface()
@@ -889,7 +998,7 @@ class basicDevice(smartObject):
 
 class simpleMode(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", log=None, native=None):
+    def __init__(self, path, name, description="System Mode", manufacturer="sofa", log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["MODE"]
         self.PowerController=PowerControllerInterface()
@@ -900,7 +1009,7 @@ class simpleMode(smartObject):
 
 class smartButton(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", log=None, native=None):
+    def __init__(self, path, name, description="Button", manufacturer="sofa", log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["BUTTON"]
         self.ButtonController=ButtonControllerInterface()
@@ -911,7 +1020,7 @@ class smartButton(smartObject):
         
 class simpleActivity(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", log=None, native=None):
+    def __init__(self, path, name, description="Activity", manufacturer="sofa", log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["ACTIVITY_TRIGGER"]
         self.SceneController=SceneControllerInterface()
@@ -922,7 +1031,7 @@ class simpleActivity(smartObject):
         
 class simpleScene(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", log=None, native=None):
+    def __init__(self, path, name, description="Lighting Scene", manufacturer="sofa", log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["SCENE_TRIGGER"]
         self.SceneController=SceneControllerInterface()
@@ -933,7 +1042,7 @@ class simpleScene(smartObject):
 
 class simpleLight(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, log=None, native=None):
+    def __init__(self, path, name, description="Light", manufacturer="sofa", TurnOn=None, TurnOff=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["LIGHT"]
         self._description=description
@@ -944,7 +1053,7 @@ class simpleLight(smartObject):
 
 class simpleLightWithSwitch(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, log=None, native=None):
+    def __init__(self, path, name, description="Light with Switch", manufacturer="sofa", TurnOn=None, TurnOff=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["LIGHT"]
         self._description=description
@@ -956,7 +1065,7 @@ class simpleLightWithSwitch(smartObject):
         
 class dimmableLight(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, log=None, native=None):
+    def __init__(self, path, name, description="Dimmable Light", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["LIGHT"]
         self._description=description
@@ -968,7 +1077,7 @@ class dimmableLight(smartObject):
         
 class dimmableLightWithSwitch(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, log=None, native=None):
+    def __init__(self, path, name, description="Dimmable Light with Switch", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["LIGHT"]
         self._description=description
@@ -981,7 +1090,7 @@ class dimmableLightWithSwitch(smartObject):
         
 class lightSwitch(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", log=None):
+    def __init__(self, path, name, description="Light Switch", manufacturer="sofa", log=None):
         self._friendlyName=name
         self._displayCategories=["SWITCH"]
         self._description=description
@@ -992,7 +1101,7 @@ class lightSwitch(smartObject):
         
 class tunableLight(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, SetColorTemperature=None, log=None, native=None):
+    def __init__(self, path, name, description="Tunable White Light", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, SetColorTemperature=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["LIGHT"]
         self._description=description
@@ -1005,7 +1114,7 @@ class tunableLight(smartObject):
 
 class colorLight(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, SetColorTemperature=None, SetColor=None, log=None, native=None):
+    def __init__(self, path, name, description="Color Light", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, SetColorTemperature=None, SetColor=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["LIGHT"]
         self._description=description
@@ -1019,7 +1128,7 @@ class colorLight(smartObject):
 
 class soundSystem(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", SetVolume=None, SetMute=None, SelectInput=None, log=None, native=None):
+    def __init__(self, path, name, description="Sound System", manufacturer="sofa", SetVolume=None, SetMute=None, SelectInput=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["SPEAKER"]
         self._description=description
@@ -1032,7 +1141,7 @@ class soundSystem(smartObject):
         
 class receiver(smartObject):
 
-    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, SetVolume=None, SetMute=None, SelectInput=None, SetSurround=None, SetDecoder=None, log=None, native=None):
+    def __init__(self, path, name, description="AV Receiver", manufacturer="sofa", TurnOn=None, TurnOff=None, SetVolume=None, SetMute=None, SelectInput=None, SetSurround=None, SetDecoder=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["RECEIVER"]
         self._description=description
@@ -1046,7 +1155,7 @@ class receiver(smartObject):
         
 class tv(smartObject):
 
-    def __init__(self, path, name, description="", manufacturer="sofa", SetVolume=None, SetMute=None, TurnOn=None, TurnOff=None, SelectInput=None, PressRemoteButton=None, log=None, native=None):
+    def __init__(self, path, name, description="Television", manufacturer="sofa", SetVolume=None, SetMute=None, TurnOn=None, TurnOff=None, SelectInput=None, PressRemoteButton=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["TV"]
         self._description=description
@@ -1060,7 +1169,7 @@ class tv(smartObject):
 
 class smartSpeaker(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", SetVolume=None, SetMute=None, SelectInput=None, log=None, native=None):
+    def __init__(self, path, name, description="Speaker", manufacturer="sofa", SetVolume=None, SetMute=None, SelectInput=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["SPEAKER"]
         self._description=description
@@ -1072,7 +1181,7 @@ class smartSpeaker(smartObject):
         
 class smartPC(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", TurnOn=None, TurnOff=None, Lock=None, Unlock=None, log=None, native=None):
+    def __init__(self, path, name, description="Computer", manufacturer="sofa", TurnOn=None, TurnOff=None, Lock=None, Unlock=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["PC"]
         self._description=description
@@ -1084,7 +1193,7 @@ class smartPC(smartObject):
         
 class simpleThermostat(smartObject):
     
-    def __init__(self, path, name, description="Simple temperature sensor", manufacturer="sofa", log=None, native=None):
+    def __init__(self, path, name, description="Temperature sensor", manufacturer="sofa", log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["THERMOSTAT"]
         self._description=description
@@ -1095,7 +1204,7 @@ class simpleThermostat(smartObject):
 
 class smartThermostat(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", SetTargetTemperature=None, supportedModes=["HEAT", "COOL", "AUTO", "OFF"], log=None, native=None):
+    def __init__(self, path, name, description="Thermostat", manufacturer="sofa", SetTargetTemperature=None, supportedModes=["HEAT", "COOL", "AUTO", "OFF"], log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["THERMOSTAT"]
         self._description=description
@@ -1120,7 +1229,7 @@ class smartThermostatFan(smartObject):
 
 class smartThermostatSpeedFan(smartObject):
     
-    def __init__(self, path, name, description="", manufacturer="sofa", SetPowerLevel=None, SetTargetTemperature=None, supportedModes=["HEAT", "COOL", "AUTO", "OFF"], log=None, native=None):
+    def __init__(self, path, name, description="Heat Cool with Fan", manufacturer="sofa", SetPowerLevel=None, SetTargetTemperature=None, supportedModes=["HEAT", "COOL", "AUTO", "OFF"], log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["THERMOSTAT"]
         self._description=description
@@ -1133,7 +1242,7 @@ class smartThermostatSpeedFan(smartObject):
 
         
 class simpleZone(smartObject):
-    
+    # deprecated by Alexa implementing Contact Sensor/Motion Sensor
     def __init__(self, path, name, description="", manufacturer="sofa", log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["ZONE"]
@@ -1141,6 +1250,43 @@ class simpleZone(smartObject):
         self._manufacturer=manufacturer
         self.ZoneSensor=ZoneSensorInterface()
         self._interfaces=[self.ZoneSensor]
+        self._path=path
+        
+class MotionSensorDevice(smartObject):
+    
+    def __init__(self, path, name, description="Motion Sensor", manufacturer="sofa", log=None, native=None):
+        self._friendlyName=name
+        self._displayCategories=["MOTION_SENSOR"]
+        self._description=description
+        self._manufacturer=manufacturer
+        self.MotionSensor=MotionSensorInterface()
+        self.EndpointHealth=EndpointHealthInterface()
+        self._interfaces=[self.MotionSensor, self.EndpointHealth]
+        self._path=path
+
+class TemperatureSensorDevice(smartObject):
+    
+    def __init__(self, path, name, description="Temperature Sensor", manufacturer="Sofa", log=None, native=None):
+        self._friendlyName=name
+        self._displayCategories=["TEMPERATURE_SENSOR"]
+        self._description=description
+        self._manufacturer=manufacturer
+        self.TemperatureSensor=TemperatureSensorInterface()
+        self.EndpointHealth=EndpointHealthInterface()
+        self._interfaces=[self.TemperatureSensor, self.EndpointHealth]
+        self._path=path
+
+
+class ContactSensorDevice(smartObject):
+    
+    def __init__(self, path, name, description="Contact Sensor", manufacturer="Sofa", log=None, native=None):
+        self._friendlyName=name
+        self._displayCategories=["CONTACT_SENSOR"]
+        self._description=description
+        self._manufacturer=manufacturer
+        self.ContactSensor=ContactSensorInterface()
+        self.EndpointHealth=EndpointHealthInterface()
+        self._interfaces=[self.ContactSensor, self.EndpointHealth]
         self._path=path
 
 class simpleCamera(smartObject):
@@ -1152,6 +1298,19 @@ class simpleCamera(smartObject):
         self._manufacturer=manufacturer
         self.ZoneSensor=ZoneSensorInterface()
         self._interfaces=[self.ZoneSensor]
+        self._path=path
+
+class DoorbellDevice(smartObject):
+    
+    def __init__(self, path, name, description="Doorbell", manufacturer="sofa", log=None, native=None):
+        self._noAlexaInterface=True
+        self._friendlyName=name
+        self._displayCategories=["DOORBELL"]
+        self._description=description
+        self._manufacturer=manufacturer
+        self.DoorbellEventSource=DoorbellEventSourceInterface(self.endpointId)
+        self.doorbellPress=self.DoorbellEventSource.press
+        self._interfaces=[self.DoorbellEventSource]
         self._path=path
         
 class simpleLogicCommand(smartObject):
@@ -1166,11 +1325,5 @@ class simpleLogicCommand(smartObject):
         self._path=path
 
 if __name__ == '__main__':
-    newlight=dimmableLight("test/office/1", "Office Light")
-    print(newlight.discoverResponse)
-    print('--')
-    print(newlight.stateReport)
-    newlight.PowerController.powerState="ON"
-    newlight.BrightnessController.SetBrightness(100)
-    print(newlight.stateReport)
+    pass
     
