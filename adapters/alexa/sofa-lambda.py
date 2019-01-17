@@ -21,17 +21,13 @@ def lambda_handler(event, context):
 
         sofaqueue=getSQSQueueURL(sqs, 'sofa')
         if sofaqueue:
-            logger.info('Sofa queue url: %s' % sofaqueue)
             logger.info('Create return queue: %s' % qid)
             returnqueue=createReturnQueue(sqs,qid)
             if returnqueue:
-                logger.info('Move message to sofa queue: %s' % event)
                 messageId=sendSQSqueue(sqs, sofaqueue, event)
                 if messageId:
-                    logger.info('Waiting to process result')
                     result=checkSQSqueue(sqs, returnqueue, messageId)
 
-        logger.info('Final result: %s' % result)
         deleteReturnQueue(sqs,returnqueue)
         return result
         
@@ -41,7 +37,13 @@ def lambda_handler(event, context):
 
 def queueId(message):
     try:
-        logger.info('Message: %s' % message)
+        try:
+            if message['directive']['header']['name']=='ReportState':
+                logger.info('%s %s %s' % (message['directive']['header']['name'], message['directive']['endpoint']['endpointId'], json.dumps(message) ))
+            else:
+                logger.info('Command: %s %s %s' % (message['directive']['header']['name'], message['directive']['header'], message))
+        except:
+            logger.info('Message: %s' % message)
         if 'correlationToken' in message['directive']['header']:
             qid=message['directive']['header']['correlationToken']
         elif 'messageId' in message['directive']['header']:
@@ -62,7 +64,6 @@ def queueId(message):
 def connectSQS():
     
     try:
-        # when this is run on Lambda, it should get your credentials automatically from the IAM Exection Role
         sqs=boto3.client('sqs',region_name="us-east-1")
         return sqs
     except:
@@ -128,21 +129,26 @@ def checkSQSqueue(sqs, queuename, messageId):
         result=""
         while tries<4:
             response=sqs.receive_message(QueueUrl=queuename, MaxNumberOfMessages=10, WaitTimeSeconds=10)
-            logger.info('Found %s items on pass %s' % (len(response['Messages']), tries))
+            #logger.info('Found %s items on pass %s' % (len(response['Messages']), tries))
             messages=response['Messages']
             for sqsitem in messages:
                 try:
                     sqsdata=json.loads(sqsitem['Body'])
                     if 'correlationToken' in sqsdata["event"]["header"]:
-                        logger.info('Looking for '+messageId+' vs '+sqsdata["event"]["header"]['correlationToken'])
+                        #logger.info('Looking for '+messageId+' vs '+sqsdata["event"]["header"]['correlationToken'])
                         if messageId==sqsdata["event"]["header"]['correlationToken']:
                             logger.info('Processing Item: %s' % sqsitem['Body'])
                             return sqsdata
                     elif 'messageId' in sqsdata["event"]["header"]:
-                        logger.info('Looking for '+messageId+' vs '+sqsdata["event"]["header"]["messageId"])
+                        logger.info('Looking for Authorization messages or '+messageId+' vs '+sqsdata["event"]["header"]["messageId"])
                         if messageId==sqsdata["event"]["header"]["messageId"]:
-                            logger.info('Processing Item: '+str(sqsitem.__dict__))
+                            logger.info('Processing Item: %s' % sqsitem['Body'])
                             return sqsdata
+                        elif sqsdata['event']['header']['namespace']=='Alexa.Authorization':
+                            logger.info('Processing Item: %s' % sqsitem['Body'])
+                            return sqsdata
+                            
+                        
                 except:
                     logger.error("Error handling queue item message",exc_info=True)
     
