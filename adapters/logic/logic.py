@@ -11,6 +11,7 @@ import devices
 
 from sofacollector import SofaCollector
 from sendmail import mailSender
+from concurrent.futures import ThreadPoolExecutor
 
 import json
 import asyncio
@@ -33,6 +34,8 @@ class logicServer(sofabase):
             self.dataset.nativeDevices['activity']={}
             self.dataset.nativeDevices['logic']={}
             self.dataset.nativeDevices['mode']={}
+            
+            self.logicpool = ThreadPoolExecutor(10)
 
             #self.definitions=definitions.Definitions
             self.log=log
@@ -314,7 +317,7 @@ class logicServer(sofabase):
                                 self.log.error('!! Error computing next start for %s' % automation, exc_info=True)
 
                     if startdate:
-                        self.log.info('** %s next start %s %s %s' % (automation, wda[startdate.weekday()], startdate, sched))
+                        self.log.debug('** %s next start %s %s %s' % (automation, wda[startdate.weekday()], startdate, sched))
                         self.automations[automation]['nextrun']=nextruns[automation].isoformat()+"Z"
                     else:
                         self.automations[automation]['nextrun']=''
@@ -496,26 +499,11 @@ class logicServer(sofabase):
                 return {}
 
 
-        async def sendAlexaCommand(self, command, controller, endpointId, payloadvalue=None, cookie={}, trigger={}):
+        async def sendAlexaCommand(self, command, controller, endpointId, payload={}, cookie={}, trigger={}):
             
             try:
-                if type(payloadvalue) is dict:
-                    payload=payloadvalue
-                    
-                else:
-                    #self.log.info('obj: %s' % getattr(devices,controller+'Interface')().commands)
-                    objcommands=getattr(devices,controller+'Interface')().commands
-                    if command in objcommands:
-                        payload=objcommands[command]
-                    else:
-                        payload={}
-                        
-                    for prop in payload:
-                        if payload[prop]=='value':
-                            payload[prop]=payloadvalue
-                
                 if trigger:
-                    cookie={"trigger" : trigger}
+                    cookie["trigger"]=trigger
 
                 header={"name": command, "namespace":"Alexa." + controller, "payloadVersion":"3", "messageId": str(uuid.uuid1()), "correlationToken": str(uuid.uuid1())}
                 endpoint={"endpointId": endpointId, "cookie": cookie, "scope":{ "type":"BearerToken", "token":"access-token-from-skill" }}
@@ -524,7 +512,7 @@ class logicServer(sofabase):
                 changereport=await self.dataset.sendDirectiveToAdapter(data)
                 return changereport
             except:
-                self.log.error('Error executing Alexa Command', exc_info=True)
+                self.log.error('Error executing Alexa Command: %s %s %s %s' % (command, controller, endpointId, payload), exc_info=True)
                 return {}
 
         async def captureDeviceState(self, endpointId, deviceName):
@@ -558,10 +546,14 @@ class logicServer(sofabase):
                         propname="%s.%s" % (prop['namespace'], prop['name'])
                         newprops[propname]=prop['value']
                     
+                    self.log.info('%s oldprops : %s ' % (deviceName, oldprops))
+                    self.log.info('%s newprops : %s ' % (deviceName, newprops))
+
                     powerOff=False
                     for prop in oldprops:
                         if prop in newprops:
-                            if oldprops[prop]!=newprops[prop]:
+                            if 1==1:  # do it anyway right now because some of the adapters respond too slow or async to changes
+                            #if oldprops[prop]!=newprops[prop]:
                                 self.log.info('Difference discovered %s - now %s was %s' % (prop, oldprops[prop], newprops[prop]))
                                 # Need to figure out how to get back to the command from the property, but for now this
                                 # mostly just applies to lights so will shim in this fix
@@ -627,62 +619,64 @@ class logicServer(sofabase):
             except:
                 self.log.error('Error comparing condition: %s %s %s' % (conditionValue, operator, propertyValue), exc_info=True)
             
-
-        async def runActivityWait(self, activityName, trigger={}, triggerEndpointId=''):
+        async def checkLogicConditions(self, conditions, activityName=""):
             
             try:
                 devstateCache={}
-                conditionlist=[]
                 conditionMatch=True
-                if 'conditions' in self.automations[activityName]:
-                    conditions=self.automations[activityName]['conditions']
-                    for condition in conditions:
-                        if condition['endpointId'] not in devstateCache:
-                            devstate=await self.dataset.requestReportState(condition['endpointId'])
-                            #self.log.info('Devstate: %s' % devstate)
-                            devstateCache[condition['endpointId']]=devstate['context']['properties']
-                        devstate=devstateCache[condition['endpointId']]
-                        #self.log.info('Devstate: %s %s' % ( condition['endpointId'], devstate))
-                        prop=await self.findStateForCondition(condition['controller'], condition['propertyName'], devstate)
-                        if prop==False:
-                            self.log.info('!. %s did not find property for condition: %s vs %s' % (activityName, condition, devstate))
+                for condition in conditions:
+                    if condition['endpointId'] not in devstateCache:
+                        devstate=await self.dataset.requestReportState(condition['endpointId'])
+                        devstateCache[condition['endpointId']]=devstate['context']['properties']
+                    devstate=devstateCache[condition['endpointId']]
+                    prop=await self.findStateForCondition(condition['controller'], condition['propertyName'], devstate)
+                    if prop==False:
+                        self.log.info('!. %s did not find property for condition: %s vs %s' % (activityName, condition, devstate))
+                        conditionMatch=False
+                        break
+                    
+                    if 'value' in condition['value']:
+                        condval=condition['value']['value']
+                        if not self.compareCondition(condval,condition['operator'],prop['value']):
+                            self.log.info('!. %s did not meet condition: %s vs %s' % (activityName, prop['value'], condval))
                             conditionMatch=False
                             break
                         
-                        if 'value' in condition['value']:
-                            condval=condition['value']['value']
-                            if not self.compareCondition(condval,condition['operator'],prop['value']):
-                                self.log.info('!. %s did not meet condition: %s vs %s' % (activityName, prop['value'], condval))
-                                conditionMatch=False
-                                break
-                            
-                        elif 'end' in condition['value']:
-                            condval=condition['value']
-                            st=datetime.datetime.strptime(condition['value']['start'],"%H:%M").time()
-                            et=datetime.datetime.strptime(condition['value']['end'],"%H:%M").time()
-                            ct=self.fixdate(prop['value']).time()
-                            if st<ct and et>ct:
-                                self.log.info('Passed time check: %s<%s<%s' % (st, ct, et))
-                                pass
-                            else:
-                                self.log.info('Failed time check: %s<%s<%s' % (st, ct, et))
-                                conditionMatch=False
-                                break
+                    elif 'end' in condition['value']:
+                        condval=condition['value']
+                        st=datetime.datetime.strptime(condition['value']['start'],"%H:%M").time()
+                        et=datetime.datetime.strptime(condition['value']['end'],"%H:%M").time()
+                        ct=self.fixdate(prop['value']).time()
+                        if st<ct and et>ct:
+                            self.log.info('Passed time check: %s<%s<%s' % (st, ct, et))
+                            pass
+                        else:
+                            self.log.info('Failed time check: %s<%s<%s' % (st, ct, et))
+                            conditionMatch=False
+                            break
 
-                    if not conditionMatch:           
+                return conditionMatch
+            except:
+                self.log.error('Error with chunky Activity', exc_info=True)  
+                
+        async def runActivity(self, activityName, trigger={}, triggerEndpointId=''):
+            
+            try:
+                if 'conditions' in self.automations[activityName]:
+                    if not await self.checkLogicConditions(self.automations[activityName]['conditions'], activityName=activityName):
                         return False
-                        
+                
                 activity=self.automations[activityName]['actions']
                 chunk=[]
                 for action in activity:
                     if action['command']=="Delay":
                         chunk.append(action)
                         result=await self.runActivityChunk(chunk)
-                        self.log.info('Result of Pre-Delay chunk: %s' % result)
+                        #self.log.info('Result of Pre-Delay chunk: %s' % result)
                         chunk=[]
                     elif action['command']=="Wait":
                         result=await self.runActivityChunk(chunk)
-                        self.log.info('Result of chunk: %s' % result)
+                        #self.log.info('Result of chunk: %s' % result)
                         chunk=[]
                     elif action['command']=="Alert":
                         alert=copy.deepcopy(action)
@@ -701,6 +695,9 @@ class logicServer(sofabase):
                         chunk.append(action)
                 if chunk:
                     result=await self.runActivityChunk(chunk)
+
+                self.automations[activityName]['lastrun']=datetime.datetime.now().isoformat()+"Z"
+                await self.saveAutomation(activityName, json.dumps(self.automations[activityName]))
                     
                 return result
                 
@@ -711,7 +708,7 @@ class logicServer(sofabase):
         
             try:
                 allacts = await asyncio.gather(*[self.sendAlexaDirective(action) for action in chunk ])
-                self.log.info('chunk result: %s' % allacts)
+                #self.log.info('chunk result: %s' % allacts)
                 return allacts
             except:
                 self.log.error('Error executing activity', exc_info=True)
@@ -723,10 +720,16 @@ class logicServer(sofabase):
                 acts=[]
                 
                 for light in scene:
+                    try:
+                        self.log.info('scene dev: %s' % self.dataset.getDeviceByfriendlyName(light))
+                        epid=self.dataset.getDeviceByfriendlyName(light)['endpointId']
+                    except:
+                        self.log.error('Error gettind endpointId for %s' % light, exc_info=True)
+                        continue
                     if int(scene[light]['brightness'])==0:
-                        acts.append({'command':'TurnOff', 'controller':'PowerController', 'endpointId':light, 'value': None})
+                        acts.append({'command':'TurnOff', 'controller':'PowerController', 'endpointId':epid, 'value': None})
                     else:
-                        acts.append({'command':'SetBrightness', 'controller':'BrightnessController', 'endpointId':light, 'value': { "brightness": int(scene[light]['brightness']) }} )
+                        acts.append({'command':'SetBrightness', 'controller':'BrightnessController', 'endpointId':epid, 'value': { "brightness": int(scene[light]['brightness']) }} )
                         
                 allacts = await asyncio.gather(*[self.sendAlexaDirective(action) for action in acts ])
                 self.log.info('scene %s result: %s' % (sceneName, allacts))    
@@ -784,9 +787,6 @@ class logicServer(sofabase):
                         
         async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
             
-            # CHEESE: This needs to be coded to properly handle activation responses and to move from changereports
-            # 
-            
             try:
                 device=endpointId.split(":")[2]
                 nativeCommand={}
@@ -833,7 +833,9 @@ class logicServer(sofabase):
                         if 'triggerEndpointId' in cookie:
                             triggerEndPointId=cookie['triggerEndPointId']
                         if device in self.automations:
-                            await self.runActivityWait(device, trigger,triggerEndPointId)
+                            task = asyncio.ensure_future(self.runActivity(device, trigger, triggerEndPointId))
+                            #self.log.info('Started automation as task: %s /%s' % (device, task))
+                            return self.dataset.getDeviceByEndpointId(endpointId).ActivationStarted(endpointId)
                             # This should return the scene started ack
                         elif device in self.scenes:
                             await self.runScene(device)
@@ -901,7 +903,7 @@ class logicServer(sofabase):
                                     trigname="%s.%s.%s=%s" % (trigger['endpointId'], trigger['controller'], trigger['propertyName'], trigger['value'])
                                 elif trigger['type']=='event':
                                     trigname="event=%s.%s.%s" % (trigger['endpointId'], trigger['controller'], trigger['propertyName'])
-                                    self.log.info('Event trigger: %s' % trigname)
+                                    self.log.debug('Event trigger: %s' % trigname)
                                 else:
                                     self.log.info('Skipping unknown trigger type: %s' % trigger)
                                     continue
@@ -911,7 +913,7 @@ class logicServer(sofabase):
                             except:
                                 self.log.error('Error computing trigger shorthand for %s %s' % (automation,trigger), exc_info=True)
                             
-                self.log.info('Triggers: %s' % (len(triggerlist)))
+                self.log.debug('Triggers: %s' % (len(triggerlist)))
             except:
                 self.log.error('Error calculating trigger shorthand:', exc_info=True)
             
@@ -922,7 +924,7 @@ class logicServer(sofabase):
             try:
                 actions=[]
                 for event in events:
-                    self.log.info('.. Triggered Event: %s' % events)
+                    self.log.info('.. Triggered Event: %s' % event)
                     if event['type']=='event':
                         action=self.events[event['name']]['action']
                     elif event['type']=='automation':
@@ -940,6 +942,30 @@ class logicServer(sofabase):
                 return allacts
             except:
                 self.log.error('Error executing event reactions', exc_info=True)
+
+        def runEventsThread(self, events, change, trigger='', loop=None):
+        
+            try:
+                actions=[]
+                for event in events:
+                    #self.log.info('.. Triggered Event: %s' % event)
+                    if event['type']=='event':
+                        action=self.events[event['name']]['action']
+                    elif event['type']=='automation':
+                        action={"controller": "SceneController", "command":"Activate", "endpointId":"logic:activity:"+event['name']}
+                    
+                    if "value" in action:
+                        aval=action['value']
+                    else:
+                        action['value']=''
+                        
+                    actions.append(action)
+                
+                allacts = asyncio.ensure_future(asyncio.gather(*[self.sendAlexaDirective(action, trigger=change) for action in actions ], loop=loop), loop=loop)
+                #self.log.info('.. Trigger %s result: %s' % (change, allacts))
+                return allacts
+            except:
+                self.log.error('Error executing threaded event reactions', exc_info=True)
                             
        
         async def virtualChangeHandler(self, deviceId, change):
@@ -949,7 +975,8 @@ class logicServer(sofabase):
                 if trigname in self.eventTriggers:
                     self.log.info('!+ This is a trigger we are watching for: %s %s' % (trigname, change))
                     change['endpointId']=deviceId
-                    await self.runEvents(self.eventTriggers[trigname], change, trigname)
+                    self.loop.run_in_executor(self.logicpool, self.runEventsThread, self.eventTriggers[trigname], change, trigname, self.loop)
+                    #await self.runEvents(self.eventTriggers[trigname], change, trigname)
             except:
                 self.log.error('Error in virtual change handler: %s %s' % (deviceName, change), exc_info=True)
 
@@ -959,8 +986,10 @@ class logicServer(sofabase):
                 trigname="event=%s.%s.%s" % (deviceId, source, event)
                 self.log.info('Event trigger: %s' % trigname)
                 if trigname in self.eventTriggers:
-                    self.log.info('!+ This is a trigger we are watching for: %s %s' % (trigname, message))
-                    await self.runEvents(self.eventTriggers[trigname], message, trigname)
+                    self.log.info('!+ This is an event trigger we are watching for: %s %s' % (trigname, message))
+                    #await self.runEvents(self.eventTriggers[trigname], message, trigname)
+                    self.loop.run_in_executor(self.logicpool, self.runEventsThread, self.eventTriggers[trigname], message, trigname, self.loop)
+
             except:
                 self.log.error('Error in virtual event handler: %s %s %s' % (event, deviceId, message), exc_info=True)
 

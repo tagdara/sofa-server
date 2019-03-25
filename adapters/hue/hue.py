@@ -33,14 +33,12 @@ class hue(sofabase):
             self.log=log
             self.notify=notify
             self.polltime=5
-
-            if not loop:
-                self.loop = asyncio.new_event_loop()
-            else:
-                self.loop=loop
+            self.loop=loop
+            self.inuse=False
             
         async def start(self):
             self.log.info('.. Starting hue')
+            #self.hueUser=await self.createHueUser()
             self.bridge = Bridge(self.bridgeAddress, self.hueUser)
             await self.pollHueBridge()
             
@@ -54,7 +52,7 @@ class hue(sofabase):
                     self.log.error('Error fetching Hue Bridge Data', exc_info=True)
 
 
-        async def getHueBridgeData(self, category='all'):
+        async def getHueBridgeData(self, category='all', device=None):
             
             #self.log.info('Polling %s' % category)
             changes=[]
@@ -62,26 +60,14 @@ class hue(sofabase):
                 alldata=await self.getHueAll()
                 changes=await self.dataset.ingest({'lights':alldata['lights'], 'sensors':alldata['sensors'], 'groups':alldata['groups']})
             elif category=="lights":
-                changes=await self.dataset.ingest({'lights': await self.getHueLights()})
+                changes=await self.dataset.ingest({'lights': await self.getHueLights(device)})
             elif category=="groups":
                 await self.dataset.ingest({'groups': await self.getHueGroups()})
             elif category=="sensors":
                 await self.dataset.ingest({'sensors':await self.getHueSensors()})
                 
             return changes
-            
-        async def command(self, category, item, data):
-            
-            try:
-                if 'directive' in data:
-                    return await self.alexaCommand(category, item, data)
-            except:
-                self.log.warn('Probably not an alexa formatted command: %s' % data, exc_info=True)
-                
-            
-            if category=='lights':
-                await self.setHueLight(item, data)
-                await self.getHueBridgeData(category='lights')
+
 
         def percentage(self, percent, whole):
             return int((percent * whole) / 100.0)
@@ -101,7 +87,7 @@ class hue(sofabase):
             try:
                 if light:
                     try:
-                        return await self.bridge.lights[light]()
+                        return { light : await self.bridge.lights[light]() }
                     except:
                         for cachelight in self.dataset.nativeDevices['lights']:
                             try:
@@ -155,21 +141,29 @@ class hue(sofabase):
                 return {}
 
         # Set Commands
-        
+
         async def setHueLight(self, light, data):
         
             try:
+                while self.inuse:
+                    await asyncio.sleep(.1)
+                    
                 if light not in self.dataset.nativeDevices['lights']:
                     for alight in self.dataset.nativeDevices['lights']:
                         if self.dataset.nativeDevices['lights'][alight]['name']==light:
                             light=alight
                             break
-
+                        
+                self.inuse=True
                 await self.bridge.lights[int(light)].state(**data)
-                return await self.getHueBridgeData(category='lights')
+                result=await self.getHueBridgeData(category='lights', device=int(light))
+                self.inuse=False
+                return result
 
             except:
-                self.log.info("Error setting hue light: %s %s" % (light, data),exc_info=True)        
+                self.log.info("Error setting hue light: %s %s" % (light, data),exc_info=True)
+                self.inuse=False
+                return {}
 
 
         # Utility Functions
@@ -187,8 +181,17 @@ class hue(sofabase):
                 self.log.error("Error deleting group.",exc_info=True)
                 
         async def createHueUser(self):
-            b = Bridge(self.bridgeAddress)  # No username yet
-            await b(devicetype="Sofa", username="sofa", http_method="post")
+
+            try:
+                newuser=await create_new_username(self.bridgeAddress, devicetype="Sofa")
+                self.log.info('New user: %s' % newuser)
+                return newuser
+            except:
+                self.log.error("Error creating user.",exc_info=True)
+                return ""
+
+            #b = Bridge(self.bridgeAddress)  # No username yet
+            #await b(devicetype="Sofa", username="sofa", http_method="post")
 
 
         # Adapter Overlays that will be called from dataset
@@ -196,6 +199,7 @@ class hue(sofabase):
             
             try:
                 if path.split("/")[1]=="lights":
+                    self.log.info('device path: %s' % path)
                     return self.addSmartLight(path.split("/")[2])
 
             except:

@@ -4,6 +4,7 @@ import sys, os
 # Add relative paths for the directory where the adapter is located as well as the parent
 sys.path.append(os.path.dirname(__file__))
 sys.path.append(os.path.join(os.path.dirname(__file__),'..'))
+from sofacollector import SofaCollector
 
 from sofabase import sofabase
 from sofabase import adapterbase
@@ -18,6 +19,7 @@ import asyncio
 import aiohttp
 import logging
 import pickle
+import signal
 
 import pyhap.util as util
 #from pyhap.accessories.TemperatureSensor import TemperatureSensor
@@ -33,22 +35,25 @@ import datetime
 import os
 import functools
 import concurrent.futures
+import uuid
+
 
 class SofaAccessory(Accessory):
     
     async def convertAccessoryCommand(self, data):
             
         try:
-            device=self.dataset.data['devices'][data['name']]
+            #device=self.dataset.data['devices'][data['name']]
 
             command={"directive": {
                             "endpoint": {
                                 "scope": {"type": "BearerToken"}, 
-                                "endpointId": device['endpointId'],
-                                "cookie": device["cookie"]
+                                "endpointId": data['endpointId'],
+                                "cookie": {}
                             },
                             'header': {
-                                'messageId': 'ef3ab784-1768-4179-8c88-2aa6987ce669',
+                                'messageId': str(uuid.uuid1()),
+                                'correlationToken': str(uuid.uuid1()),
                                 'payloadVersion': '3',
                             }, 
                             'payload': {}
@@ -56,16 +61,21 @@ class SofaAccessory(Accessory):
             }
 
             if data['characteristic']=='On':
-                command['directive']['header']['namespace']='PowerController'
+                command['directive']['header']['namespace']='Alexa.PowerController'
                 if data['value']:
                     command['directive']['header']['name']="TurnOn"
                 else:
                     command['directive']['header']['name']="TurnOff"
 
             elif data['characteristic']=='Brightness':
-                command['directive']['header']['namespace']='BrightnessController'
+                command['directive']['header']['namespace']='Alexa.BrightnessController'
                 command['directive']['header']['name']="SetBrightness"
                 command['directive']['payload']={'brightness': int(data['value'])}
+
+            elif data['characteristic']=='Volume':
+                command['directive']['header']['namespace']='Alexa.SpeakerController'
+                command['directive']['header']['name']="SetVolume"
+                command['directive']['payload']={'volume': int(data['value'])}
                 
             return command
                 
@@ -77,11 +87,9 @@ class SofaAccessory(Accessory):
             
         try:
             command=await self.convertAccessoryCommand(data)
-            cookie=command['directive']['endpoint']['cookie']
-            url = '%s%s' % (self.dataset.adapters[cookie['adapter']]['url'], cookie['path'])
             headers = { "Content-type": "text/xml" }
             async with aiohttp.ClientSession() as client:
-                response=await client.post(url, data=json.dumps(command), headers=headers)
+                response=await client.post(self.adapterUrl, data=json.dumps(command), headers=headers)
                 result=await response.read()
                 return result
         except:
@@ -95,29 +103,19 @@ class LightBulb(SofaAccessory):
 
     category = pyhap.const.CATEGORY_LIGHTBULB
     
-
-    def __init__(self, *args, dataset=None, **kwargs):
+    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
         
-        self.dataset=dataset
+        self.event_loop=loop
+        self.endpointId=endpointId
+        self.adapterUrl=adapterUrl
         self.log = logging.getLogger('homekit')
         super().__init__(*args, **kwargs)
         serv_light = self.add_preload_service('Lightbulb',chars=["Name", "On", "Brightness"])
         self.char_on = serv_light.configure_char('On', setter_callback=self.set_On)
         self.char_brightness = serv_light.configure_char("Brightness", setter_callback = self.set_Brightness)
 
-    def __getstate__(self):
-        """Return the state of this instance, less the server and server thread.
-        Also add the server address. All this is because we cannot pickle such
-        objects and to allow to recover the server using the address.
-        """
-        state = dict(super(LightBulb, self).__getstate__())
-        state["adapter"] = None
-        state["log"] = None
-        return state
-
 
     def __setstate__(self, state):
-        
         self.__dict__.update(state)
 
 
@@ -125,7 +123,8 @@ class LightBulb(SofaAccessory):
         
         try:
             self.log.info('Sending OnOff command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"On", "value":value} )
-            asyncio.run_coroutine_threadsafe(self.sendCommand({"id":self.aid, "name":self.display_name, "characteristic":"On", "value":value}), loop=self.event_loop)
+            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"On", "value":value}), loop=self.event_loop)
+
         except:
             self.log.error('Error in setbulb', exc_info=True)
             self.log.error(self.__dict__)
@@ -134,7 +133,8 @@ class LightBulb(SofaAccessory):
     def set_Brightness(self, value):
         
         try:
-            asyncio.run_coroutine_threadsafe(self.sendCommand({"id":self.aid, "name":self.display_name, "characteristic":"Brightness", "value":value}), loop=self.event_loop)
+            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Brightness", "value":value}), loop=self.event_loop)
+            #asyncio.run_coroutine_threadsafe(self.sendCommand({"id":self.aid, "name":self.display_name, "characteristic":"Brightness", "value":value}), loop=self.event_loop)
         except:
             self.log.error('Error in setbright', exc_info=True)
 
@@ -148,69 +148,96 @@ class TemperatureSensor(SofaAccessory):
 
     category = pyhap.const.CATEGORY_SENSOR
 
-    def __init__(self, *args,  dataset=None,  **kwargs):
-
-        self.dataset=dataset        
+    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
+        
+        self.event_loop=loop
+        self.endpointId=endpointId
+        self.adapterUrl=adapterUrl
         self.log = logging.getLogger('homekit')     
         super().__init__(*args, **kwargs)
         serv_temp = self.add_preload_service('TemperatureSensor')
         #self.char_temp = serv_temp.configure_char('CurrentTemperature', setter_callback = self.set_Temperature)
-
-    def __getstate__(self):
-        """Return the state of this instance, less the server and server thread.
-        Also add the server address. All this is because we cannot pickle such
-        objects and to allow to recover the server using the address.
-        """
-        state = dict(super(TemperatureSensor, self).__getstate__())
-        state["adapter"] = None
-        state["log"] = None
-        return state
+        self.char_temp = serv_temp.configure_char('CurrentTemperature')
 
     def run(self):
         pass
+
+class ContactSensor(SofaAccessory):
+
+    category = pyhap.const.CATEGORY_SENSOR
+
+    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
+        
+        self.event_loop=loop
+        self.endpointId=endpointId
+        self.adapterUrl=adapterUrl
+        self.log = logging.getLogger('homekit')     
+        super().__init__(*args, **kwargs)
+        serv_temp = self.add_preload_service('ContactSensor')
+        self.char_state = serv_temp.configure_char('ContactSensorState')
+
+    def run(self):
+        pass
+
 
   
 class Speaker(SofaAccessory):
 
     #category = pyhap.const.CATEGORY_SPEAKER
 
-    def __init__(self, *args,  dataset=None,  **kwargs):
+    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
 
-        self.dataset=dataset        
+        self.event_loop=loop
+        self.endpointId=endpointId
+        self.adapterUrl=adapterUrl
         self.log = logging.getLogger('homekit')     
         super().__init__(*args, **kwargs)
-        serv_speaker = self.add_preload_service('Speaker')
+        serv_speaker = self.add_preload_service('Speaker', chars=["Name", "Volume", "Mute"])
         #self.char_temp = serv_temp.configure_char('CurrentTemperature', setter_callback = self.set_Temperature)
+        self.char_mute = serv_speaker.configure_char('Mute', setter_callback=self.set_Mute)
+        self.char_volume = serv_speaker.configure_char("Volume", setter_callback = self.set_Volume)
 
     def __getstate__(self):
-        """Return the state of this instance, less the server and server thread.
-        Also add the server address. All this is because we cannot pickle such
-        objects and to allow to recover the server using the address.
-        """
+
         state = dict(super(Speaker, self).__getstate__())
-        state["adapter"] = None
-        state["log"] = None
         return state
 
     def run(self):
         pass
 
+    def set_Volume(self, value):
+        
+        try:
+            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Volume", "value":value}), loop=self.event_loop)
+            #asyncio.run_coroutine_threadsafe(self.sendCommand({"id":self.aid, "name":self.display_name, "characteristic":"Brightness", "value":value}), loop=self.event_loop)
+        except:
+            self.log.error('Error in setvol', exc_info=True)
 
+    def set_Mute(self, value):
+        
+        try:
+            self.log.info('Sending Mute command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"Mute", "value":value} )
+            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Mute", "value":value}), loop=self.event_loop)
+
+        except:
+            self.log.error('Error in setmute', exc_info=True)
+            self.log.error(self.__dict__)
 
 
 
 class homekit(sofabase):
 
-    class adapterProcess(adapterbase):
+    class adapterProcess(SofaCollector.collectorAdapter):
     
-        def __init__(self, log=None, loop=None, dataset=None, notify=None, request=None,  **kwargs):
+        def __init__(self, log=None, loop=None, dataset=None, notify=None, request=None, executor=None,  **kwargs):
             self.dataset=dataset
-            self.data=self.dataset.data
             self.log=log
             self.notify=notify
             self.polltime=5
+            self.maxaid=8
             self.persistfile=self.dataset.config['pickle_file']
             self.accessorymap=self.dataset.config['accessory_map']
+            self.executor=executor
             
             if not loop:
                 self.loop = asyncio.new_event_loop()
@@ -220,21 +247,72 @@ class homekit(sofabase):
 
 
         async def start(self):
-            self.log.info('Starting homekit')
-            self.dataset.ingest({'accessorymap': self.loadJSON(self.dataset.config['accessory_map'])})
-            self.accloop=asyncio.new_event_loop()
-            self.getAccessorySet()
-            self.driver = AccessoryDriver(self.acc, self.dataset.config['accessory_port'], persist_file=self.persistfile, loop=self.accloop)
-
             try:
-                await self.getDiscoveryAdapters()
+                self.log.info('Starting homekit')
+                await self.dataset.ingest({'accessorymap': self.loadJSON(self.dataset.config['accessory_map'])})
+                #self.log.info('Known devices: %s' % self.dataset.nativeDevices['accessorymap'])
+                self.getNewAid()
+                self.accloop=asyncio.new_event_loop()
+                #self.getAccessorySet()
+                #self.driver = AccessoryDriver(self.acc, self.dataset.config['accessory_port'], persist_file=self.persistfile, loop=self.accloop)
+                self.driver = AccessoryDriver(port=self.dataset.config['accessory_port'], persist_file='/opt/sofa-server/config/accessory.state', pincode=self.dataset.config['pin_code'].encode('utf-8'))
+                #self.log.info('Driver state: %s' % self.driver.state.__dict__)
+                #self.log.info('Driver: %s' % self.driver.__dict__)
+                #self.bridge = Bridge(self.driver, 'Bridge')
+                self.buildBridge()
+                self.driver.add_accessory(accessory=self.bridge)
+                self.log.info('PIN: %s' % self.driver.state.pincode)
+                signal.signal(signal.SIGTERM, self.driver.signal_handler)
+                #self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+                asyncio.ensure_future(self.loop.run_in_executor(self.executor, self.driver.start,))
+
             except:
-                self.log.info('Error with disco',exc_info=True)
-            self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=5,)
-            asyncio.ensure_future(self.loop.run_in_executor(self.executor, self.driver.start,))
-            self.log.info('Driver started')
+                self.log.error('Error during startup', exc_info=True)
  
- 
+        def buildBridge(self):
+            
+            try:
+                self.bridge = Bridge(self.driver, 'Bridge')
+                for devname in self.dataset.nativeDevices['accessorymap']:
+                    newdev=None
+                    dev=self.dataset.nativeDevices['accessorymap'][devname]
+                    if dev['services'][0]=='Lightbulb':
+                        newdev=LightBulb(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
+                        self.bridge.add_accessory(newdev)
+                    elif dev['services'][0]=='TemperatureSensor':
+                        newdev=TemperatureSensor(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
+                        self.bridge.add_accessory(newdev)
+                    elif dev['services'][0]=='ContactSensor':
+                        newdev=ContactSensor(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
+                        self.bridge.add_accessory(newdev)
+                    elif dev['services'][0]=='Speaker':
+                        newdev=Speaker(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
+                        self.bridge.add_accessory(newdev)
+
+                    else:
+                        self.log.info('XXXXX Did not add %s' % dev)
+                        
+                    if newdev:
+                        self.log.info('Added accessory: %s %s' % (dev['services'][0], newdev))
+            except:
+                self.log.error('Error during bridge building', exc_info=True)
+
+        def getNewAid(self):
+            
+            try:
+                self.maxaid=self.maxaid+1
+                for dev in self.dataset.nativeDevices['accessorymap']:
+                    if 'id' not in self.dataset.nativeDevices['accessorymap'][dev]:
+                        self.dataset.nativeDevices['accessorymap'][dev]={'id': self.dataset.nativeDevices['accessorymap'][dev] }
+                    if self.dataset.nativeDevices['accessorymap'][dev]['id']>=self.maxaid:
+                        self.maxaid=self.dataset.nativeDevices['accessorymap'][dev]['id']+1
+                return self.maxaid
+            except:
+                self.log.error('Error during getMaxAid', exc_info=True)
+                return None
+                
+                    
+                
         def getAccessorySet(self):
             
             try:
@@ -245,12 +323,83 @@ class homekit(sofabase):
                 if not self.acc:
                     self.log.info('No persistence file, creating Bridge instance')
                     address = ("", self.dataset.config['bridge_port'])
-                    self.acc = Bridge(address=address, display_name=self.dataset.config['display_name'], pincode=self.dataset.config['pin_code'])
+                    #self.acc = Bridge(address=address, display_name=self.dataset.config['display_name'], pincode=self.dataset.config['pin_code'])
+                    self.acc = Bridge(address=address, display_name=self.dataset.config['display_name'])
+
                 else:
                     self.log.info('Loaded persistence file')
             except:
                 self.log.error('Error accessory startup Data', exc_info=True)
+
+
+        async def saveAidMap(self):
+            
+            try:
+                accmap={}
+                #self.log.info('Bridge Acc: %s' % self.bridge.accessories)
+                for acc in self.bridge.accessories:
+                    svcs=[]
+                    for svc in self.bridge.accessories[acc].services:
+                        if svc.display_name not in ['AccessoryInformation']:
+                            svcs.append(svc.display_name)
+                    try:    
+                        accmap[self.bridge.accessories[acc].display_name]={'id': acc, 'services': svcs, 'adapterUrl': self.bridge.accessories[acc].adapterUrl, 'endpointId':self.bridge.accessories[acc].endpointId }
+                    except:
+                        self.log.info('TS')
+                #self.log.info('am: %s' % accmap)
+                await self.dataset.ingest({"accessorymap": accmap})
+                self.saveJSON(self.dataset.config['accessory_map'], accmap)
+            except:
+                self.log.error('Error in virt aid', exc_info=True)
+                
+
+        async def virtualAddDevice(self, devname, device):
         
+            try:
+                if device['displayCategories'][0] not in ['TEMPERATURE_SENSOR', 'LIGHT', 'CONTACT_SENSOR', 'RECEIVER']:
+                    return False
+                
+                if device['friendlyName'] in self.dataset.nativeDevices['accessorymap']:
+                    response=await self.dataset.requestReportState(device['endpointId'])
+                    #self.log.info('Already know about: %s' % device['friendlyName'])
+                    return True
+                else: 
+                    self.log.info('%s not in %s' % (device['friendlyName'], self.dataset.nativeDevices['accessorymap'].keys()))
+                    
+                newdev=None
+                aid=None
+                endpointId=device['endpointId']
+                adapter=endpointId.split(':')[0]
+                adapterUrl=self.dataset.adapters[adapter]['url']
+                
+                aid=self.getNewAid()
+                    
+                if aid==None:
+                    self.log.error('Error - could not get aid for device')
+                    return False
+
+                if device['displayCategories'][0]=='TEMPERATURE_SENSOR':
+                    newdev=TemperatureSensor(self.driver, devname, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+
+                elif device['displayCategories'][0]=='LIGHT':
+                    newdev=LightBulb(self.driver, devname, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+
+                elif device['displayCategories'][0]=='CONTACT_SENSOR':
+                    newdev=ContactSensor(self.driver, devname, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+
+                elif device['displayCategories'][0]=='RECEIVER':
+                    newdev=Speaker(self.driver, devname, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+
+                if newdev:
+                    self.log.info('++ New Homekit Device: %s - %s %s' % (aid, devname, device))
+                    self.bridge.add_accessory(newdev)
+                    response=await self.dataset.requestReportState(endpointId)
+                    await self.saveAidMap()
+                    #self.driver.config_changed()
+            except:
+                self.log.error('Error in virt add', exc_info=True)
+ 
+    
 
         def addExtraLogs(self):
         
@@ -269,28 +418,6 @@ class homekit(sofabase):
             self.log.setLevel(logging.DEBUG)        
 
 
-        async def getDiscoveryAdapters(self):
-            
-            try:
-                self.log.info('Discovering adapters')
-                await self.notify('sofa','{"op":"discover"}')
-                await asyncio.sleep(self.polltime)
-                await self.discoverAllAdapterDevices()
-                self.log.info('Discovered adapters')
-            except:
-                self.log.error('Error Getting Discovery Adapters', exc_info=True)
-            
-
-        async def pollDiscoveryAdapters(self):
-            
-            while timepoll:
-                try:
-                    await self.getDiscoveryAdapters()
-                    await asyncio.sleep(self.polltime)
-                except:
-                    self.log.error('Error Polling Adapters', exc_info=True)
-
-            
         def loadFromPersist(self, persistfile):
         
             try:
@@ -303,121 +430,107 @@ class homekit(sofabase):
             except:
                 self.log.error('Error loading cached data', exc_info=True)
                 self.acc = None
-    
-             
-        async def discoverAllAdapterDevices(self):
-            
-            for adapter in self.dataset.adapters:
-                if adapter!="homekit":
-                    try:
-                        discoveryData=await self.discoverAdapterDevices(self.dataset.adapters[adapter]['url'])
-                        await self.updateDeviceList(adapter, discoveryData)
-                        await self.addSofaToAccessories(adapter, discoveryData)
-                    except:
-                        self.log.error('error getting adapter discover info',exc_info=True)
- 
- 
-        async def discoverAdapterDevices(self, url):
-            
-            try:
-                async with aiohttp.ClientSession() as client:
-                    response=await client.get('%s/discovery' % url)
-                    result=await response.read()
-                    return json.loads(result.decode())
-            except:
-                self.log.error('Error discovering adapter devices: %s' % url, exc_info=True)
-                return {}
-
-
-        async def updateDeviceList(self, adapter, objlist):
-            
-            for obj in objlist:
-                try:
-                    self.dataset.ingest({"devices": { objlist[obj]['friendlyName'] :objlist[obj] }})
-                except:
-                    self.log.error('Error updating device list: %s' % objlist[obj],exc_info=True)
-            
-
+         
+         
         async def updateAccessoryMap(self, adapter, objlist):
             
             for accid, acc in self.acc.accessories:
-                self.dataset.ingest({"accessories": { acc.display_name : { "id":accid, "path": objlist}}})
+                self.dataset.ingest({"accessorymap": { acc.display_name : { "id":accid, "path": objlist}}})
              
              
-        async def addSofaToAccessories(self, adapter, objlist):
+
+        async def virtualChangeHandler(self, deviceId, prop):
             
             try:
-                self.dataset.ingest({"accessorymap" : {v.display_name:k for k, v in self.acc.accessories.items()}})
-                maxaid=7
-                for item in self.dataset.data['accessorymap']:
-                    if self.dataset.data['accessorymap'][item]>maxaid:
-                        maxaid=self.dataset.data['accessorymap'][item]
-                maxaid=maxaid+1
+                acc=self.getAccessoryFromEndpointId(deviceId)
+                if not acc:
+                    return None
 
-                for obj in objlist:
-                    try:
-                        if self.dataset.data['accessorymap'][objlist[obj]['friendlyName']] in self.acc.accessories.items():
-                            self.log.info('Device already exists in accessories: %s ' % objlist[obj]['friendlyName'])
-                            continue
-                        else:
-                            deviceaid=self.dataset.data['accessorymap'][objlist[obj]['friendlyName']]
-                    except:
-                        deviceaid=maxaid
-                        maxaid=maxaid+1
-                        self.log.warn('Item not in accessories: %s' % objlist[obj]['friendlyName'])
-                    
-                    try:
-                        if 'LIGHT' in objlist[obj]['displayCategories']:
-                            hkobj = LightBulb(objlist[obj]['friendlyName'], dataset=self.dataset, aid=deviceaid)
-                            self.acc.add_accessory(hkobj)
-                        elif 'THERMOSTAT' in objlist[obj]['displayCategories']:
-                            hkobj = TemperatureSensor(objlist[obj]['friendlyName'], dataset=self.dataset, aid=deviceaid)
-                            self.acc.add_accessory(hkobj)
-                        elif 'SPEAKER' in objlist[obj]['displayCategories']:
-                            hkobj = Speaker(objlist[obj]['friendlyName'], dataset=self.dataset, aid=deviceaid)
-                            self.acc.add_accessory(hkobj)
-                        else:
-                            self.log.info('Unknown Accessory Type: %s' % objlist[obj]['displayCategories'])
-                            continue
-                        self.dataset.ingest({"accessorymap" : {v.display_name:k for k, v in self.acc.accessories.items()}})
-                        await self.dataset.requestReportState(self.dataset.data['devices'][objlist[obj]['friendlyName']]['endpointId'])
-                        #self.log.info('Added %s/%s: %s' % (objlist[obj]['friendlyName'], self.acc.accessories[self.dataset.data['accessorymap'][objlist[obj]['friendlyName']]].aid, self.acc.accessories[self.dataset.data['accessorymap'][objlist[obj]['friendlyName']]]))
-                        self.acc.set_driver(self.driver) # without this, IOS clients do not get notifications
-                    except:                
-                        self.log.error('Error',exc_info=True)        
-                self.saveJSON(self.dataset.config['accessory_map'], self.dataset.data['accessorymap'])
+                self.log.info('.. Changed %s/%s %s = %s' % (deviceId, prop['namespace'], prop['name'], prop['value']))
+                if prop['name']=='brightness':
+                    #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
+                    acc.char_brightness.set_value(prop['value'])
+                    #acc.char_temp.set_value(prop['value']['value'])
+                elif prop['name']=='volume':
+                    #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
+                    acc.char_volume.set_value(prop['value'])
+                    #acc.char_temp.set_value(prop['value']['value'])
+
+                elif prop['name']=='detectionState':
+                    #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
+                    if prop['value']=='DETECTED':
+                        acc.char_state.set_value(1)
+                    else:
+                        acc.char_state.set_value(0)
+
+                elif prop['name']=='powerState':
+                    if prop['value']=='ON':
+                        acc.char_on.set_value(True)
+                        #self.setCharacteristic(thisaid, 'Lightbulb', 'On', True)
+                    elif prop['value']=='OFF':
+                        acc.char_on.set_value(False)
+                        #self.setCharacteristic(thisaid, 'Lightbulb', 'On', False)
+                elif prop['name']=='temperature':
+                    #self.setCharacteristic(thisaid, 'TemperatureSensor', 'CurrentTemperature', prop['value'])
+                    if prop['value']['scale']=='FAHRENHEIT':
+                        acc.char_temp.set_value((int(prop['value']['value'])-32) * 5.0 / 9.0)
+                    else:
+                        acc.char_temp.set_value(prop['value']['value'])
+                
             except:
-                self.log.error('Error AddSofaToAccessories', exc_info=True)
+                self.log.error('Error in virtual change handler: %s %s' % (deviceId, change), exc_info=True)
 
 
         async def handleStateReport(self, message):
-            thisaid=self.getAccessoryFromEndpointId(message['event']['endpoint']['endpointId'])
-            for prop in message['context']['properties']:
-                self.log.info('Property: %s %s = %s' % (prop['namespace'], prop['name'], prop['value']))
-                if prop['name']=='brightness':
-                    self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
-                elif prop['name']=='powerState':
-                    if prop['value']=='ON':
-                        self.setCharacteristic(thisaid, 'Lightbulb', 'On', True)
-                    elif prop['value']=='OFF':
-                        self.setCharacteristic(thisaid, 'Lightbulb', 'On', False)
-                elif prop['name']=='temperature':
-                    self.setCharacteristic(thisaid, 'TemperatureSensor', 'CurrentTemperature', prop['value'])
+            #thisaid=self.getAccessoryFromEndpointId(message['event']['endpoint']['endpointId'])
+            acc=self.getAccessoryFromEndpointId(message['event']['endpoint']['endpointId'])
             
+            if not acc:
+                return None
+                
+            for prop in message['context']['properties']:
+                #self.log.info('Property: %s %s = %s' % (prop['namespace'], prop['name'], prop['value']))
+                if prop['name']=='brightness':
+                    #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
+                    acc.char_brightness.set_value(prop['value'])
+                    #acc.char_temp.set_value(prop['value']['value'])
+                elif prop['name']=='volume':
+                    #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
+                    acc.char_volume.set_value(prop['value'])
+                    #acc.char_temp.set_value(prop['value']['value'])
+
+                elif prop['name']=='powerState':
+                    if getattr(acc, "char_on", None):
+                        if prop['value']=='ON':
+                            acc.char_on.set_value(True)
+                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', True)
+                        elif prop['value']=='OFF':
+                            acc.char_on.set_value(False)
+                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', False)
+                elif prop['name']=='temperature':
+                    #self.setCharacteristic(thisaid, 'TemperatureSensor', 'CurrentTemperature', prop['value'])
+                    if prop['value']['scale']=='FAHRENHEIT':
+                        acc.char_temp.set_value((int(prop['value']['value'])-32) * 5.0 / 9.0)
+                    else:
+                        acc.char_temp.set_value(prop['value']['value'])
 
         def getAccessoryFromEndpointId(self, endpointId):
             try:
-                for dev in self.dataset.data['devices']:
-                    if self.dataset.data['devices'][dev]['endpointId']==endpointId:
-                        thisfn=self.dataset.data['devices'][dev]['friendlyName']
-                        thisdev=self.dataset.data['accessorymap'][thisfn]
+                for dev in self.dataset.devices:
+                    if self.dataset.devices[dev]['endpointId']==endpointId:
+                        thisfn=self.dataset.devices[dev]['friendlyName']
+                        for acc in self.bridge.accessories:
+                            if self.bridge.accessories[acc].display_name==thisfn:
+                                #self.log.info('Acc: %s' % self.bridge.accessories[acc])
+                                return self.bridge.accessories[acc]
+                        #thisdev=self.dataset.data['accessorymap'][thisfn]
                         #thisacc=self.acc.accessories[thisdev]
-                        return thisdev
+                        #return thisdev
+                return None
                 self.log.warn('No accessory found for endpointId: %s' % endpointId)
                 return None
             except:
                 self.log.error('Error trying to get accessory for id: %s' % endpointId, exc_info=True)
-
             
 
         def setCharacteristic(self, aid, service, char, newval):

@@ -401,6 +401,33 @@ class SceneControllerInterface(smartInterface):
     def props(self):
         return {}
         
+    def ActivationStarted(self, endpointId, correlationToken="", bearerToken=""):
+        
+        return {
+            "context" : { },
+            "event": {
+                "header": {
+                    "messageId": str(uuid.uuid1()),
+                    "correlationToken": correlationToken,
+                    "namespace": "Alexa.SceneController",
+                    "name": "ActivationStarted",
+                    "payloadVersion": "3"
+                },
+                "endpoint": {
+                    "scope": {
+                        "type": "BearerToken",
+                        "token": bearerToken,
+                    },
+                    "endpointId": endpointId,
+                },
+                "payload": {
+                    "cause" : {
+                        "type" : "PHYSICAL_INTERACTION"
+                    },
+                    "timestamp" : datetime.datetime.now(datetime.timezone.utc).isoformat()[:-10]+"Z"
+                }
+            }
+        }
 
 class TemperatureSensorInterface(smartInterface):
     
@@ -873,8 +900,34 @@ class smartObject(object):
             "capabilities": self.capabilities,
         }
         
+    def ReportState(self, correlationToken='' , bearerToken=''):
 
-    def StateReport(self, correlationToken='' , bearerToken=''):
+        return  {
+            "directive": {
+                "header": {
+                    "name":"ReportState",
+                    "payloadVersion": self.payloadVersion,
+                    "messageId":str(uuid.uuid1()),
+                    "namespace":self.namespace,
+                    "correlationToken":correlationToken
+                },
+                "endpoint": {
+                    "endpointId": self.endpointId,
+                    "scope": {
+                        "type": "BearerToken",
+                        "token": bearerToken
+                    },     
+                    "cookie": {}
+                },
+                "payload": {}
+            },
+        }
+
+    def StateReport(self, correlationToken=None, bearerToken=''):
+        
+        if not correlationToken:
+            correlationToken=str(uuid.uuid1())
+            
         return  {
             "event": {
                 "header": {
@@ -946,19 +999,19 @@ class smartObject(object):
                     "cookie": {
                         "name": self.friendlyName
                     }
+                },
+                "payload": {
+                    "change": {
+                        "cause": {
+                            "type":"APP_INTERACTION"
+                        },
+                        "properties": changedPropertyStates
+                    }
                 }
             },
             "context": {
                 "properties": unchangedPropertyStates
             },
-            "payload": {
-                "change": {
-                    "cause": {
-                        "type":"APP_INTERACTION"
-                    },
-                    "properties": changedPropertyStates
-                }
-            }
         }
 
 
@@ -1024,6 +1077,7 @@ class simpleActivity(smartObject):
         self._friendlyName=name
         self._displayCategories=["ACTIVITY_TRIGGER"]
         self.SceneController=SceneControllerInterface()
+        self.ActivationStarted=self.SceneController.ActivationStarted
         self._interfaces=[self.SceneController]
         self._description=description
         self._manufacturer=manufacturer
@@ -1035,6 +1089,7 @@ class simpleScene(smartObject):
         self._friendlyName=name
         self._displayCategories=["SCENE_TRIGGER"]
         self.SceneController=SceneControllerInterface()
+        self.ActivationStarted=self.SceneController.ActivationStarted
         self._interfaces=[self.SceneController]
         self._description=description
         self._manufacturer=manufacturer

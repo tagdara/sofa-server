@@ -132,6 +132,9 @@ class SofaCollector(sofabase):
             for obj in objlist:
                 try:
                     self.dataset.devices[obj['friendlyName']]=obj
+                    if hasattr(self, "virtualAddDevice"):
+                        await self.virtualAddDevice(obj['friendlyName'], obj)
+
                 except:
                     self.log.error('Error updating device list: %s' % objlist[obj],exc_info=True)
 
@@ -162,7 +165,21 @@ class SofaCollector(sofabase):
         
         async def handleResponse(self, message):
             
-            self.log.info('.. handleResponse - Is this still needed? %s' % message)
+            #self.log.info('.. handleChangeReport - Is this still needed? %s' % message)
+            try:
+                if not message:
+                    return {}
+
+                if 'log_change_reports' in self.dataset.config:
+                    if self.dataset.config['log_change_reports']==True:
+                        self.log.info('Response Prop: %s' % message)
+                if 'properties' in message['context']:     
+                    for prop in message['context']['properties']:
+                        if hasattr(self, "virtualChangeHandler"):
+                            # This is mostly just for logic but other adapters could hook this eventually
+                            await self.virtualChangeHandler(message['event']['endpoint']['endpointId'], prop)
+            except:
+                self.log.error('Error processing Change Report', exc_info=True)
 
         async def handleAlexaEvent(self, message):
             
@@ -201,19 +218,31 @@ class SofaCollector(sofabase):
 
         async def handleChangeReport(self, message):
             
-            #self.log.info('.. handleChangeReport - Is this still needed? %s' % message)
             try:
                 if not message:
-                    return None
+                    return {}
                     
-                if 'change' not in message['payload']:
-                    return None
+                # if 'log_change_reports' in self.dataset.config:
+                #    if self.dataset.config['log_change_reports']==True:
+                #        self.log.info('.. ChangeReport: %s' % message)
+                
+                if 'payload' in message:
+                    self.log.error('Error: adapter generating malformed changereports for %s and should be upgraded.' % message['event']['endpoint']['endpointId'])
+                    return {}
+                    
+                if 'event' not in message or 'payload' not in message['event']:
+                    self.log.error('Error: invalid change report - has no event or event/payload: %s' % message)
+                    return {}
+                    
+                if 'change' not in message['event']['payload']:
+                    self.log.error('Error: invalid change report - %s has no changes' % message['event']['endpoint']['endpointId'])
+                    return {}
                     
                 if 'log_change_reports' in self.dataset.config:
                     if self.dataset.config['log_change_reports']==True:
                         self.log.info('Change Report Prop: %s' % self.shortLogChange(message))
                         
-                for prop in message['payload']['change']['properties']:
+                for prop in message['event']['payload']['change']['properties']:
                     if hasattr(self, "virtualChangeHandler"):
                         # This is mostly just for logic but other adapters could hook this eventually
                         await self.virtualChangeHandler(message['event']['endpoint']['endpointId'], prop)

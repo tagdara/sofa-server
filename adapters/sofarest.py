@@ -44,8 +44,6 @@ class sofaRest():
             self.serverApp.router.add_get('/adapters', self.adapterLookupHandler)
             
             self.serverApp.router.add_get('/discovery', self.deviceLookupHandler)
-            self.serverApp.router.add_get('/discovery/{item}', self.deviceStateReportHandler)
-            
             self.serverApp.router.add_get('/devices', self.deviceLookupHandler)            
             self.serverApp.router.add_get('/devices/{item}', self.deviceStateReportHandler)
             self.serverApp.router.add_get('/deviceState/{item}', self.deviceStateReportHandler)
@@ -65,8 +63,6 @@ class sofaRest():
             
             self.serverApp.router.add_get('/{category}', self.categoryLookupHandler)
             self.serverApp.router.add_get('/{category}/{item:.+}', self.itemLookupHandler)
-            self.serverApp.router.add_post('/{category}/{item}', self.setHandler)
-
 
             self.runner=aiohttp.web.AppRunner(self.serverApp)
             self.loop.run_until_complete(self.runner.setup())
@@ -231,8 +227,8 @@ class sofaRest():
 
     async def categoryLookupHandler(self, request):
         self.log.info('request: %s' % request.match_info['category'])
-        subset=await self.dataset.getCategory(request.match_info['category'])
-
+        #subset=await self.dataset.getCategory(request.match_info['category'])
+        subset=await self.dataset.getObjectsByDisplayCategory(request.match_info['category'])
         if request.query_string:
             subset=self.queryStringAdjuster(request.query_string, subset)
         return web.Response(text=json.dumps(subset, default=self.date_handler))
@@ -363,8 +359,8 @@ class sofaRest():
 
 
     async def itemLookupHandler(self, request):
-            
-        subset=await self.dataset.getCategory(request.match_info['category'])
+        subset=await self.dataset.getObjectsByDisplayCategory(request.match_info['category'])
+        #subset=await self.dataset.getCategory(request.match_info['category'])
         self.log.info('Relative path: %s' % request.rel_url)
         #subset=self.lookupAddressOrName(urllib.parse.unquote(request.match_info['item']), subset)
         subset=self.dataset.getObjectFromPath("/%s" % urllib.parse.unquote(request.match_info['item']), data=subset, trynames=True)    
@@ -378,18 +374,6 @@ class sofaRest():
                 
         return web.Response(text=json.dumps(self.dataset.adapters, default=self.date_handler))
 
-
-    async def getPathControllers(self, path):
-            
-        try:
-            if hasattr(self.adapter, "virtualControllers"):
-                #controllers=self.adapter.virtualControllers(nativeObj)
-                controllers=self.adapter.virtualControllers(path)
-                return controllers
-            return {}
-        except:
-            self.log.error('Error getting path controllers: %s' % path, exc_info=True)
-            
 
     async def rootRequestHandler(self, request):
             
@@ -421,23 +405,6 @@ class sofaRest():
                 
         return web.Response(text=json.dumps(response, default=self.date_handler))
 
-
-    async def setHandler(self, request):
-            
-        if request.body_exists:
-            try:
-                body=await request.read()
-                change=await self.adapter.command(urllib.parse.unquote(request.match_info['category']), urllib.parse.unquote(request.match_info['item']), json.loads(body.decode('utf-8')))
-                self.log.info('Resulting change: %s' % change)
-                #asyncio.ensure_future(self.adapter.command(urllib.parse.unquote(request.match_info['category']), urllib.parse.unquote(request.match_info['item']), json.loads(body.decode('utf-8'))))
-            except:
-                self.log.error('Error transferring command: %s' % body,exc_info=True)
-                    
-        subset=await self.dataset.getCategory(request.match_info['category'])
-        subset=self.lookupAddressOrName(urllib.parse.unquote(request.match_info['item']), subset)
-            
-        return web.Response(text=json.dumps(subset, default=self.date_handler))
-        
         
     async def statusHandler(self, request):
 

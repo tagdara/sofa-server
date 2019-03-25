@@ -51,7 +51,7 @@ class influxServer(sofabase):
         async def handleChangeReport(self, message):
             try:
                 endpointId=message['event']['endpoint']['endpointId']
-                for change in message['payload']['change']['properties']:
+                for change in message['event']['payload']['change']['properties']:
 
                     if type(change['value'])==dict:
                         if 'value' in change['value']:
@@ -208,6 +208,14 @@ class influxServer(sofabase):
                     qry=query
                     result=self.influxclient.query(qry,database='beta')
                     return result.raw
+
+                if itempath[0]=="querylist":
+                    self.log.info('influx query: %s' % query)
+                    qry=query
+                    result=self.influxclient.query(qry,database='beta')
+                    response=list(result.get_points())
+                    #return result.raw
+                    return response
                     
                 return {}
 

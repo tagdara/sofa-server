@@ -365,6 +365,7 @@ class Client(asyncio.Protocol):
                     zones[str(int(i+1))]={'status': self.definitions.zoneStates[datazonestatus]}
                     #self.dataset.ingest({'zone': { str(int(i+1)): {'status': self.definitions.zoneStates[datazonestatus]}}})
                     #zones[str(int(i+1))]={ "status": self.definitions.zoneStates[datazonestatus]}
+            self.log.info('Zone status report: %s/ %s' % (datazones,zones))
             return {'zone': zones}
         except:
             self.log.error("zoneStatusReport Error",exc_info=True)
@@ -512,15 +513,16 @@ class elkm1(sofabase):
             try:
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
                    
-                if nativeObject["mode"]=="doorbell":
-                    if item['value']=='Violated':
-                        device=self.dataset.getDeviceFromPath(itempath)
-                        if hasattr(device, "doorbellPress"):
-                            return device.doorbellPress(device.endpointId)
-                        else:
-                            self.log.info('Device does not seem to have a doorbell press: %s' % device.__dict__, exc_info=True)
+                if "mode" in nativeObject:
+                    if nativeObject["mode"]=="doorbell":
+                        if item['value']=='Violated':
+                            device=self.dataset.getDeviceFromPath(itempath)
+                            if hasattr(device, "doorbellPress"):
+                                return device.doorbellPress(device.endpointId)
+                            else:
+                                self.log.info('Device does not seem to have a doorbell press: %s' % device.__dict__, exc_info=True)
                         
-                    self.log.info('Item: %s' % item)
+                    #self.log.info('Item: %s' % item)
             except:
                 self.log.error('Error getting virtual controller types for %s' % nativeObject, exc_info=True)
                     

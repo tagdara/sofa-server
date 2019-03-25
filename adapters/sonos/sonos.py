@@ -29,6 +29,7 @@ import soco
 import soco.music_library
 from soco.events import event_listener
 from operator import itemgetter
+import concurrent.futures
 
 
 class sonos(sofabase):
@@ -50,6 +51,7 @@ class sonos(sofabase):
             self.polltime=.1
             self.subscriptions=[]
             self.artcache={}
+            self.connect_needed=True
             if not loop:
                 self.loop = asyncio.new_event_loop()
             else:
@@ -73,6 +75,15 @@ class sonos(sofabase):
         async def start(self):
             try:
                 self.log.info('.. Starting Sonos')
+                await self.startSonosConnection()
+                await self.pollFake()
+            except:
+                self.log.error('Error starting sonos service',exc_info=True)
+                
+        async def startSonosConnection(self):
+            
+            try:
+                self.subscriptions=[]
                 self.players=await self.sonosDiscovery()
                 for player in self.players:
                     for subService in ['avTransport','deviceProperties','renderingControl','zoneGroupTopology']:
@@ -80,9 +91,9 @@ class sonos(sofabase):
                         self.log.info('++ sonos state subscription: %s/%s' % (player.player_name, newsub.service.service_type))
                         self.subscriptions.append(newsub)
                 self.sonosGetSonosFavorites(self.players[0])
-                await self.pollFake()
+                self.connect_needed=False
             except:
-                self.log.error('Error starting sonos service',exc_info=True)
+                self.log.error('Error starting sonos connections',exc_info=True)
             
 
         def sonosQuery(self, resmd="", uri=""):
@@ -153,6 +164,8 @@ class sonos(sofabase):
         async def pollFake(self):
             
             while True:
+                if self.connect_needed:
+                    await self.startSonosConnection()
                 try:
                     for device in self.subscriptions:
                         if device.is_subscribed:
@@ -169,7 +182,8 @@ class sonos(sofabase):
                                             update['zone_group_name']=await self.getGroupName(device.service.soco.uid)
                                         self.log.debug('fixed a bunch of zone_player shit: %s' % update)
                                     else:
-                                        self.log.debug('zoneplayer update: %s' % update)
+                                        self.log.info('probably bad or subset ZGT zoneplayer update: %s' % update)
+                                        continue
                                     await self.dataset.ingest(update, overwriteLevel='player/%s/%s' % (device.service.soco.uid, device.service.service_id) )
                                 else:
                                     #self.log.info('.> Update from %s:%s - %s' % (device.service.soco.uid, device.service.service_id, update ))
@@ -201,7 +215,7 @@ class sonos(sofabase):
                 if 'ZoneGroupTopology' not in nativeObj:
                     return []
                 if 'zone_group_state' not in nativeObj['ZoneGroupTopology']:
-                    self.log.error('!! Cant get linked players: zone_group_state not in %s' % nativeObj['ZoneGroupTopology'])
+                    self.log.error('!! Cant get linked players for %s: zone_group_state not in %s' % (nativeObj['name'], nativeObj['ZoneGroupTopology']))
                     return []
                 for group in nativeObj['ZoneGroupTopology']['zone_group_state']['ZoneGroups']['ZoneGroup']:
                     if group['@Coordinator']==nativeObj['speaker']['uid']:
@@ -375,8 +389,18 @@ class sonos(sofabase):
     
             try:
                 device=endpointId.split(":")[2]
+                dev=self.dataset.getDeviceByEndpointId(endpointId)
+                coord=dev.friendlyName
+                try:
+                    if controller=="MusicController" and dev.InputController.input and dev.InputController.input!=dev.friendlyName:
+                        coord=dev.InputController.input
+                        self.log.info('Sending %s to coordinator instead: %s' % (command, dev.InputController.input))
+                except:
+                    coord=dev.friendlyName
+                    
                 for player in self.players:
-                    if player.player_name==device or player.uid==device:
+                    #if player.player_name==device or player.uid==device:
+                    if player.player_name==coord or player.uid==coord:
 
                         if controller=="SpeakerController":
                             if command=='SetVolume':
@@ -411,11 +435,15 @@ class sonos(sofabase):
                         response=await self.dataset.generateResponse(endpointId, correlationToken)
                         return response
             except soco.exceptions.SoCoSlaveException:
-                self.log.error('Error from Soco while trying to issue command to a non-coordinator', exc_info=True)
+                self.log.error('Error from Soco while trying to issue command to a non-coordinator %s %s', (endpointId, command))
             except soco.exceptions.SoCoUPnPException:
                 self.log.error('Error from Soco while trying to issue command', exc_info=True)
+                self.log.error("It is likely that we have now lost connection, subscriptions are dead, and the adapter needs to be restarted")
+                self.connect_needed=True
+                return None
             except:
                 self.log.error('Error executing state change.', exc_info=True)
+
 
 
         def virtualControllers(self, itempath):
@@ -638,9 +666,12 @@ class sonos(sofabase):
 
             except concurrent.futures._base.CancelledError:
                 self.log.error('Attempt to get art cancelled for %s' % path, exc_info=True)
+                self.log.error("It is likely that we have now lost connection, subscriptions are dead, and the adapter needs to be restarted")
+                self.connect_needed=True
                 return self.sonoslogo
             except:
                 self.log.error('Couldnt get art for %s' % playerObject, exc_info=True)
+                self.connect_needed=True
                 #return {'name':playerObject['name'], 'id':playerObject['speaker']['uid'], 'image':""}
                 return self.sonoslogo
                     

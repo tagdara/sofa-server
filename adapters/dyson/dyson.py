@@ -96,8 +96,11 @@ class dyson(sofabase):
                                     devconfig[setting]=getattr(device,setting)+" fan"
                                 else:
                                     devconfig[setting]=getattr(device,setting)
-    
-                            self.connected = device.connect("192.168.0.87")
+                            if 'device_address' in self.dataset.config:
+                                self.connected = device.connect(self.dataset.config["device_address"]) 
+                            else:
+                                self.connected = device.auto_connect() # uses mdns to find the device
+
                             if self.connected:
                                 self.dyson_devices[0].add_message_listener(self.on_message)
                                 devconfig['state']=await self.getFanProperties(self.dyson_devices[0])

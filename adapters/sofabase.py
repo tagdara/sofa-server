@@ -195,14 +195,12 @@ class sofabase():
         self.dataset.saveConfig=self.saveConfig
         
         self.requester=sofarequester.sofaRequester()
-        self.requester.data=self.dataset.data
         
         self.log.info('.. starting MQTT client')
         self.restAddress = self.dataset.baseConfig['restAddress']
         self.restPort=self.dataset.config['rest_port']
         
-        #self.mqttServer = self.sofaMQTT(self.adaptername, self.restPort, self.restAddress, dataset=self.dataset )
-        self.mqttServer = sofamqtt.sofaMQTT(self.adaptername, self.restPort, self.restAddress, dataset=self.dataset)
+        self.mqttServer = sofamqtt.sofaMQTT(self.adaptername, self.restPort, self.restAddress, dataset=self.dataset, log=self.log)
 
         self.dataset.notify=self.mqttServer.notify
         self.dataset.notifyChanges=self.mqttServer.notifyChanges
@@ -213,7 +211,7 @@ class sofabase():
         self.restServer.initialize()
 
         self.log.info('.. starting main adapter %s' % self.adaptername)
-        self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=self.requester.request, loop=self.loop)
+        self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=self.requester.request, loop=self.loop, executor=self.executor)
         self.dataset.adapter=self.adapter
         self.mqttServer.adapter=self.adapter
         self.restServer.adapter=self.adapter
@@ -227,7 +225,7 @@ class sofabase():
         self.loop.run_until_complete(self.adapter.start())
 
         self.restServer.adapter=self.adapter
-        self.restServer.workloadData=self.adapter.dataset.data
+
         
         try:
             self.loop.run_forever()
@@ -238,6 +236,7 @@ class sofabase():
         finally:
             self.adapter.running=False
             self.restServer.shutdown()
+            self.log.info('Shutting down executor')
             self.executor.shutdown()
         
         self.log.info('.. stopping adapter %s' % self.adaptername)

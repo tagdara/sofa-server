@@ -189,7 +189,7 @@ class insteonCatalog():
                                         # fix for multi-button keypads
                                         if (item['pnode']!=item['address']):
                                             item['devicetype']='button'
-                                    if item['devicetype']=='lightswitch':
+                                    if item['devicetype'] in ['lightswitch','button']:
                                         item['pressState']='none'
 
                             except:
@@ -410,6 +410,7 @@ class insteonSubscription(asyncio.Protocol):
         
         try:
             event=self.etree_to_dict(et.fromstring(eventdata))['Event']
+            #self.log.info('event: %s' % event)
         except:
             self.log.error('Error parsing event to dict: %s' % eventdata, exc_info=True)
             return None
@@ -535,8 +536,8 @@ class insteonSubscription(asyncio.Protocol):
                     if vEvent['node'] in self.pendingChanges:
                         self.pendingChanges.remove(vEvent['node'])
                     if vEvent['command'] in ['DON','DOF','DFOF','DFON']:
-                        self.log.info('Button command received on Insteon Bus: %s' % vEvent)
-                        self.log.info('Current native: %s' % self.dataset.nativeDevices['node'][vEvent['node']])
+                        #self.log.info('Button command received on Insteon Bus: %s' % vEvent)
+                        #self.log.info('Current native: %s' % self.dataset.nativeDevices['node'][vEvent['node']])
                         await self.dataset.ingest({'node': { vEvent['node'] : {'pressState':vEvent['command'] }}})
                         await self.dataset.ingest({'node': { vEvent['node'] : {'pressState':'none' }}})                          
         except:
@@ -604,11 +605,11 @@ class insteonSetter():
                 else:
                     url="http://%s/rest/nodes/%s/%s/%s/%s" % (self.insteonAddress, node, "set", nodeattrib.upper(), data[nodeattrib])
                 
-                self.log.info('Using url: %s' % url)
+                #self.log.info('Using url: %s' % url)
                 async with aiohttp.ClientSession() as client:
                     html = await self.insteonRestCommand(client, url)
                     root=et.fromstring(html)
-                    self.log.info('Returned from Using url: %s' % url)
+                    #self.log.info('Returned from Using url: %s / %s' % (url, html))
                     return html
         except:
             self.log.error('Insteon setNode error: %s %s' % (node, data), exc_info=True)
@@ -677,17 +678,6 @@ class insteon(sofabase):
             except:
                 self.log.error('Error', exc_info=True)
 
-            
-        async def command(self, category, item, data):
-            
-            self.log.info('Received insteon command: %s %s %s' % (category, item, data))
-            
-            if category=='node':
-                await self.setInsteon.setNode(item, data)
-
-            elif category=='group':
-                await self.setInsteon.setGroup(item, data)
-
 
         def percentage(self, percent, whole):
             return int((percent * whole) / 100.0)
@@ -701,7 +691,7 @@ class insteon(sofabase):
             
             deviceid=path.split("/")[2]    
             nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(path))
-            if nativeObject['name'] not in self.dataset.devices:
+            if nativeObject['name'] not in self.dataset.localDevices:
                 if nativeObject["devicetype"]=="light":
                     if nativeObject["property"]["ST"]["uom"].find("%")>-1:
                         return self.dataset.addDevice(nativeObject['name'], devices.dimmableLight('insteon/node/%s' % deviceid, nativeObject['name']))
@@ -770,12 +760,12 @@ class insteon(sofabase):
             count=0
             try:
                 # The ISY will send an update to the properties, but it takes .5-1 second to complete
-                # Waitiing up to 2 seconds allows us to send back a change report for the change command
+                # Waiting up to 2 seconds allows us to send back a change report for the change command
                 if device not in self.subscription.pendingChanges:
                     self.subscription.pendingChanges.append(device)
-
+                    self.log.info('Waiting for update... %s %s' % (device, self.subscription.pendingChanges))
+                
                 while device in self.subscription.pendingChanges and count<30:
-                    #self.log.info('Waiting for update... %s %s' % (device, self.subscription.pendingChanges))
                     await asyncio.sleep(.1)
                     count=count+1
                 return True
@@ -783,31 +773,6 @@ class insteon(sofabase):
                 self.log.error('Error during wait for pending change for %s (%s)' % (device, count), exc_info=True)
                 return True
                 
-
-        async def virtualCategory(self, category):
-            
-            if category in ['light','button','device']:
-                subset={key: value for (key,value) in self.dataset.nativeDevices['node'].items() if value['devicetype']==category}
-
-            elif category=='discovery':
-                subset=[]
-                devlist={key: value for (key,value) in self.dataset.nativeDevices['node'].items() if value['devicetype']=='light'}
-                for item in devlist:
-                    if self.dataset.nativeDevices['node'][item]["property"]["ST"]["uom"].find("%")>-1:
-                        subset.append(self.dataset.discoveryEndpoint('/node/%s' % item, ['PowerController', 'BrightnessController'], ['LIGHT']))
-                    else:
-                        subset.append(self.dataset.discoveryEndpoint('/node/%s' % item, ['PowerController'], ['LIGHT']))
-                        
-                
-            elif category=='endpoint':
-                subset={key: value for (key,value) in self.dataset.nativeDevices['node'].items() if value['devicetype']=='light'}
-                for item in subset:
-                    subset[item]=self.dataset.mapProperties(subset[item], ['PowerController','BrightnessController'])
-            else:
-                subset={}
-            
-            return subset
-
 
         def virtualControllers(self, itempath):
             
@@ -820,6 +785,7 @@ class insteon(sofabase):
                     detail=""
                     
                 controllerlist={}
+                #self.log.info('native: %s %s' % (itempath,nativeObject))
                 
                 if nativeObject["devicetype"] in ["light", "lightswitch"]:
                     if detail=="property/ST/value" or detail=="":
@@ -827,11 +793,12 @@ class insteon(sofabase):
                         if nativeObject["property"]["ST"]["uom"].find("%")>-1:
                             controllerlist=self.addControllerProps(controllerlist,"BrightnessController","brightness")
 
-                if nativeObject["devicetype"] in ["lightswitch"]:
+                if nativeObject["devicetype"] in ["lightswitch","button"]:
                     
                     if detail=='pressState' or detail=="":
                         controllerlist=self.addControllerProps(controllerlist,"SwitchController","pressState")
 
+                if nativeObject["devicetype"] in ["lightswitch"]:
                     if detail=='property/OL/value' or detail=="":
                         controllerlist=self.addControllerProps(controllerlist,"SwitchController","onLevel")
 

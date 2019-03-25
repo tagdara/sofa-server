@@ -301,7 +301,6 @@ class dlink(sofabase):
 
         def __init__(self, log=None, loop=None, dataset=None, notify=None, request=None, **kwargs):
             self.dataset=dataset
-            self.dataset.data['camera']={}
             self.log=log
             self.notify=notify
             #self.cameras=dlinkCameraControl()
@@ -332,8 +331,8 @@ class dlink(sofabase):
 
 
         def addCamera(self, deviceid):
-            
-            nativeObject=self.dataset.data['camera'][deviceid]
+
+            nativeObject=self.dataset.nativeDevices['camera'][deviceid]
             if nativeObject['name'] not in self.dataset.devices:
                 return self.dataset.addDevice(nativeObject['name'], devices.simpleCamera('dlink/camera/%s' % deviceid, nativeObject['name']))
            

@@ -23,10 +23,13 @@ class sofaMQTT():
 
     # The Sofa MQTT Handler provides an process for pushing updates to MQTT
         
-    def __init__(self, adaptername, restPort, restAddress, dataset={}):
+    def __init__(self, adaptername, restPort, restAddress, dataset={}, log=None):
         self.backlog=[]
         self.connected=False
-        self.log = logging.getLogger('sofamqtt')
+        if log:
+            self.log=log
+        else:
+            self.log = logging.getLogger('sofamqtt')
         self.client = MQTTClient('sofa-%s' % adaptername)
         self.dataset=dataset
         self.adaptername=adaptername
@@ -94,6 +97,7 @@ class sofaMQTT():
                             return True
                             
             except json.decoder.JSONDecodeError:
+                self.log.warn('JSON decode error', exc_info=True)
                 pass
 
             if hasattr(self.adapter, "adapterTopics"):
@@ -102,7 +106,7 @@ class sofaMQTT():
                         asyncio.tasks.ensure_future(self.adapter.processAdapterTopicMessage(topic, payload.decode()))
                         return True
                         
-            #self.log.info('<< mqtt/%s %s' % (topic, payload.decode()))
+            self.log.debug('<< mqtt/%s %s' % (topic, payload.decode()))
             asyncio.tasks.ensure_future(self.processSofaMessage(topic, json.loads(payload.decode())))
         except:
             self.log.error('Error handling message',exc_info=True)
@@ -221,6 +225,7 @@ class sofaMQTT():
   
             if 'op' in message:
                 if message['op']=='discover':
+                    self.log.info('Adapter requesting discovery')
                     await self.announceRest(topic)
                 elif message['op']=='announce':
                     #self.log.info('Adapter Announcement: %s' % message)

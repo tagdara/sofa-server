@@ -77,7 +77,7 @@ def _api_url(ip, username=None):
         return "http://{}/api/{}".format(ip, username)
 
 
-def create_new_username(ip, devicetype=None, timeout=_DEFAULT_TIMEOUT):
+async def create_new_username(ip, devicetype=None, timeout=_DEFAULT_TIMEOUT):
     """Interactive helper function to generate a new anonymous username.
 
     Args:
@@ -101,7 +101,7 @@ def create_new_username(ip, devicetype=None, timeout=_DEFAULT_TIMEOUT):
         devicetype = "qhue#{}".format(getfqdn())
 
     # raises QhueException if something went wrong
-    response = res(devicetype=devicetype, http_method="post")
+    response = await res(devicetype=devicetype, http_method="post")
 
     return response[0]["success"]["username"]
 

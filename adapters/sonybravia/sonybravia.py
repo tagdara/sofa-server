@@ -174,9 +174,13 @@ class sonyRest():
                 else:
                     self.log.info('Result has no result: %s' % result)
                     return result
+        except aiohttp.client_exceptions.ClientConnectorError:
+            self.log.error('!! Error connecting to TV, likely DNS or IP related')
+            return {}
                 
         except:
             self.log.error('Error sending command', exc_info=True)
+            return {}
 
 
 
@@ -342,8 +346,14 @@ class sonybravia(sofabase):
                         if payload['input']=='Home':
                             sysinfo=await self.tv.remoteControl(self.findRemoteCode('Home'))
                         else:
-                            sysinfo=await self.tv.getState('avContent','setPlayContent',params={"uri":payload['input']})
-                            if payload['input'].startswith('extInput:cec'):
+                            inp=payload['input']
+                            for port in self.dataset.config['hdmi_port_names']:
+                                if payload['input']==self.dataset.config['hdmi_port_names'][port]:
+                                    inp='extInput:hdmi?port=%s' % port
+                                    break
+                                
+                            sysinfo=await self.tv.getState('avContent','setPlayContent',params={"uri":inp})
+                            if inp.startswith('extInput:cec'):
                                 # takes slightly longer for CEC sources to switch than raw AV inputs
                                 await asyncio.sleep(.2)
 
@@ -391,6 +401,41 @@ class sonybravia(sofabase):
                 self.log.error('Error getting virtual controller types for %s' % nativeObj, exc_info=True)
 
 
+        def getDetailsFromURI(self, uri):
+            
+            try:
+                result={}
+                conninfo=uri.split('?')[0]
+                result['source']=conninfo.split(':')[0]
+                result['type']=conninfo.split(':')[1]
+                
+                details=uri.split('?')[1]
+                details=details.split('&')
+                for detail in details:
+                    dparts=detail.split('=')
+                    result[dparts[0]]=dparts[1]
+                    
+                return result
+            except:
+                self.log.error('Error parsing input URI: %s' % uri, exc_info=True)
+                
+
+        def getInputName(self,nativeObj):
+            
+            try:
+                if 'playingContent' not in nativeObj:
+                    self.log.warn('No playing content: %s' % nativeObj)
+                    return 'Android TV'
+                details=self.getDetailsFromURI(nativeObj['playingContent']['uri'])
+                if details['type'] in ['cec','hdmi']:
+                    if details['port'] in self.dataset.config['hdmi_port_names']:
+                        return self.dataset.config['hdmi_port_names'][details['port']]
+
+                return nativeObj['playingContent']['title']
+                    
+            except:
+                self.log.error('Error getting virtual input name for %s' % nativeObj, exc_info=True)
+
         def virtualControllerProperty(self, nativeObj, controllerProp):
             
             #self.log.info('NativeObj: %s' % nativeObj)
@@ -400,7 +445,8 @@ class sonybravia(sofabase):
 
             elif controllerProp=='input':
                 try:
-                    return nativeObj['playingContent']['title']
+                    return self.getInputName(nativeObj)
+                    #return nativeObj['playingContent']['title']
                 except KeyError:
                     if nativeObj['power']['status']=="active":
                         return 'Android TV'
@@ -416,8 +462,12 @@ class sonybravia(sofabase):
         async def virtualList(self, itempath, query={}):
 
             try:
-                if itempath=="inputs":
+                if itempath=="inputdata":
                     return self.dataset.nativeDevices['tv']['BRAVIA']['inputStatus']
+
+                if itempath=="inputs":
+                    return self.dataset.config['hdmi_port_names']
+                    #return self.dataset.nativeDevices['tv']['BRAVIA']['inputStatus']
 
                 if itempath=="status":
                     return await self.getUpdate()

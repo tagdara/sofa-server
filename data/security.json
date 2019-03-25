@@ -1,0 +1,24 @@
+{   "Security": [
+        "Back Doors",
+        "Bedroom Window",
+        "Evie Window",
+        "Front Door",
+        "Front Gate",
+        "Front Window L",
+        "Front Window R",
+        "Garage Door",
+        "Garage Side Door",
+        "Guest Window L",
+        "Guest Window R",
+        "Office Window"
+    ],
+    "Automation": [
+        "Bathroom Motion",
+        "Central Motion",
+        "Doorbell",
+        "Evie Door",
+        "Front Motion",
+        "Garage Interior",
+        "Stairs Door"
+    ]
+}

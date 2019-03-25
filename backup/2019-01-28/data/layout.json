@@ -1,0 +1,97 @@
+{
+    "Home": {
+        "type": "pages",
+        "icons": {
+            "Lights": "LightBulbIcon",
+            "Audio Video": "MusicVideoIcon",
+            "Security": "VerifiedUserIcon"
+        },
+        "order": [
+            "Audio Video",
+            "Lights",
+            "Security"
+        ],
+        "pages": {
+            "Audio Video": [
+                {
+                    "module": "PlayerHero",
+                    "props": {
+                        "Category": "SPEAKER"
+                    },
+                    "grid": true
+                },
+                {
+                    "module": "ReceiverHero",
+                    "props": {
+                        "Category": "RECEIVER"
+                    },
+                    "grid": true
+                },
+                {
+                    "module": "TvList",
+                    "props": {
+                        "Category": "TV"
+                    },
+                    "grid": true
+                }
+            ],
+            "Lights": [
+                {
+                    "module": "RegionHero",
+                    "props": {
+                        "region": "Main"
+                    },
+                    "grid": true
+                },
+                {
+                    "module": "ThermostatHero",
+                    "props": {
+                        "Category": "THERMOSTAT",
+                        "Primary": "Main Thermostat"
+                    },
+                    "grid": true
+                },
+                {
+                    "module": "MiniLauncher",
+                    "props": {
+                        "name": "More Devices"
+                    },
+                    "grid": true
+                }
+            ],
+            "Security": [
+                {
+                    "module": "ZoneHero",
+                    "props": {
+                        "Category": [
+                            "CONTACT_SENSOR",
+                            "MOTION_SENSOR"
+                        ]
+                    },
+                    "grid": true
+                },
+                {
+                    "module": "CameraSelect",
+                    "props": {
+                        "default": "driveway"
+                    },
+                    "grid": true
+                },
+                {
+                    "module": "Opener",
+                    "props": {
+                        "name": "Front Gate"
+                    },
+                    "grid": true
+                },
+                {
+                    "module": "Opener",
+                    "props": {
+                        "name": "Garage Door"
+                    },
+                    "grid": true
+                }
+            ]
+        }
+    }
+}

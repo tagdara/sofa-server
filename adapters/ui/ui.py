@@ -7,10 +7,9 @@ sys.path.append(os.path.join(os.path.dirname(__file__),'..'))
 
 from sofabase import sofabase
 from sofabase import adapterbase
+from sofacollector import SofaCollector
 import devices
 
-
-from sofacollector import SofaCollector
 import subprocess
 import math
 import random
@@ -18,8 +17,14 @@ import json
 import asyncio
 import aiohttp
 from aiohttp import web
-import aiohttp_jinja2
-import jinja2
+from aiohttp_session import SimpleCookieStorage, session_middleware
+from aiohttp_security import check_permission, \
+    is_anonymous, remember, forget, \
+    setup as setup_security, SessionIdentityPolicy
+from aiohttp_security.abc import AbstractAuthorizationPolicy
+
+#import aiohttp_jinja2
+#import jinja2
 
 import concurrent.futures
 import aiofiles
@@ -27,13 +32,28 @@ import datetime
 import re
 import dpath
 import urllib
-import definitions
 import base64
 import ssl
-import devices
-import inspect
+#import inspect
 
 import uuid
+
+class Sofa_AuthorizationPolicy(AbstractAuthorizationPolicy):
+    
+    async def authorized_userid(self, identity):
+        """Retrieve authorized user id.
+        Return the user_id of the user identified by the identity
+        or 'None' if no user exists related to the identity.
+        """
+        if identity == 'sofa':
+            return identity
+
+    async def permits(self, identity, permission, context=None):
+        """Check user permissions.
+        Return True if the identity is allowed the permission
+        in the current context, else return False.
+        """
+        return identity == 'sofa' and permission in ('api','main')
 
 class sofaWebUI():
     
@@ -51,29 +71,33 @@ class sofaWebUI():
         self.wsclients=[]
         self.wsclientInfo=[]
         self.allowCardCaching=False
-        self.definitions=definitions.Definitions
         self.notify=notify
         self.discover=discover
         self.imageCache={}
         self.stateReportCache={}
         self.layout={}
+        self.adapterTimeout=2
 
     async def initialize(self):
 
         try:
             self.serverAddress=self.config['web_address']
-            self.serverApp = web.Application()
+            middleware = session_middleware(SimpleCookieStorage())
+            self.serverApp = web.Application(middlewares=[middleware])
 
             self.serverApp.router.add_get('/', self.root_handler)
+            self.serverApp.router.add_get('/login', self.login_handler)
+            self.serverApp.router.add_get('/logout', self.logout_handler)
+            self.serverApp.router.add_post('/login', self.login_post_handler)
+            self.serverApp.router.add_get('/loginstatus', self.login_status_handler)
             self.serverApp.router.add_get('/index.html', self.root_handler)
             self.serverApp.router.add_get('/sofa.appcache', self.manifestHandler)
-
+            
             self.serverApp.router.add_get('/directives', self.directivesHandler)
             self.serverApp.router.add_get('/properties', self.propertiesHandler)
             self.serverApp.router.add_get('/events', self.eventsHandler)
             self.serverApp.router.add_get('/layout', self.layoutHandler)
 
-            #self.serverApp.router.add_get('/controllercommands', self.controllerHandler)
             self.serverApp.router.add_get('/data/{item:.+}', self.dataHandler)
             self.serverApp.router.add_get('/list/{list:.+}', self.listHandler)
             self.serverApp.router.add_get('/var/{list:.+}', self.varHandler)
@@ -83,6 +107,8 @@ class sofaWebUI():
             self.serverApp.router.add_get('/restartadapter/{adapter:.+}', self.adapterRestartHandler)
             self.serverApp.router.add_get('/devices', self.devicesHandler)      
             self.serverApp.router.add_get('/deviceList', self.deviceListHandler)
+            self.serverApp.router.add_get('/deviceListWithData', self.deviceListWithDataHandler)
+
             self.serverApp.router.add_post('/deviceState', self.deviceStatePostHandler)
             self.serverApp.router.add_post('/directive', self.directiveHandler) 
             
@@ -101,6 +127,9 @@ class sofaWebUI():
             self.serverApp.router.add_static('/bundle', path=self.config['client_bundle_directory'])
             self.serverApp.router.add_static('/', path=self.config['client_static_directory'])
 
+            self.policy = SessionIdentityPolicy()
+            setup_security(self.serverApp, self.policy, Sofa_AuthorizationPolicy())
+
             self.runner=aiohttp.web.AppRunner(self.serverApp)
             await self.runner.setup()
 
@@ -112,89 +141,16 @@ class sofaWebUI():
 
         except:
             self.log.error('Error with ui server', exc_info=True)
-
-    async def requestField(self, source, item, client=None):
-
-        try:
-            if not client:
-                client = aiohttp.ClientSession()
-
-            if source in self.dataset.adapters:
-                url = 'http://%s:%s/%s' % (self.dataset.adapters[source]['address'], self.dataset.adapters[source]['port'], item)
-                async with client.get(url) as response:
-                    result=await response.read()
-                    result=json.loads(result.decode())
-
-                self.log.info('%s:%s = %s (Retrieved from %s)' % (source, item, result, url))
-                #dpath.util.new(self.dataset.data, 'cache/%s/%s' % (source, item), result)
-                
-                self.log.info('Cache is now: %s ' % self.dataset.data['cache'])
-                return {"op":"add", "path": "%s/%s" % (source, item), "value":result}
-            else:
-                self.log.info('Dont know how to reach adapter for item %s: %s (%s)' % (item, source, self.dataset.adapters))
-                return None
-        except:
-            self.log.error('Error requesting field', exc_info=True)
-            return None
-
-
-    async def requestDiscoveryField(self, item, client=None):
-
-        try:
-            if not client:
-                client = aiohttp.ClientSession()
-                
-            discoveryitem=item.split('/')[1]
-            if discoveryitem in self.dataset.devices:
-                #self.log.info('Cookie data: %s ' % self.dataset.devices[discoveryitem]['cookie'])
-                source=self.dataset.devices[discoveryitem]['cookie']['adapter']
-                self.log.debug('Identified source %s for Item: %s %s' % (self.dataset.adapters[source], discoveryitem, self.dataset.devices[discoveryitem]))
-                
-                if source in self.dataset.adapters:
-                    url = 'http://%s:%s/discovery/%s?stateReport' % (self.dataset.adapters[source]['address'], self.dataset.adapters[source]['port'], discoveryitem)
-                    async with client.get(url) as response:
-                        result=await response.read()
-                        result=json.loads(result.decode())
-                    
-                        # convert for short paths in data-xx
-                        for prop in result['context']['properties']:
-                            if prop['namespace'].split(".")[1]==item.split('/')[2]:
-                                if prop['name']==item.split('/')[3]:
-                                    result=prop['value']
-                                    self.log.info('%s = %s (Retrieved from %s)' % (item, result, url))
-                                    dpath.util.new(self.dataset.data, 'cache/%s' % item, result)
-                        
-                    
-                    return {"op":"add", "path": item, "value":result}
-                else:
-                    self.log.info('Dont know how to reach adapter for item %s: %s (%s)' % (item, source, self.dataset.adapters))
-                    return None
-            else:
-                self.log.info('Could not find %s in %s' % (discoveryitem, self.dataset.devices.keys()))
-        except:
-            self.log.error('Error requesting field: %s' % item, exc_info=True)
-            return None
-
-
-
-    async def lookupCardField(self, field, client=None):
+            
+    async def loadData(self, jsonfilename):
         
         try:
-            result=self.dataset.getObjectFromPath('/cache/%s' % field)
-            
-            if result!={}:
-                return {"op":"add", "path": field, "value":result}
-                #return result
-            
-            self.log.info('Looking up type for %s: %s' % (field, field.split('/',1)[0].lower()))
-            if field.split('/',1)[0].lower()=='discovery':
-                return await self.requestDiscoveryField(field, client)
-            else:
-                return await self.requestField(field.split('/',1)[0], field.split('/',1)[1], client)
-            
+            with open(os.path.join(self.dataset.baseConfig['baseDirectory'], 'data', '%s.json' % jsonfilename),'r') as jsonfile:
+                return json.loads(jsonfile.read())
         except:
-            self.log.error('Error looking up requested field: %s' % field, exc_info=True)
-            return None
+            self.log.error('Error loading pattern: %s' % jsonfilename,exc_info=True)
+            return {}
+
 
     async def layoutUpdate(self):
         try:
@@ -204,6 +160,72 @@ class sofaWebUI():
         except:
             self.log.error('Error getting file for cache: %s' % filename, exc_info=True)
 
+    async def login_status_handler(self, request):
+        try:
+            await check_permission(request, 'main')
+            self.log.info('status: Logged In.')
+            return web.Response(text=json.dumps({'loggedIn':True}))
+            
+        except:
+            self.log.error('Error in login status process', exc_info=True)
+            self.log.info('status: not Logged In.')
+            return web.Response(text=json.dumps({'loggedIn':False}))
+
+    async def login_handler(self, request):
+        try:
+            self.log.info('Logging in as sofa')
+            redirect_response = web.HTTPFound('/')
+            await remember(request, redirect_response, 'sofa')
+            return aiohttp.web.HTTPFound('/')
+            
+        except:
+            self.log.error('Error in login process', exc_info=True)
+            return aiohttp.web.HTTPFound('/login')
+
+
+    async def login_post_handler(self, request):
+
+        try:
+            redirect_response = web.HTTPFound('/login')
+            await forget(request, redirect_response)
+            if request.body_exists:
+                body=await request.read()
+                data=json.loads(body.decode())
+                self.log.info('Login request for %s' % data)
+                if data['user']=='sofa':
+                    self.log.info('Logged In.')
+                    redirect_response = web.HTTPFound('/')
+                    await remember(request, redirect_response, 'sofa')
+                    return web.Response(text=json.dumps({"loggedIn":True}))
+                else:
+                    self.log.info('Not Logged In.')
+                    await forget(request, redirect_response)
+                    return web.Response(text=json.dumps({"loggedIn":False}))    
+            else:
+                self.log.info('Not Logged In.')
+                return web.Response(text=json.dumps({"loggedIn":False}))    
+
+        except:
+            self.log.error('Error handling login attempt' ,exc_info=True)
+            return web.Response(text=json.dumps({"loggedIn":False}))    
+
+            
+    async def logout_handler(self, request):
+        try:
+            redirect_response = web.HTTPFound('/')
+            await forget(request, redirect_response)
+            raise redirect_response
+        except:
+            self.log.error('Error in login process', exc_info=True)
+            return web.Response(text=json.dumps({"loggedIn":False}))    
+
+    async def api_check_handler(self, request):
+        try:
+            await check_permission(request, 'api')
+            return web.Response(body="I can access the api")
+        except:
+            self.log.error('Error in login process', exc_info=True)
+
     async def layoutHandler(self, request):
         if not self.layout:
             self.layout=await self.layoutUpdate()
@@ -212,144 +234,40 @@ class sofaWebUI():
 
 
     async def directivesHandler(self, request):
-        
-        # Walks through the list of current devices, identifies their controllers and extracts a list of 
-        # possible directives for each controller and outputs the full list.
-
-        directives={}
         try:
-            for device in self.dataset.devices:
-                for cap in self.dataset.devices[device]['capabilities']:
-                    if len(cap['interface'].split('.')) > 1:
-                        capname=cap['interface'].split('.')[1]
-                        if capname not in directives:
-                            try:
-                                controllerclass = getattr(devices, capname+"Interface")
-                                xc=controllerclass()
-                                try:
-                                    directives[capname]=xc.directives
-                                except AttributeError:
-                                    directives[capname]={}
-                            except:
-                                self.log.error('Error with getting directives from controller class', exc_info=True)
-
+            #await check_permission(request, 'api')
+            directives=await self.dataset.getAllDirectives()
+            return web.Response(text=json.dumps(directives))
         except:
-            self.log.error('Error creating list of Alexa directives', exc_info=True)
-            
-        return web.Response(text=json.dumps(directives))
+            self.log.error('Error with Directives Handler', exc_info=True)
+            return web.Response(text=json.dumps({'Error':True}))
+
 
     async def propertiesHandler(self, request):
         
-        # Walks through the list of current devices, identifies their controllers and extracts a list of 
-        # possible properties for each controller and outputs the full list.
-        
-        properties={}
-
-        for device in self.dataset.devices:
-            for cap in self.dataset.devices[device]['capabilities']:
-                if len(cap['interface'].split('.')) > 1:
-                    capname=cap['interface'].split('.')[1]
-                    if capname not in properties:
-                        try:
-                            controllerclass = getattr(devices, capname+"Interface")
-                            xc=controllerclass()
-                            try:
-                                properties[capname]=xc.props
-                            except AttributeError:
-                                properties[capname]={}
-                        except:
-                            self.log.error('Error with getting properties from controller class', exc_info=True)
-            
+        properties=await self.dataset.getAllProperties()
         return web.Response(text=json.dumps(properties))
-
+ 
+ 
     async def eventsHandler(self, request):
         
-        # Walks through the list of current devices, identifies their controllers and extracts a list of 
-        # possible directives for each controller and outputs the full list.
         eventSources={ 'DoorbellEventSource': { "event": "doorbellPress"}}
-
         return web.Response(text=json.dumps(eventSources))
         
 
-    async def controllerHandler(self, request):
-    
-        controllerlist={}
+    async def dataHandler(self, request):
 
-        for device in self.dataset.devices:
-            for cap in self.dataset.devices[device]['capabilities']:
-                capname=cap['interface'].split('.')[1]
-                if capname not in controllerlist:
-                    try:
-                        controllerclass = getattr(devices, capname+"Interface")
-                        xc=controllerclass()
-                        try:
-                            controllerlist[capname]=xc.commands
-                        except AttributeError:
-                            controllerlist[capname]={}
-                    except:
-                        self.log.error('Error with controller class', exc_info=True)
-            
-        return web.Response(text=json.dumps(controllerlist))
-
-
-    async def dataSender(self, item):
-        
         try:
-            if item=="all":
-                sendData=self.dataset.getAllDevices()
-                
-            elif item=="adapters":
-                sendData=self.dataset.adapters
-
-            elif item=="areas":
-                sendData={}
-                for area in self.definitions.areaMap:
-                    sendData[area]=[]
-                    for category in self.definitions.areaMap[area]:
-                        sendData[area]={}
-                        for device in self.definitions.areaMap[area][category]:
-                            sendData[area][device]=self.dataset.getObjectFromPath("/devices/%s" % device, trynames=True)
-                            #sendData[area].append(self.dataset.getObjectFromPath("/devices/%s" % device, trynames=True))
-
-            elif item=='cameras':
-                sendData={}
-                sendData=self.definitions.cameras
-                # hack for now
-                #for camera in self.definitions.cameras:
-                #    sendData[camera]=self.dataset.getObjectFromPath("/devices/%s" % camera, trynames=True)
-
-            elif item=='virtual':
-                sendData={}
-                sendData=self.definitions.virtual
-                # hack for now
-                #for camera in self.definitions.cameras:
-                #    sendData[camera]=self.dataset.getObjectFromPath("/devices/%s" % camera, trynames=True)
-
-            elif item.find('devices')==0:
-                self.log.info('datasender-Device request: %s' % urllib.parse.unquote(item))
-                sendData=self.dataset.getObjectFromPath("/%s" % urllib.parse.unquote(item), trynames=True)
-                self.log.info('datasender-Device retrieved: %s' % sendData)
-                if 'endpointId' in sendData:
-                    return sendData
-                    
-                outlist=[]    
-                for obj in sendData:
-                    outlist.append(sendData[obj])
-                self.log.info('.. Device count: %s' % len(outlist))
-                return outlist
-                
-
-            else:
-                self.log.info('---- > Looking up: %s' % item)
-                async with aiohttp.ClientSession() as client:
-                    sendData=await self.lookupCardField(item, client)
-                #sendData=self.dataset.getObjectFromPath("/%s" % urllib.parse.unquote(item), trynames=True) 
-                self.log.info('datasender done')
-            return sendData
+            result=await self.loadData(request.match_info['item'])
+            if request.query_string:
+                result=await self.queryStringAdjuster(request.query_string, result)
         except:
-            self.log.error('Error getting file for cache: %s' % cardname, exc_info=True)
-            
+            self.log.error('Did not load data from file for %s' % item)
+            result={}
+    
+        return web.Response(text=json.dumps(result))
 
+        
     async def displayCategoryHandler(self, request):
         
         try:
@@ -440,15 +358,6 @@ class sofaWebUI():
     async def manifestHandler(self, request):
         return web.Response(content_type="text/html", body=await self.manifestUpdate())
 
-    
-    async def dataHandler(self, request):
-        result=await self.dataSender(request.match_info['item'])
-        if request.query_string:
-            result=await self.queryStringAdjuster(request.query_string, result)
-
-        return web.Response(text=json.dumps(result))
-        
-
     async def imageGetter(self, item, thumbnail=False):
 
         try:
@@ -511,11 +420,11 @@ class sofaWebUI():
             item=request.match_info['list']
             source=item.split('/',1)[0] 
             if source in self.dataset.adapters:
-                result='#'
+                #result='#'
                 url = 'http://%s:%s/list/%s' % (self.dataset.adapters[source]['address'], self.dataset.adapters[source]['port'], item.split('/',1)[1] )
                 #self.log.info('Requesting list data from: %s' % url)
-
-                async with aiohttp.ClientSession() as client:
+                timeout = aiohttp.ClientTimeout(total=self.adapterTimeout)
+                async with aiohttp.ClientSession(timeout=timeout) as client:
                     async with client.get(url) as response:
                         result=await response.read()
                         result=json.loads(result.decode())
@@ -525,12 +434,18 @@ class sofaWebUI():
 
             return web.Response(text=json.dumps(result, default=self.date_handler))
 
+        except aiohttp.client_exceptions.ClientConnectorError:
+            self.log.error('Connection refused for adapter %s.  Adapter is likely stopped' % source)
+
+        except ConnectionRefusedError:
+            self.log.error('Connection refused for adapter %s.  Adapter is likely stopped' % source)
+            
         except concurrent.futures._base.CancelledError:
             self.log.error('Error getting list data %s (cancelled)' % item)
-            return web.Response(text=json.dumps({}, default=self.date_handler))
         except:
             self.log.error('Error getting list data %s' % item, exc_info=True)
-            return web.Response(text=json.dumps({}, default=self.date_handler))
+        
+        return web.Response(text=json.dumps({}, default=self.date_handler))
 
     async def listPostHandler(self, request):
           
@@ -702,6 +617,42 @@ class sofaWebUI():
         except:
             self.log.error('Error transferring list of devices: %s' % body,exc_info=True)
 
+    async def deviceListWithDataHandler(self, request):
+
+        # This is requested at the beginning of a client session to get the full list of devices as well as 
+        # any status data. It's combined here to prevent any rendering delays in the UI.   Even though it's a large amount of data
+        # testing shows that the ui loads faster and more consistently than trying to pick the individual data needed
+        # In the future, server side rendering of the first load may be able to prevent this, and it is overkill on mobile where 
+        # the full dashboard layout is not used.
+
+        try:
+            self.log.info('<- %s devicelistwithdata request' % (request.remote))
+            #devices=[]
+            devices=list(self.dataset.devices.values())
+            #for dev in self.dataset.devices:
+            #    devices.append(self.dataset.devices[dev])
+                
+            getByAdapter={}                
+            for dev in self.dataset.devices:
+                result=self.adapter.getDeviceByfriendlyName(dev)
+                adapter=result['endpointId'].split(':')[0]
+                if adapter not in getByAdapter:
+                    getByAdapter[adapter]=[]
+                getByAdapter[adapter].append(result['friendlyName'])
+                #alldevs.append(result['endpointId'])
+
+            allstates=await asyncio.gather(*[self.dataset.requestReportStates(adapter, getByAdapter[adapter]) for adapter in getByAdapter ])
+            
+            states={}
+            for statelist in allstates:
+                for device in statelist:
+                    states[device]=statelist[device]
+                    
+            return web.Response(text=json.dumps({"devices":devices, "state": states}, default=self.date_handler))
+        except:
+            self.log.error('Error transferring list of devices: %s' % self.dataset.devices.keys(),exc_info=True)
+
+
     async def deviceStatePostHandler(self, request):
             
         if request.body_exists:
@@ -741,6 +692,7 @@ class sofaWebUI():
                 self.log.error('Couldnt build device state report', exc_info=True)
 
             return web.Response(text=json.dumps({}, default=self.date_handler))
+            
 
     async def dataPostHandler(self, request):
             
@@ -855,7 +807,10 @@ class sofaWebUI():
                 
 
     async def root_handler(self, request):
-        return web.FileResponse(os.path.join(self.config['client_static_directory'],'index.html'))
+        try:
+            return web.FileResponse(os.path.join(self.config['client_static_directory'],'index.html'))
+        except:
+            return aiohttp.web.HTTPFound('/login')
 
 
     async def wsBroadcast(self, message):
@@ -889,16 +844,11 @@ class ui(sofabase):
         def __init__(self, log=None, loop=None, dataset=None, notify=None, discover=None, request=None,  **kwargs):
             self.dataset=dataset
             self.config=self.dataset.config
-            self.dataset.data['cache']={}
             self.log=log
             self.notify=notify
             self.request=request
             self.discover=discover
-            #self.loop = asyncio.new_event_loop()
-            if not loop:
-                self.loop = asyncio.new_event_loop()
-            else:
-                self.loop=loop
+            self.loop=loop
             
             
         async def start(self):
@@ -920,7 +870,7 @@ class ui(sofabase):
         async def handleChangeReport(self, message):
         
             try:
-                super().handleChangeReport(message)
+                await super().handleChangeReport(message)
                 if message:
                     try:
                         if 'log_change_reports' in self.dataset.config:

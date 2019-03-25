@@ -131,13 +131,16 @@ class alexaBridge(sofabase):
                             #self.log.info('Reportstate: %s' % response)
                             return response
                         else:
+                            # CHEESE This is all wrong now because Logic is actually sending back activationstarted.  It needs to be changed to receive an async
+                            # completion status and send that to the alexa gateway.  right now it just generates 2 activation started sends.
+                            
                             if event["directive"]["header"]['name']in ['Activate','Deactivate']:
                                 response=await self.activationStarted(event)  
                                 await self.SQSearlyResponse(response, returnqueue)
                             
                             response=await self.dataset.sendDirectiveToAdapter(event)
                             try:
-                                if response['context']['properties']:
+                                if 'properties' in response['context']:
                                     response['context']['properties']=self.trimProps(response['context']['properties'])
                             except:
                                 self.log.error('Error trimming properties', exc_info=True)
@@ -234,11 +237,11 @@ class alexaBridge(sofabase):
                 except:
                     return None
 
-        async def SQSearlyResponse(self, response, returnqueue):
+        async def SQSearlyResponse_eventgateway(self, response, returnqueue=None):
 
             try:
-                await self.sqs.send_message(QueueUrl=returnqueue,MessageBody=json.dumps(response))
-                #await self.sqs.send_message(QueueUrl=self.lambdaqueue,MessageBody=json.dumps(response))
+                await self.alexaSendToEventGateway(json.dumps(response))
+                
                 try:
                     self.log.info('<- %s/%s %s %s' % (response["event"]["header"]["name"], response["event"]["header"]["messageId"], self.suppressTokens(response)))
                 except:
@@ -246,6 +249,20 @@ class alexaBridge(sofabase):
 
             except:
                 self.log.error('Error sending back early response: %s' % response, exc_info=True)
+
+        async def SQSearlyResponse(self, response, returnqueue):
+
+            try:
+                await self.sqs.send_message(QueueUrl=returnqueue,MessageBody=json.dumps(response))
+
+                try:
+                    self.log.info('<- %s/%s %s %s' % (response["event"]["header"]["name"], response["event"]["header"]["messageId"], self.suppressTokens(response)))
+                except:
+                    self.log.info('<- response %s' % response)
+
+            except:
+                self.log.error('Error sending back early response: %s' % response, exc_info=True)
+
 
         def queueId(self, message):
             try:
@@ -262,6 +279,39 @@ class alexaBridge(sofabase):
             except:
                 logger.error('Message did not have a messageId or Correlation token')
                 return None
+
+        async def handleSQSmessage_eventgateway(self, sqsbody):
+        
+            try:
+                qid=self.queueId(sqsbody)
+                response=await self.processSQS(sqsbody, None)
+                if response:
+                    await self.alexaSendToEventGateway(json.dumps(response))
+
+                try:
+                    #self.log.info('Tokenrefresh? %s / %s' % (self.tokenRefresh, self.newGrant))
+                    if self.newGrant:
+                        await self.alexaGetTokenForNewGrant()
+                    elif self.tokenRefresh or ('expires' in self.grant and datetime.datetime.now()>self.grant["expires"]):
+                        await self.alexaRefreshToken()
+                except:
+                    self.log.info('Token refresh probably needed but failed', exc_info=True)
+                    
+                try:
+                    if response["event"]["header"]['name']=='StateReport':
+                        self.log.info('<- %s/%s %s %s' % (response["event"]["header"]['name'], response["event"]["endpoint"]['endpointId'], qid, self.suppressTokens(response)))
+                    elif response["event"]["header"]['name'].startswith('Discover'):
+                        self.log.info('<- %s %s %s' % (response["event"]["header"]['name'], qid, self.suppressTokens(response)))
+                    elif "context" in response and "properties" in response["context"]:
+                        self.log.info('<- %s %s/%s %s' % (qid, response["context"]["properties"][0]["name"], sqsbody["directive"]["header"]["messageId"], self.suppressTokens(response)))
+                    else:
+                        self.log.info('<- response/%s %s' % (sqsbody["directive"]["header"]["messageId"], response))
+                except:
+                    self.log.info('<- response/%s %s' % (sqsbody["directive"]["header"]["messageId"], response), exc_info=True)
+                    
+            except:
+                self.log.error('Error in handleSQSMessage', exc_info=True)
+
 
         async def handleSQSmessage(self,sqsbody):
         
