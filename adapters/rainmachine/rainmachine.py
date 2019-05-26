@@ -17,7 +17,7 @@ import asyncio
 import aiohttp
 
 
-class post(sofabase):
+class rainmachine(sofabase):
     
     class adapterProcess(adapterbase):
     
@@ -34,10 +34,59 @@ class post(sofabase):
                 self.loop=loop
             
         async def start(self):
-            self.targets=self.loadJSON('posttargets')
-            for target in self.targets:
-                await self.dataset.ingest({"target": { target : self.targets[target] }})
-            self.log.info('.. Starting post')
+            self.log.info('.. Starting rainmachine')
+            self.access_token=await self.get_auth_token()
+            #self.log.info('Token data: %s' % self.tokendata)
+            await self.get_api('dailystats')
+            await self.get_zones()
+            self.log.info('%s' % await self.get_api('/watering/zone'))
+            
+        async def get_zones(self):
+            try:
+                zonedata=await self.get_api('zone')
+                for zone in zonedata['zones']:
+                    if zone['active']:
+                        self.log.info('Zone: %s %s' % (zone['name'],zone))
+            except:
+                self.log.error('Error getting zones', exc_info=True)            
+            
+        async def get_auth_token(self):
+            try:
+                data=json.dumps({"pwd": self.dataset.config['password']})
+                url="https://%s:%s/api/4/auth/login" % (self.dataset.config['device_address'], self.dataset.config['device_port'])
+                headers={}
+                self.log.info('URL: %s %s'  % (url, data))
+                #headers = { "Content-type": "text/xml" }
+                async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as client:
+                    response=await client.post(url, data=data, headers=headers)
+                    result=await response.read()
+                    result=json.loads(result.decode())
+                    self.tokendata=result
+                    
+                return self.tokendata["access_token"]
+            except:
+                self.log.error('Error getting auth token', exc_info=True)
+                
+        async def get_api(self, api_command):
+            
+            try:
+                url="https://%s:%s/api/4/%s?access_token=%s" % (self.dataset.config['device_address'], self.dataset.config['device_port'], api_command, self.access_token)
+                async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as client:
+                    async with client.get(url) as response:
+                        status=response.status
+                        result=await response.text()
+                        #self.log.info('result: %s' % result)
+                        
+                if result:
+                    return json.loads(result)
+                    
+                self.log.warn('.! No Result returned')            
+                return {}
+    
+            except:
+                self.log.error("Error requesting state for %s" % target, exc_info=True)
+                return {}
+            
 
 
         # Adapter Overlays that will be called from dataset
@@ -56,9 +105,10 @@ class post(sofabase):
             
             nativeObject=self.dataset.nativeDevices['target'][deviceid]
             if nativeObject['name'] not in self.dataset.localDevices:
-                return self.dataset.addDevice(nativeObject['name'], devices.simpleService('post/target/%s' % deviceid, nativeObject['name'], native=nativeObject))
+                return self.dataset.addDevice(nativeObject['name'], devices.basicDevice('post/target/%s' % deviceid, nativeObject['name'], native=nativeObject))
             
             return False
+
 
         async def executePost(self, target, command, data=""):
             
@@ -156,5 +206,5 @@ class post(sofabase):
 
 
 if __name__ == '__main__':
-    adapter=post(name='post')
+    adapter=rainmachine(name='rainmachine')
     adapter.start()

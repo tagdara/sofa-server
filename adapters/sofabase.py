@@ -17,13 +17,20 @@ import datetime
 import uuid
 import functools
 import devices
+import signal
+
 import sofamqtt
 import sofadataset
 import sofarest
 import sofarequester
 
 
+
 class adapterbase():
+    
+    async def stop(self):
+        self.log.info('Stopping adapter')
+        pass
         
     def jsonDateHandler(self, obj):
 
@@ -64,6 +71,17 @@ class adapterbase():
             self.log.error('Error adding controller property', exc_info=True)
                 
         return controllerlist
+
+class MsgCounterHandler(logging.Handler):
+
+    def __init__(self, *args, **kwargs):
+        super(MsgCounterHandler, self).__init__(*args, **kwargs)
+        self.logged_lines={'ERROR':0, 'INFO':0, 'WARNING':0, 'DEBUG':0}
+
+    def emit(self, record):
+        l = record.levelname
+        if l in self.logged_lines:
+            self.logged_lines[l]+=1
             
 class sofabase():
 
@@ -77,11 +95,12 @@ class sofabase():
         def get(self):
             pass
 
-
-    def logsetup(self, logbasepath, logname, level="INFO", errorOnly=[]):
+    def logsetup(self, logbasepath, logname, level="DEBUG", errorOnly=[]):
 
         #log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s %(lineno)4d %(threadName)-.1s: %(message)s','%m/%d %H:%M:%S')
-        log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s%(lineno)4d: %(message)s','%m/%d %H:%M:%S')
+
+        #log_error_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s%(lineno)4d: %(message)s','%m/%d %H:%M:%S')
+        log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(name)s %(levelname).1s%(lineno)4d: %(message)s','%m/%d %H:%M:%S')
         logpath=os.path.join(logbasepath, logname)
         logfile=os.path.join(logpath,"%s.log" % logname)
         loglink=os.path.join(logbasepath,"%s.log" % logname)
@@ -96,15 +115,23 @@ class sofabase():
         if needRoll:
             log_handler.doRollover()
             
+        self.count_handler = MsgCounterHandler()
+        
+        #log_error = logging.FileHandler(os.path.join(logbasepath,"sofa-error.log"))
+        #log_error.setFormatter(log_formatter)
+        #log_error.setLevel(logging.WARNING)
+        
         console = logging.StreamHandler()
         console.setFormatter(log_handler)
-        console.setLevel(logging.INFO)
+        console.setLevel(getattr(logging,level))
         
         logging.getLogger(logname).addHandler(console)
-
+        #logging.getLogger(logname).addHandler(log_error)
+        
         self.log =  logging.getLogger(logname)
-        self.log.setLevel(logging.INFO)
+        self.log.setLevel(getattr(logging,level))
         self.log.addHandler(log_handler)
+        self.log.addHandler(self.count_handler)
         if not os.path.exists(loglink):
             os.symlink(logfile, loglink)
         
@@ -175,20 +202,36 @@ class sofabase():
         if name==None:
             print('Adapter name not provided')
             sys.exit(1)
-            
+        
+        
         self.adaptername=name
         self.configpath=".."
         self.baseConfig=self.readBaseConfig(self.configpath)
         self.basepath=self.baseConfig['baseDirectory']
-        self.logsetup(self.baseConfig['logDirectory'], self.adaptername, loglevel, errorOnly=['aiohttp.access','gmqtt.mqtt.protocol','gmqtt.mqtt.handler','gmqtt.mqtt.package'])
+        self.logsetup(self.baseConfig['logDirectory'], self.adaptername, loglevel, errorOnly=self.baseConfig['error_only_logs'])
+
         self.loop = asyncio.get_event_loop()
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=3,)
-        
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10,)
+    
+    def service_stop(self, sig):
+        try:
+            self.log.info('Terminating loop due to service stop. %s' % sig)
+            self.loop.stop()
+        except:
+            self.log.error('Error stopping loop', exc_info=True)
         
     def start(self):
         self.log.info('.. Sofa 2 Adapter module initialized and starting.')
+        signal.signal(signal.SIGTERM, self.service_stop)
         asyncio.set_event_loop(self.loop)
+        for signame in {'SIGINT', 'SIGTERM'}:
+            self.loop.add_signal_handler(
+                getattr(signal, signame),
+                functools.partial(self.service_stop, signame))
+
+
         self.dataset=sofadataset.sofaDataset(self.log, adaptername=self.adaptername, loop=self.loop)
+        self.dataset.logged_lines=self.count_handler.logged_lines
         #self.dataset.baseConfig=self.readBaseConfig()
         self.dataset.baseConfig=self.baseConfig
         self.dataset.config=self.readconfig()
@@ -218,8 +261,9 @@ class sofabase():
     
         # wait until the adapter is created to avoid a number of race conditions
         self.loop.run_until_complete(self.mqttServer.connectServer())
-        self.loop.run_until_complete(self.mqttServer.topicSubscribe())
-        self.loop.run_until_complete(self.mqttServer.subscribeAdapterTopics())
+        # These commands have been moved to the on_connect in mqtt
+        #self.loop.run_until_complete(self.mqttServer.topicSubscribe())
+        #self.loop.run_until_complete(self.mqttServer.subscribeAdapterTopics())
         
         self.adapter.running=True
         self.loop.run_until_complete(self.adapter.start())
@@ -228,6 +272,7 @@ class sofabase():
 
         
         try:
+            self.log.info('Adapter primary loop running')
             self.loop.run_forever()
         except KeyboardInterrupt:
             pass
@@ -235,6 +280,7 @@ class sofabase():
             self.log.error('Loop terminated', exc_info=True)
         finally:
             self.adapter.running=False
+            self.loop.run_until_complete(self.adapter.stop())
             self.restServer.shutdown()
             self.log.info('Shutting down executor')
             self.executor.shutdown()

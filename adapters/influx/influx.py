@@ -56,6 +56,8 @@ class influxServer(sofabase):
                     if type(change['value'])==dict:
                         if 'value' in change['value']:
                             change['value']=change['value']['value']
+                        else:
+                            change['value']=json.dumps(change['value'])
                                 
                     if type(change['value'])==list:
                         change['value']=str(change['value'])

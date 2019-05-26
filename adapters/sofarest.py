@@ -197,11 +197,11 @@ class sofaRest():
                 result={}
                 for dev in devlist:
                     try:
-                        result[dev]=self.dataset.getDeviceByfriendlyName(dev).StateReport()
-                        #result[dev]=self.dataset.localDevices[dev].StateReport 
+                        result[dev]=self.dataset.getDeviceByEndpointId(dev).StateReport()
+                        #result[dev]=self.dataset.getDeviceByfriendlyName(dev).StateReport()
                     except:
                         self.log.error('Error getting statereport for %s' % dev, exc_info=True)
-                #self.log.info('Returning: %s' % json.dumps(result, default=self.date_handler))
+
                 return web.Response(text=json.dumps(result, default=self.date_handler))
             else:
                 return web.Response(text="{}")        
@@ -226,12 +226,16 @@ class sofaRest():
 
 
     async def categoryLookupHandler(self, request):
-        self.log.info('request: %s' % request.match_info['category'])
-        #subset=await self.dataset.getCategory(request.match_info['category'])
-        subset=await self.dataset.getObjectsByDisplayCategory(request.match_info['category'])
-        if request.query_string:
-            subset=self.queryStringAdjuster(request.query_string, subset)
-        return web.Response(text=json.dumps(subset, default=self.date_handler))
+        try:
+            self.log.info('request: %s' % request.match_info['category'])
+            #subset=await self.dataset.getCategory(request.match_info['category'])
+            subset=await self.dataset.getObjectsByDisplayCategory(request.match_info['category'])
+            if request.query_string:
+                subset=self.queryStringAdjuster(request.query_string, subset)
+            return web.Response(text=json.dumps(subset, default=self.date_handler))
+        except:
+            self.log.error('Error on category lookup', exc_info=True)
+            return web.Response(text="{}")
 
 
     async def listHandler(self, request):
@@ -407,8 +411,8 @@ class sofaRest():
 
         
     async def statusHandler(self, request):
-
-        return web.Response(text=json.dumps(self.dataset.mqtt, default=self.date_handler))
+        urls={ "native": "http://%s:%s/native" % (self.serverAddress, self.port), "devices": "http://%s:%s/devices" % (self.serverAddress, self.port)}
+        return web.Response(text=json.dumps({"mqtt": self.dataset.mqtt, "logged": self.dataset.logged_lines, "urls": urls}, default=self.date_handler))
 
     async def rootHandler(self, request):
 

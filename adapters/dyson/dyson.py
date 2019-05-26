@@ -116,7 +116,7 @@ class dyson(sofabase):
                         await self.connect_dyson()
                     await asyncio.sleep(self.polltime)
                 except:
-                    self.log.error('Error fetching Hue Bridge Data', exc_info=True)
+                    self.log.error('Error fetching Dyson Data', exc_info=True)
                     self.logged_in=False
 
         async def setDyson(self, device, command):

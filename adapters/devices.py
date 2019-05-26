@@ -667,6 +667,30 @@ class SurroundControllerInterface(smartInterface):
     def updateDecoder(self, value):
         self.decoder=value
 
+class AreaControllerInterface(smartInterface):
+    
+    def __init__(self, namespace="Sofa", children=[], shortcuts=[], SetChildren=None, SetShortcuts=None):
+        self.controller="AreaController"
+        self._namespace="Sofa"
+        self.children=children
+        self.shortcuts=shortcuts
+        self.SetChildren=SetChildren
+        self.SetShortcuts=SetShortcuts
+
+    @property            
+    def directives(self):
+        return { "SetChildren": { "children": "list" }, "SetShortcuts": { "shortcuts": "list" }}
+        
+    @property          
+    def props(self):
+        return { "children": { "value" : "list"}, "shortcuts": {"value": "list"}}
+
+    def updateChildren(self, value):
+        self.children=value
+
+    def updateShortcuts(self, value):
+        self.shortcuts=value
+
 
         
 class ZoneSensorInterface(smartInterface):
@@ -1060,6 +1084,18 @@ class simpleMode(smartObject):
         self._manufacturer=manufacturer
         self._path=path
 
+class simpleService(smartObject):
+    
+    def __init__(self, path, name, description="Service", manufacturer="sofa", log=None, native=None):
+        self._friendlyName=name
+        self._displayCategories=["OTHER"]
+        self.PowerController=PowerControllerInterface()
+        self._interfaces=[self.PowerController]
+        self._description=description
+        self._manufacturer=manufacturer
+        self._path=path
+
+
 class smartButton(smartObject):
     
     def __init__(self, path, name, description="Button", manufacturer="sofa", log=None, native=None):
@@ -1378,6 +1414,18 @@ class simpleLogicCommand(smartObject):
         self.LogicController=LogicControllerInterface()
         self._interfaces=[self.LogicController]
         self._path=path
+
+class simpleArea(smartObject):
+
+    def __init__(self, path, name, description="", manufacturer="sofa", log=None, native=None):
+        self._friendlyName=name
+        self._displayCategories=["LOGIC"]
+        self._description=description
+        self._manufacturer=manufacturer
+        self.AreaController=AreaControllerInterface()
+        self._interfaces=[self.AreaController]
+        self._path=path
+
 
 if __name__ == '__main__':
     pass

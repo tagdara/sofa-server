@@ -34,6 +34,7 @@ class logicServer(sofabase):
             self.dataset.nativeDevices['activity']={}
             self.dataset.nativeDevices['logic']={}
             self.dataset.nativeDevices['mode']={}
+            self.dataset.nativeDevices['area']={}
             
             self.logicpool = ThreadPoolExecutor(10)
 
@@ -378,12 +379,14 @@ class logicServer(sofabase):
                 await self.fixAutomationTypes()
                 self.regions=self.loadJSON('regions')
                 self.virtualDevices=self.loadJSON('virtualDevices')
-                self.log.info('self.users: %s' % self.users)
                 self.eventTriggers=self.buildTriggerList()
                 self.calculateNextRun()
 
                 self.capturedDevices={}
                 await self.buildLogicCommand()
+
+                for area in self.areas:
+                    await self.dataset.ingest({"area": { area : self.areas[area] }})
                 
                 for auto in self.automations:
                     await self.dataset.ingest({"activity": { auto : self.automations[auto] }})
@@ -444,12 +447,24 @@ class logicServer(sofabase):
                     return self.addSimpleScene(path.split("/")[2])
                 elif path.split("/")[1]=="logic":
                     return self.addLogicCommand(path.split("/")[2])
+                elif path.split("/")[1]=="area":
+                    return self.addArea(path.split("/")[2])
+
                 else:
                     self.log.error('Not adding: %s' % path)
 
             except:
                 self.log.error('Error defining smart device', exc_info=True)
                 return False
+                
+        async def addArea(self, name):
+        
+            nativeObject=self.dataset.nativeDevices['area'][name]
+            
+            if name not in self.dataset.devices:
+                return self.dataset.addDevice(name, devices.simpleArea('logic:area:%s' % name, name))
+            
+            return False
 
 
         async def addLogicCommand(self, name):
@@ -729,7 +744,14 @@ class logicServer(sofabase):
                     if int(scene[light]['brightness'])==0:
                         acts.append({'command':'TurnOff', 'controller':'PowerController', 'endpointId':epid, 'value': None})
                     else:
-                        acts.append({'command':'SetBrightness', 'controller':'BrightnessController', 'endpointId':epid, 'value': { "brightness": int(scene[light]['brightness']) }} )
+                        if 'hue' in scene[light]:
+                            acts.append({'command':'SetColor', 'controller':'ColorController', 'endpointId':epid, "value": { 'color': { 
+                                "brightness": scene[light]['brightness']/100,
+                                "saturation": scene[light]['saturation'],
+                                "hue": scene[light]['hue'] }}})
+                        else:
+                            acts.append({'command':'SetBrightness', 'controller':'BrightnessController', 'endpointId':epid, 'value': { "brightness": int(scene[light]['brightness']) }} )
+
                         
                 allacts = await asyncio.gather(*[self.sendAlexaDirective(action) for action in acts ])
                 self.log.info('scene %s result: %s' % (sceneName, allacts))    
@@ -872,6 +894,9 @@ class logicServer(sofabase):
                 elif itempath.startswith('/logic'):
                     if detail=='time' or detail=='':
                         controllerlist["LogicController"]=["time"]
+                elif itempath.startswith('/area'):
+                    controllerlist["AreaController"]=["children","shortcuts"]
+
 
                 return controllerlist
             except KeyError:
@@ -886,6 +911,12 @@ class logicServer(sofabase):
                     return "ON" if nativeObj['active'] else "OFF"
                 if controllerProp=='time':
                     return datetime.datetime.now().time()
+                if controllerProp=='children':
+                    return nativeObj['children']
+                if controllerProp=='shortcuts':
+                    if 'newshortcuts' in nativeObj:
+                        return nativeObj['newshortcuts']
+                    return []
 
             except:
                 self.log.error('Error converting virtual controller property: %s %s' % (controllerProp, nativeObj), exc_info=True)
@@ -904,6 +935,7 @@ class logicServer(sofabase):
                                 elif trigger['type']=='event':
                                     trigname="event=%s.%s.%s" % (trigger['endpointId'], trigger['controller'], trigger['propertyName'])
                                     self.log.debug('Event trigger: %s' % trigname)
+
                                 else:
                                     self.log.info('Skipping unknown trigger type: %s' % trigger)
                                     continue

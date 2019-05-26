@@ -512,7 +512,7 @@ class elkm1(sofabase):
         def virtualEventSource(self, itempath, item):
             try:
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                   
+
                 if "mode" in nativeObject:
                     if nativeObject["mode"]=="doorbell":
                         if item['value']=='Violated':
@@ -721,6 +721,19 @@ class elkm1(sofabase):
 
             return subset
 
+        async def virtualList(self, itempath, query={}):
+
+            try:
+                if itempath=="ring":
+                    event=self.virtualEventSource('elk/zone/16',{"value":"Violated"})
+                    self.log.info('[> mqtt event: %s' % event)
+                    self.dataset.notify('sofa/updates',json.dumps(event))
+
+                    return {"Result": event}
+                return {}
+
+            except:
+                self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
 
 
 if __name__ == '__main__':

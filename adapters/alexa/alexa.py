@@ -178,12 +178,14 @@ class alexaBridge(sofabase):
         async def convertChangeToResponse(self, changereport):
         
             try:
-                response={}
-                if changereport:
-                    response={ "event": { "header" : {"namespace": "Alexa", "name":"Response", "payloadVersion": "3", "messageId": str(uuid.uuid1()) } , "endpoint" : { "endpointId": changereport['event']['endpoint']['endpointId'] } , "payload": {} }, "context": { "properties" :  changereport['payload']['change']['properties'] } }
-                return response
+                if changereport['event']['header']['name']=='ChangeReport':
+                    return { "event": { "header" : {"namespace": "Alexa", "name":"Response", "payloadVersion": "3", "messageId": str(uuid.uuid1()) } , "endpoint" : { "endpointId": changereport['event']['endpoint']['endpointId'] } , "payload": {} }, "context": { "properties" :  changereport['payload']['change']['properties'] } }
+                
+                return changereport
+
             except:
                 self.log.error('Error converting change report: %s' % changereport, exc_info=True)
+                return changereport
 
         async def activationStarted(self, event):
         
@@ -345,9 +347,6 @@ class alexaBridge(sofabase):
                         self.log.info('<- response/%s %s' % (sqsbody["directive"]["header"]["messageId"], response))
                 except:
                     self.log.info('<- response/%s %s' % (sqsbody["directive"]["header"]["messageId"], response), exc_info=True)
-                    
-            except botocore.errorfactory.QueueDoesNotExist:
-                self.log.error('!! Return Queue did not exist: %s %s' % (qid, returnqueue))
                 
             except:
                 self.log.error('Error in handleSQSMessage', exc_info=True)
@@ -365,10 +364,10 @@ class alexaBridge(sofabase):
                         self.sqsconnected=True
                     else:
                         self.log.error('Error connecting to SQS queues.  Waiting 10 seconds to retry')
-                        time.sleep(10)
+                        await asyncio.sleep(10)
                 except:
                     self.log.error('Error connecting to SQS queues.  Waiting 10 seconds to retry', exc_info=True)
-                    time.sleep(30)
+                    await asyncio.sleep(30)
 
 
         async def handleMessage(self, sqsitem, loop):
@@ -388,8 +387,11 @@ class alexaBridge(sofabase):
                     await self.handleSQSmessage(sqsbody)
                     #self.msgThreads[sqsbody["directive"]["header"]["messageId"]]=self.messageSQSthread(sqsbody["directive"]["header"]["messageId"],sqsitem)
             except:
-                self.log.error('-> %s/%s Error Processing %s' % (sqsbody["directive"]["header"]['name'], sqsbody["directive"]["header"]["messageId"], sqsbody),exc_info=True)
-           
+                try:
+                    self.log.error('-> %s/%s Error Processing %s' % (sqsbody["directive"]["header"]['name'], sqsbody["directive"]["header"]["messageId"], sqsbody),exc_info=True)
+                except:
+                    self.log.error('->  Error Processing Message', exc_info=True)
+                    
         def handleMessageGroup(self, message, loop):
             try:
                 allmsg = asyncio.ensure_future(asyncio.gather(*[self.handleMessage(sqsitem, loop) for sqsitem in message['Messages']], loop=loop), loop=loop)

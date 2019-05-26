@@ -335,7 +335,7 @@ class sofaDataset():
                             event=self.adapter.virtualEventSource(item['path'], item)
                             if event:
                                 self.log.info('[> mqtt event: %s' % event, exc_info=True)
-                                await self.notify('sofa/updates',json.dumps(event))
+                                self.notify('sofa/updates',json.dumps(event))
 
 
                         update=await self.updateDeviceState(item['path'], newDevice=False, patch=item)
@@ -350,8 +350,11 @@ class sofaDataset():
 
         try:
             nativeObject=self.getObjectFromPath(self.getObjectPath(path))
-            smartDevice=self.getDeviceByEndpointId("%s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
-
+            try:
+                smartDevice=self.getDeviceByEndpointId("%s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
+            except:
+                #self.log.error('Error getting device by endpointId: %s%s' % (self.adaptername, self.getObjectPath(path).replace("/",":")) )
+                return None
             if not smartDevice:
                 if path not in self.nodevices:
                     self.log.info(".? No device for %s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
@@ -402,11 +405,11 @@ class sofaDataset():
                         self.log.info('[> mqtt change: %s %s %s %s %s' % (dev.friendlyName, dev.endpointId, prop['namespace'], prop['name'], prop['value'] ))
                 except:
                     self.log.info('[> mqtt changereport: %s' % changeReport, exc_info=True)
-                await self.notify('sofa/updates',json.dumps(changeReport))
+                self.notify('sofa/updates',json.dumps(changeReport))
                 return changeReport
         
             elif newDevice:
-                await self.notify('sofa/updates',json.dumps(smartDevice.addOrUpdateReport))
+                self.notify('sofa/updates',json.dumps(smartDevice.addOrUpdateReport))
                 return None
                 #return smartDevice.addOrUpdateReport
 
@@ -445,7 +448,7 @@ class sofaDataset():
                 return {}
         
         except concurrent.futures._base.CancelledError:
-            self.log.error('.! Request to %s canceled for %s' % (url, data))
+            self.log.warn('.! Request to %s canceled for %s' % (url, data))
 
         except aiohttp.client_exceptions.ClientConnectorError:
             self.log.error('!. Connection refused for adapter %s.  Adapter is likely stopped' % adapter)

@@ -2,9 +2,11 @@
 
 restart_service() {
 	name=$1
+	echo Stopping $name service
 	sudo systemctl stop sofa-$name
+	echo Starting $name service
 	sudo systemctl start sofa-$name
-	sudo systemctl --no-pager status sofa-$name
+	sudo systemctl -l --no-pager status sofa-$name
 }
 
 restart_service $1

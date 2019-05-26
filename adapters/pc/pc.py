@@ -43,7 +43,7 @@ class pcServer(sofabase):
             except:
                 self.log.error('Error loading cached devices', exc_info=True)
                 
-            await self.notify('sofa/pc','{"op":"discover"}')
+            self.notify('sofa/pc','{"op":"discover"}')
             
         # MQTT Adapter Specific Overlays
         async def processAdapterTopicMessage(self, topic, payload):
@@ -164,15 +164,15 @@ class pcServer(sofabase):
 
                 elif command=='TurnOff':
                     cmd={"op":"set", "property":"powerState", "value":"OFF", 'device': device }
-                    await self.notify('sofa/pc', json.dumps(cmd)) 
+                    self.notify('sofa/pc', json.dumps(cmd)) 
                     
                 elif command=='Lock':         
                     cmd={"op":"set", "property":"lockState", "value":"LOCKED", 'device': device }
-                    await self.notify('sofa/pc', json.dumps(cmd))
+                    self.notify('sofa/pc', json.dumps(cmd))
                     
                 elif command=='Unlock':
                     cmd={"op":"set", "property":"lockState", "value":"UNLOCKED", 'device': device }
-                    await self.notify('sofa/pc', json.dumps(cmd))
+                    self.notify('sofa/pc', json.dumps(cmd))
                 else:
                     return {}
 

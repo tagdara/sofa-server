@@ -711,6 +711,10 @@ class insteon(sofabase):
                     if nativeObject['pnode']==deviceid:
                         #return self.dataset.addDevice(nativeObject['name'], devices.smartThermostat('insteon/node/%s' % deviceid, nativeObject['name'], supportedModes=["HEAT", "FAN", "OFF"] ))
                         return self.dataset.addDevice(nativeObject['name'], devices.smartThermostat('insteon/node/%s' % deviceid, nativeObject['name'], supportedModes=["HEAT", "OFF"] ))
+
+                elif nativeObject["devicetype"]=="device":
+                    return self.dataset.addDevice(nativeObject['name'], devices.basicDevice('insteon/node/%s' % deviceid, nativeObject['name']))
+
             
             return False
 
@@ -787,7 +791,7 @@ class insteon(sofabase):
                 controllerlist={}
                 #self.log.info('native: %s %s' % (itempath,nativeObject))
                 
-                if nativeObject["devicetype"] in ["light", "lightswitch"]:
+                if nativeObject["devicetype"] in ["light", "lightswitch", "device"]:
                     if detail=="property/ST/value" or detail=="":
                         controllerlist=self.addControllerProps(controllerlist,"PowerController","powerState")
                         if nativeObject["property"]["ST"]["uom"].find("%")>-1:

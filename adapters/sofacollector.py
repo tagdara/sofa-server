@@ -34,6 +34,8 @@ class SofaCollector(sofabase):
                     response=await client.get('%s/discovery' % url)
                     result=await response.read()
                     return json.loads(result.decode())
+            except aiohttp.client_exceptions.ClientConnectorError:
+                self.log.warn('Error discovering adapter devices - adapter not ready: %s' % url)
             except:
                 self.log.error('Error discovering adapter devices: %s' % url, exc_info=True)
                 return {}
@@ -96,10 +98,14 @@ class SofaCollector(sofabase):
                         for change in patch:
                             if change['op']=='add':
                                 self.log.info('.. mqtt adapter discovered: %s (%s)' % (adapter, adapterdata[adapter]['url']))
+                                if hasattr(self, "virtualAddAdapter"):
+                                    await self.virtualAddAdapter(adapter, adapterdata[adapter])
                                 devlist=await self.discoverAdapterDevices(adapterdata[adapter]['url'])
                                 break
                             elif change['path']=='/%s/startup' % adapter:
                                 self.log.info('.. mqtt adapter %s startup time change. Scanning for new devices' % adapter)
+                                if hasattr(self, "virtualUpdateAdapter"):
+                                    await self.virtualUpdateAdapter(adapter, adapterdata[adapter])
                                 devlist=await self.discoverAdapterDevices(adapterdata[adapter]['url'])
                                 break
                                 
@@ -131,9 +137,11 @@ class SofaCollector(sofabase):
             
             for obj in objlist:
                 try:
-                    self.dataset.devices[obj['friendlyName']]=obj
+                    self.dataset.devices[obj['endpointId']]=obj
+                    #self.dataset.devices[obj['friendlyName']]=obj
                     if hasattr(self, "virtualAddDevice"):
-                        await self.virtualAddDevice(obj['friendlyName'], obj)
+                        await self.virtualAddDevice(obj['endpointId'], obj)
+                        #await self.virtualAddDevice(obj['friendlyName'], obj)
 
                 except:
                     self.log.error('Error updating device list: %s' % objlist[obj],exc_info=True)
@@ -189,7 +197,7 @@ class SofaCollector(sofabase):
                 endpointId=message['event']['endpoint']['endpointId']
                 source=message['event']['header']['namespace'].split('.')[1]
                 if hasattr(self, "virtualEventHandler"):
-                    self.log.info('Adapter has virtualeventhandler')
+                    #self.log.info('Adapter has virtualeventhandler')
                     await self.virtualEventHandler(eventtype, source, endpointId, message)
             except:
                 self.log.error('Error handling Alexa Event', exc_info=True)

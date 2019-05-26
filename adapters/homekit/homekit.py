@@ -139,8 +139,8 @@ class LightBulb(SofaAccessory):
             self.log.error('Error in setbright', exc_info=True)
 
 
-    def stop(self):
-        super(LightBulb, self).stop()
+    async def stop(self):
+        await super(LightBulb, self).stop()
 
 
 
@@ -179,6 +179,22 @@ class ContactSensor(SofaAccessory):
     def run(self):
         pass
 
+class Doorbell(SofaAccessory):
+
+    category = pyhap.const.CATEGORY_OTHER
+
+    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
+        
+        self.event_loop=loop
+        self.endpointId=endpointId
+        self.adapterUrl=adapterUrl
+        self.log = logging.getLogger('homekit')     
+        super().__init__(*args, **kwargs)
+        serv_temp = self.add_preload_service('Doorbell')
+        self.pse_state = serv_temp.configure_char('ProgrammableSwitchEvent')
+
+    def run(self):
+        pass
 
   
 class Speaker(SofaAccessory):
@@ -247,6 +263,7 @@ class homekit(sofabase):
 
 
         async def start(self):
+            
             try:
                 self.log.info('Starting homekit')
                 await self.dataset.ingest({'accessorymap': self.loadJSON(self.dataset.config['accessory_map'])})
@@ -264,10 +281,21 @@ class homekit(sofabase):
                 self.log.info('PIN: %s' % self.driver.state.pincode)
                 signal.signal(signal.SIGTERM, self.driver.signal_handler)
                 #self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-                asyncio.ensure_future(self.loop.run_in_executor(self.executor, self.driver.start,))
-
+                #asyncio.ensure_future(self.loop.run_in_executor(self.executor, self.driver.start,))
+                #await self.loop.run_in_executor(self.executor, self.driver.start,)
+                self.executor.submit(self.driver.start)
+                self.log.info('Accessory Bridge Driver started')
             except:
                 self.log.error('Error during startup', exc_info=True)
+                
+        async def stop(self):
+            
+            try:
+                self.log.info('Stopping Accessory Bridge Driver')
+                self.driver.stop()
+            except:
+                self.log.error('Error stopping Accessory Bridge Driver', exc_info=True)
+
  
         def buildBridge(self):
             
@@ -285,9 +313,11 @@ class homekit(sofabase):
                     elif dev['services'][0]=='ContactSensor':
                         newdev=ContactSensor(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
                         self.bridge.add_accessory(newdev)
-                    elif dev['services'][0]=='Speaker':
-                        newdev=Speaker(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
-                        self.bridge.add_accessory(newdev)
+                        
+                    # Speakers are not really supported at this point
+                    #elif dev['services'][0]=='Speaker':
+                    #    newdev=Speaker(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
+                    #    self.bridge.add_accessory(newdev)
 
                     else:
                         self.log.info('XXXXX Did not add %s' % dev)
@@ -356,10 +386,14 @@ class homekit(sofabase):
         async def virtualAddDevice(self, devname, device):
         
             try:
-                if device['displayCategories'][0] not in ['TEMPERATURE_SENSOR', 'LIGHT', 'CONTACT_SENSOR', 'RECEIVER']:
+                if device['displayCategories'][0] not in ['TEMPERATURE_SENSOR', 'LIGHT', 'CONTACT_SENSOR', 'RECEIVER', 'DOORBELL']:
                     return False
                 
                 if device['friendlyName'] in self.dataset.nativeDevices['accessorymap']:
+                    if self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['endpointId']!=device['endpointId']:
+                        self.log.info('Fixing changed endpointId for %s from %s to %s' % (device['friendlyName'], self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['endpointId'], device['endpointId']))
+                        self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['endpointId']=device['endpointId']                        
+                        self.saveJSON(self.dataset.config['accessory_map'], self.dataset.nativeDevices['accessorymap'])
                     response=await self.dataset.requestReportState(device['endpointId'])
                     #self.log.info('Already know about: %s' % device['friendlyName'])
                     return True
@@ -368,6 +402,7 @@ class homekit(sofabase):
                     
                 newdev=None
                 aid=None
+                devicename=device['friendlyName']
                 endpointId=device['endpointId']
                 adapter=endpointId.split(':')[0]
                 adapterUrl=self.dataset.adapters[adapter]['url']
@@ -379,19 +414,23 @@ class homekit(sofabase):
                     return False
 
                 if device['displayCategories'][0]=='TEMPERATURE_SENSOR':
-                    newdev=TemperatureSensor(self.driver, devname, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+                    newdev=TemperatureSensor(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
 
                 elif device['displayCategories'][0]=='LIGHT':
-                    newdev=LightBulb(self.driver, devname, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+                    newdev=LightBulb(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
 
                 elif device['displayCategories'][0]=='CONTACT_SENSOR':
-                    newdev=ContactSensor(self.driver, devname, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+                    newdev=ContactSensor(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
 
                 elif device['displayCategories'][0]=='RECEIVER':
-                    newdev=Speaker(self.driver, devname, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+                    newdev=Speaker(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+
+                elif device['displayCategories'][0]=='DOORBELL':
+                    newdev=Doorbell(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+
 
                 if newdev:
-                    self.log.info('++ New Homekit Device: %s - %s %s' % (aid, devname, device))
+                    self.log.info('++ New Homekit Device: %s - %s %s' % (aid, devicename, device))
                     self.bridge.add_accessory(newdev)
                     response=await self.dataset.requestReportState(endpointId)
                     await self.saveAidMap()
@@ -402,20 +441,22 @@ class homekit(sofabase):
     
 
         def addExtraLogs(self):
+            
+            pass
         
-            self.accessory_logger = logging.getLogger('pyhap.accessory_driver')
-            self.accessory_logger.addHandler(self.log.handlers[0])
-            self.accessory_logger.setLevel(logging.DEBUG)
+            #self.accessory_logger = logging.getLogger('pyhap.accessory_driver')
+            #self.accessory_logger.addHandler(self.log.handlers[0])
+            #self.accessory_logger.setLevel(logging.DEBUG)
         
-            self.accessory_driver_logger = logging.getLogger('pyhap.accessory_driver')
-            self.accessory_driver_logger.addHandler(self.log.handlers[0])
-            self.accessory_driver_logger.setLevel(logging.DEBUG)
+            #self.accessory_driver_logger = logging.getLogger('pyhap.accessory_driver')
+            #self.accessory_driver_logger.addHandler(self.log.handlers[0])
+            #self.accessory_driver_logger.setLevel(logging.DEBUG)
 
-            self.hap_server_logger = logging.getLogger('pyhap.hap_server')
-            self.hap_server_logger.addHandler(self.log.handlers[0])
-            self.hap_server_logger.setLevel(logging.DEBUG)
+            #self.hap_server_logger = logging.getLogger('pyhap.hap_server')
+            #self.hap_server_logger.addHandler(self.log.handlers[0])
+            #self.hap_server_logger.setLevel(logging.DEBUG)
         
-            self.log.setLevel(logging.DEBUG)        
+            #self.log.setLevel(logging.DEBUG)        
 
 
         def loadFromPersist(self, persistfile):
@@ -437,6 +478,20 @@ class homekit(sofabase):
             for accid, acc in self.acc.accessories:
                 self.dataset.ingest({"accessorymap": { acc.display_name : { "id":accid, "path": objlist}}})
              
+        async def virtualEventHandler(self, event, source, deviceId, message):
+            
+            try:
+                if event=='DoorbellPress':
+                    self.log.info('Doorbell Press: %s %s' % (deviceId, message))
+                    acc=self.getAccessoryFromEndpointId(deviceId)
+                    if not acc:
+                        return None
+                    acc.pse_state.set_value(0)
+
+                else:
+                    self.log.info('Unknown event: %s %s %s' % (event, deviceId, message))
+            except:
+                self.log.error('Error in virtual event handler: %s %s %s' % (event, deviceId, message), exc_info=True)
              
 
         async def virtualChangeHandler(self, deviceId, prop):
@@ -446,7 +501,7 @@ class homekit(sofabase):
                 if not acc:
                     return None
 
-                self.log.info('.. Changed %s/%s %s = %s' % (deviceId, prop['namespace'], prop['name'], prop['value']))
+                #self.log.info('.. Changed %s/%s %s = %s' % (deviceId, prop['namespace'], prop['name'], prop['value']))
                 if prop['name']=='brightness':
                     #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
                     acc.char_brightness.set_value(prop['value'])

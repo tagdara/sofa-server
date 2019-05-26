@@ -19,6 +19,7 @@ import asyncio
 import aiohttp
 import xml.etree.ElementTree as et
 from collections import defaultdict
+import struct
 import socket
 import urllib.request
 
@@ -41,7 +42,6 @@ class BroadcastProtocol:
 
 
     def datagram_received(self, data, addr):
-        #self.log.info('data received: %s %s' % (data, addr))
         data=data.decode()
         for phrase in self.keyphrases:
             if data.find(phrase)>-1:
@@ -200,7 +200,17 @@ class sonybravia(sofabase):
                 self.loop = asyncio.new_event_loop()
             else:
                 self.loop=loop
-
+                
+        def make_ssdp_sock(self):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(('', 1900))
+            group = socket.inet_aton('239.255.255.250')
+            mreq = struct.pack('4sL', group, socket.INADDR_ANY)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)    
+            return sock            
 
         async def processUPNP(self, message):
             try:
@@ -266,7 +276,8 @@ class sonybravia(sofabase):
                 self.log.error('error with update',exc_info=True)
 
             try:
-                self.ssdp = self.loop.create_datagram_endpoint(lambda: BroadcastProtocol(self.loop, self.log, self.ssdpkeywords, returnmessage=self.processUPNP), local_addr=("239.255.255.250", 1900))
+                sock=self.make_ssdp_sock()
+                self.ssdp = self.loop.create_datagram_endpoint(lambda: BroadcastProtocol(self.loop, self.log, self.ssdpkeywords, returnmessage=self.processUPNP), sock=sock)
                 await self.ssdp
                 await self.pollTV()
                 
@@ -278,10 +289,11 @@ class sonybravia(sofabase):
                 try:
                     #self.log.info("Polling TV")
                     sysinfo=await self.tv.getState('system','getPowerStatus')
-                    await self.dataset.ingest({'tv':  { self.tvName: {'power': sysinfo[0]}}})
+                    if sysinfo:
+                        await self.dataset.ingest({'tv':  { self.tvName: {'power': sysinfo[0]}}})
                     await asyncio.sleep(self.polltime)
                 except:
-                    self.log.error('Error fetching Hue Bridge Data', exc_info=True)
+                    self.log.error('Error fetching TV Data', exc_info=True)
 
             
         async def command(self, category, item, data):

@@ -46,7 +46,7 @@ class sonos(sofabase):
         def __init__(self, log=None, loop=None, dataset=None, notify=None, request=None, **kwargs):
             self.dataset=dataset
             self.log=log
-            self.setSocoLoggers(logging.WARN)
+            self.setSocoLoggers(logging.DEBUG)
             self.notify=notify
             self.polltime=.1
             self.subscriptions=[]
@@ -85,6 +85,7 @@ class sonos(sofabase):
             try:
                 self.subscriptions=[]
                 self.players=await self.sonosDiscovery()
+                self.log.info('Players: %s' % self.players)
                 for player in self.players:
                     for subService in ['avTransport','deviceProperties','renderingControl','zoneGroupTopology']:
                         newsub=self.subscribeSonos(player,subService)
@@ -172,22 +173,17 @@ class sonos(sofabase):
                             if not device.events.empty():
                                 update=self.unpackEvent(device.events.get())
                                 #self.log.info('Ingesting change: %s %s - %s' % (device.service.soco.uid, device.service.service_id, update))
-                                if device.service.service_id=='ZoneGroupTopology' and update:
-                                    #self.log.info('Replacing  %s ZoneGroupTopology with: %s' % (device.service.soco.uid, update))
-                                    if 'zone_player_uui_ds_in_group' in update:
-                                        if update['zone_player_uui_ds_in_group']==None:
-                                            # This is such garbage but the first zone group status always sets this to None
-                                            update['zone_player_uui_ds_in_group']=await self.getGroupUUIDs(device.service.soco.uid)
-                                            # And we might as well fix the fucking label while we're at it since that gets skipped too
-                                            update['zone_group_name']=await self.getGroupName(device.service.soco.uid)
-                                        self.log.debug('fixed a bunch of zone_player shit: %s' % update)
-                                    else:
-                                        self.log.info('probably bad or subset ZGT zoneplayer update: %s' % update)
-                                        continue
-                                    await self.dataset.ingest(update, overwriteLevel='player/%s/%s' % (device.service.soco.uid, device.service.service_id) )
-                                else:
+                                
+                                # Testing elimination of the check for ZoneGroupTopology.  Previously doing an overwrite level, which caused
+                                # ZGT updates that only contained a subset (3rd party media servers) to wipe out all of the real data.
+                                # This may need to be retro'd
+                                #if device.service.service_id=='ZoneGroupTopology' and update:
+                                #    self.log.info('Replacing  %s ZoneGroupTopology with: %s' % (device.service.soco.uid, update))
+                                #    await self.dataset.ingest(update, overwriteLevel='player/%s/%s' % (device.service.soco.uid, device.service.service_id) )
+                                #else:
                                     #self.log.info('.> Update from %s:%s - %s' % (device.service.soco.uid, device.service.service_id, update ))
-                                    await self.dataset.ingest({'player': { device.service.soco.uid : { device.service.service_id: update }}})
+                                
+                                await self.dataset.ingest({'player': { device.service.soco.uid : { device.service.service_id: update }}})
                         else:
                             self.log.info("Subscription ended: %s" % device.__dict__)
                     #time.sleep(self.polltime)
@@ -195,35 +191,28 @@ class sonos(sofabase):
                 except:
                     self.log.error('Error polling', exc_info=True)
                     
-        async def updateLinkedPlayers(self,nativeObj):
-            
-            try:
-                linkedPlayers=self.getLinkedPlayers(nativeObj)
-                self.log.debug('Linked Players: %s' % linkedPlayers)
-                for player in linkedPlayers:
-                    await self.dataset.updateDeviceState('/player/%s' % linkedPlayers[player])
-            except:
-                self.log.error('Problem updating linked players',exc_info=True)
-                return []
-
-
-
         def getLinkedPlayers(self, nativeObj):
             
             try:
-                linkedPlayers={}
+                linkedPlayers=[]
                 if 'ZoneGroupTopology' not in nativeObj:
                     return []
                 if 'zone_group_state' not in nativeObj['ZoneGroupTopology']:
                     self.log.error('!! Cant get linked players for %s: zone_group_state not in %s' % (nativeObj['name'], nativeObj['ZoneGroupTopology']))
                     return []
-                for group in nativeObj['ZoneGroupTopology']['zone_group_state']['ZoneGroups']['ZoneGroup']:
+                    
+                if 'ZoneGroupState' not in nativeObj['ZoneGroupTopology']['zone_group_state']:
+                    self.log.error('!! Cant get 10.1 format ZoneGroupState %s - %s' % (nativeObj['name'], nativeObj['ZoneGroupTopology']))
+                    return []
+                    
+                for group in nativeObj['ZoneGroupTopology']['zone_group_state']['ZoneGroupState']['ZoneGroups']['ZoneGroup']:
                     if group['@Coordinator']==nativeObj['speaker']['uid']:
                         if type(group['ZoneGroupMember'])!=list:
                             group['ZoneGroupMember']=[group['ZoneGroupMember']]
                         for member in group['ZoneGroupMember']:
                             if member['@UUID']!=group['@Coordinator'] and '@Invisible' not in member:
-                                linkedPlayers[member['@ZoneName']]=member['@UUID']
+                                linkedPlayers.append('sonos:player:%s' % member['@UUID'])
+                                #linkedPlayers[member['@ZoneName']]=member['@UUID']
                                 
                 return linkedPlayers
 
@@ -390,17 +379,23 @@ class sonos(sofabase):
             try:
                 device=endpointId.split(":")[2]
                 dev=self.dataset.getDeviceByEndpointId(endpointId)
-                coord=dev.friendlyName
+                #coord=dev.friendlyName
+                coord=dev.endpointId
                 try:
-                    if controller=="MusicController" and dev.InputController.input and dev.InputController.input!=dev.friendlyName:
+                    if controller=="MusicController" and dev.InputController.input and dev.InputController.input!=dev.endpointId:
                         coord=dev.InputController.input
                         self.log.info('Sending %s to coordinator instead: %s' % (command, dev.InputController.input))
                 except:
-                    coord=dev.friendlyName
+                    coord=dev.endpointId
                     
                 for player in self.players:
                     #if player.player_name==device or player.uid==device:
-                    if player.player_name==coord or player.uid==coord:
+                    if 'sonos:player:%s' % player.uid==coord:
+                        try:
+                            actions=player.avTransport.GetCurrentTransportActions([('InstanceID', 0)])['Actions'].split(', ')
+                        except:
+                            self.log.error('Could not get available actions for %s' % player.player_name, exc_info=True)
+                            actions=[]
 
                         if controller=="SpeakerController":
                             if command=='SetVolume':
@@ -409,35 +404,48 @@ class sonos(sofabase):
                                 player.mute=payload['muted']
                                 
                         elif controller=="MusicController":
-                            if command=='PlayFavorite':
-                                player.playFavorite(payload['favorite'])
-                            elif command=='Play':
-                                player.play()
-                            elif command=='Pause':
-                                player.pause()
-                            elif command=='Stop':
-                                player.stop()
-                            elif command=='Skip':
-                                player.next()
-                            elif command=='Previous':
-                                player.previous()
+                            alexa_to_sonos={"Skip":"Next"}
+                            if command in alexa_to_sonos:
+                                command=alexa_to_sonos[command]
+                            
+                            if command in actions:
+                                if command=='PlayFavorite':
+                                    player.playFavorite(payload['favorite'])
+                                elif command=='Play':
+                                    player.play()
+                                elif command=='Pause':
+                                    player.pause()
+                                elif command=='Stop':
+                                    player.stop()
+                                elif command=='Next':
+                                    player.next()
+                                elif command=='Previous':
+                                    player.previous()
+                            else:
+                                self.log.warn('Requested command not available for %s: %s not in %s' % (coord, command, actions))
+                                response=await self.dataset.generateResponse(endpointId, correlationToken)
+                                return response
                                 
                         elif controller=="InputController":
                             if command=='SelectInput':
+                                self.log.info('Changing input for %s: %s' % (player.uid, payload['input']))
                                 if payload['input']=='':
                                     player.unjoin()
                                 else:
                                     for otherplayer in self.players:
-                                        if otherplayer.player_name==payload['input']:
+                                        if otherplayer.uid==payload['input'].split(':')[2]:
                                             player.join(otherplayer)
                    
                         #await self.dataset.ingest({"player": { spinfo["uid"]: { "speaker": spinfo, "name":player.player_name, "ip_address":player.ip_address }}})
                         response=await self.dataset.generateResponse(endpointId, correlationToken)
                         return response
+
+                self.log.info('Did not find player %s' % coord)
+                return {}
             except soco.exceptions.SoCoSlaveException:
                 self.log.error('Error from Soco while trying to issue command to a non-coordinator %s %s', (endpointId, command))
             except soco.exceptions.SoCoUPnPException:
-                self.log.error('Error from Soco while trying to issue command', exc_info=True)
+                self.log.error('Error from Soco while trying to issue command %s against possible commands: %s' % (command, actions), exc_info=True)
                 self.log.error("It is likely that we have now lost connection, subscriptions are dead, and the adapter needs to be restarted")
                 self.connect_needed=True
                 return None
@@ -455,7 +463,7 @@ class sonos(sofabase):
                     detail=itempath.split("/",3)[3]
                 except:
                     detail=""
-                #self.log.info('Checking object path: %s %s' % (itempath, detail))
+                self.log.info('Checking object path: %s %s' % (itempath, detail))
 
                 controllerlist={}
                 if "speaker" in nativeObject:
@@ -463,7 +471,9 @@ class sonos(sofabase):
                     if detail in ["ZoneGroupTopology/zone_player_uui_ds_in_group", "ZoneGroupTopology/zone_group_name", "ZoneGroupTopology/zone_group_id", "DeviceProperties/is_idle"]:
                         controllerlist=self.addControllerProps(controllerlist, "InputController", "input")
                         controllerlist=self.addControllerProps(controllerlist, "MusicController", "linked")
-                    if detail.startswith("ZoneGroupTopology/zone_group_state/ZoneGroups"):
+
+                    if detail.startswith("ZoneGroupTopology/zone_group_state/ZoneGroupState/ZoneGroups"):
+                    #if detail.startswith("ZoneGroupTopology/zone_group_state/ZoneGroups"):
                         controllerlist=self.addControllerProps(controllerlist, "InputController", "input")
                         controllerlist=self.addControllerProps(controllerlist, "MusicController", "linked")
                     if detail=="AVTransport/current_track_meta_data": 
@@ -513,7 +523,7 @@ class sonos(sofabase):
                 if 'zone_group_state' not in nativeObj['ZoneGroupTopology']:
                     self.log.debug('getCoordinator: Player %s/%s has no zone_group_state - returning self' % (nativeObj['name'], nativeObj['speaker']['uid']))
                     return nativeObj
-                for group in nativeObj['ZoneGroupTopology']['zone_group_state']['ZoneGroups']['ZoneGroup']:
+                for group in nativeObj['ZoneGroupTopology']['zone_group_state']['ZoneGroupState']['ZoneGroups']['ZoneGroup']:
                     if group['@Coordinator']==nativeObj['speaker']['uid']:
                         self.log.debug('getCoordinator: Player %s/%s is a coordinator for %s - returning self' % (nativeObj['name'], nativeObj['speaker']['uid'], group['@ID']))
                         return nativeObj
@@ -569,14 +579,17 @@ class sonos(sofabase):
                     # Sonos doesn't always populate the zone_group_name field, even when a player is grouped.  It's probably just a Sonos
                     # thing, but it might be a Soco thing.  Anyway, here's Wonderwall.
                     #if nativeObj['ZoneGroupTopology']['zone_group_name']==None:
-                    return coordinator['name']
+                  
+                    return "sonos:player:%s" % coordinator['speaker']['uid']
+                    #return coordinator['name']
 
                     # Sometimes it's right tho   
                     # But we're still not using it as it's kinda arbitrary
                     #return nativeObj['ZoneGroupTopology']['zone_group_name']
                 except:
                     self.log.error('Error checking input status', exc_info=True)
-                    return nativeObj['name']
+                    return "sonos:player:%s" % nativeObj['speaker']['id']
+                    #return nativeObj['name']
                     
             elif controllerProp=='artist':
                 
@@ -620,7 +633,7 @@ class sonos(sofabase):
                     
             elif controllerProp=='linked':
                 try:
-                    return list(self.getLinkedPlayers(nativeObj).keys())
+                    return self.getLinkedPlayers(nativeObj)
                 except:
                     self.log.debug('Error getting linked players')
                     return []

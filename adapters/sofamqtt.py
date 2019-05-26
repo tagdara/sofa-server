@@ -16,6 +16,7 @@ import uuid
 import functools
 import devices
 import gmqtt
+import os
 
 from gmqtt import Client as MQTTClient
 
@@ -30,7 +31,8 @@ class sofaMQTT():
             self.log=log
         else:
             self.log = logging.getLogger('sofamqtt')
-        self.client = MQTTClient('sofa-%s' % adaptername)
+
+        self.client = MQTTClient('sofa-%s-%s' % (adaptername,os.getpid()))
         self.dataset=dataset
         self.adaptername=adaptername
         self.restPort=restPort
@@ -53,6 +55,7 @@ class sofaMQTT():
         try:
             self.client.on_message = self.on_message
             self.client.on_connect = self.on_connect
+            self.client.on_disconnect = self.on_disconnect
             self.log.info('.. mqtt connecting: %s' % self.dataset.baseConfig['mqttBroker'] )
             await self.client.connect(self.dataset.baseConfig['mqttBroker'], 1883, version=gmqtt.constants.MQTTv311)
         except:
@@ -61,15 +64,15 @@ class sofaMQTT():
             self.dataset.mqtt['connected']=False
             return False
         
-        backlogresult=await self.sendBacklog()
+        backlogresult=self.sendBacklog()
      
      
-    async def sendBacklog(self):
+    def sendBacklog(self):
         try:
             if self.connected:
                 for item in self.backlog:
                     self.log.info('Pushing from backlog: %s' % item)
-                    await self.notify(item['topic'], item['message'])
+                    self.notify(item['topic'], item['message'])
                 return True
             else:
                 return False
@@ -82,8 +85,19 @@ class sofaMQTT():
         self.log.info('+. mqtt server connected %s' % self.dataset.baseConfig['mqttBroker'] )
         self.connected=True
         self.dataset.mqtt['connected']=True
+        self.topicSubscribe()
+        self.subscribeAdapterTopics()
+        backlogresult=self.sendBacklog()
 
-
+    def on_disconnect(self, client, packet, exc=None):
+        try:
+            if self.client._reconnect:
+                self.log.info('-- mqtt server disconnected %s.  Will retry to connect ' % self.dataset.baseConfig['mqttBroker'])
+            else:
+                self.log.info('-- mqtt server disconnected %s.  Will not retry to connect' % self.dataset.baseConfig['mqttBroker'] )
+        except:
+            self.log.error('Error server disconnected from client: %s' % client, exc_info=True)
+        
     def on_message(self, client, topic, payload, qos, properties):
         try:
             try:
@@ -119,7 +133,7 @@ class sofaMQTT():
         except: 
             self.log.error('.! Error disconnecting from MQTT', exc_info=True)
 
-    async def topicSubscribe(self):
+    def topicSubscribe(self):
     
         topics=['sofa','sofa/updates','sofa/changes']
 
@@ -128,13 +142,13 @@ class sofaMQTT():
                 self.client.subscribe(topic, qos=1)
 
             self.log.info(".. mqtt subscribed topics: %s" % topics)
-            await self.announceRest('sofa')
-            await self.notify('sofa','{"op":"discover"}')
+            self.announceRest('sofa')
+            self.notify('sofa','{"op":"discover"}')
         except ClientException as ce:
             self.log.error("!! mqtt client exception: %s" % ce)
 
 
-    async def subscribeAdapterTopics(self):
+    def subscribeAdapterTopics(self):
     
         try:
             if hasattr(self.adapter, "adapterTopics"):
@@ -148,7 +162,7 @@ class sofaMQTT():
             self.log.error("!! mqtt client adapter topic exception: %s" % ce)
     
     
-    async def notify(self, topic, message):
+    def notify(self, topic, message):
         
         try:
             self.log.debug(">> mqtt/%s %s" % (topic, message))
@@ -177,11 +191,11 @@ class sofaMQTT():
             self.log.error('!! Error sending sofa/changes', exc_info=True)
                 
 
-    async def announceRest(self, topic):
+    def announceRest(self, topic):
             
         try:
             discoveryResponse={"op":"announce", "adapter":self.adaptername, "address":self.restAddress, "port":self.restPort, "startup":self.dataset.startupTime}
-            await self.notify(topic,json.dumps(discoveryResponse, default=self.jsonDateHandler))
+            self.notify(topic,json.dumps(discoveryResponse, default=self.jsonDateHandler))
         except:
             self.log.error('!! Error processing MQTT Message', exc_info=True)
 
@@ -190,7 +204,7 @@ class sofaMQTT():
         try:
             self.log.info('.. sending discovery request on MQTT Topic %s' % topic)
             discoveryResponse={"op":"discover", "adapter":self.adaptername, "address":self.restAddress, "port":self.restPort}
-            await self.notify(topic,json.dumps(discoveryResponse))
+            self.notify(topic,json.dumps(discoveryResponse))
         except:
             self.log.error('!! Error processing MQTT Message', exc_info=True)
             
@@ -198,7 +212,7 @@ class sofaMQTT():
     async def requestReply(self, request, correlationToken, timeout=2, topic='sofa'):
         try:
             self.pendingRequests.append(correlationToken)
-            await self.notify(topic,request)
+            self.notify(topic,request)
             count=0
             while correlationToken not in self.pendingResponses and count<30:
                 #self.log.info('Waiting for update...topic:%s -  %s %s' % (topic, correlationToken, self.pendingResponses))
@@ -225,8 +239,8 @@ class sofaMQTT():
   
             if 'op' in message:
                 if message['op']=='discover':
-                    self.log.info('Adapter requesting discovery')
-                    await self.announceRest(topic)
+                    #self.log.info('Adapter requesting discovery')
+                    self.announceRest(topic)
                 elif message['op']=='announce':
                     #self.log.info('Adapter Announcement: %s' % message)
                     await self.dataset.register({message['adapter'] : { 'startup': message['startup'], 'address':message['address'], 'port':message['port'], "url": "http://%s:%s" % (message['address'],message['port'])}})
@@ -244,21 +258,16 @@ class sofaMQTT():
 
                 elif message['event']['header']['name']=='DoorbellPress':
                     if message['event']['endpoint']['endpointId'].split(":")[0]!=self.adaptername:
-                        self.log.info('%s Event: %s' % (message['event']['header']['name'], message['event']['endpoint']))
                         if hasattr(self.adapter, "handleAlexaEvent"):
                             await self.adapter.handleAlexaEvent(message)
             
                 elif message['event']['header']['name']=='StateReport':
                     if message['event']['endpoint']['endpointId'].split(":")[0]!=self.adaptername:
-                    #if message['event']['endpoint']['cookie']['adapter']!=self.adaptername:
-                        self.log.debug('State Report: %s' % message['event']['endpoint'])
                         if hasattr(self.adapter, "handleStateReport"):
                             await self.adapter.handleStateReport(message)
 
                 elif message['event']['header']['name']=='ChangeReport':
                     if message['event']['endpoint']['endpointId'].split(":")[0]!=self.adaptername:
-                    #if message['event']['endpoint']['cookie']['adapter']!=self.adaptername:
-                        self.log.debug('Change Report: %s' % message['event']['endpoint'])
                         if hasattr(self.adapter, "handleChangeReport"):
                             await self.adapter.handleChangeReport(message)
                 

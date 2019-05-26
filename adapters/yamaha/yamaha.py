@@ -18,6 +18,7 @@ import json
 import definitions
 import asyncio
 import aiohttp
+import struct
 import xml.etree.ElementTree as et
 from collections import defaultdict
 import socket
@@ -26,61 +27,75 @@ import socket
 class BroadcastProtocol:
 
     def __init__(self, loop, log, keyphrases=[], returnmessage=None):
-        self.log=log
-        self.loop = loop
-        self.keyphrases=keyphrases
-        self.returnMessage=returnmessage
+        try:
+            self.log=log
+            self.loop = loop
+            self.keyphrases=keyphrases
+            self.returnMessage=returnmessage
+        except:
+            self.log.error('Error initializing SSDP')
 
 
     def connection_made(self, transport):
-        self.transport = transport
-        sock = transport.get_extra_info("socket")
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        self.log.info('.. ssdp now listening')
+        try:
+            self.transport = transport
+            sock = transport.get_extra_info("socket")
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            self.log.info('.. ssdp now listening: %s' % sock)
+        except:
+            self.log.error('Error initializing SSDP on connection made')
 
 
     def datagram_received(self, data, addr):
-        #self.log.info('data received: %s %s' % (data, addr))
-        data=data.decode()
-        for phrase in self.keyphrases:
-            if data.find(phrase)>-1 and data.find("<?xml")>-1:
-                event=self.etree_to_dict(et.fromstring(data[data.find("<?xml"):]))
-                self.log.info('>> ssdp %s' % event)
-                self.processUPNPevent(event)
-                #return str(data)
+        try:
+            data=data.decode()
+            for phrase in self.keyphrases:
+                if data.find(phrase)>-1 and data.find("<?xml")>-1:
+                    event=self.etree_to_dict(et.fromstring(data[data.find("<?xml"):]))
+                    self.log.info('>> ssdp %s' % event)
+                    self.processUPNPevent(event)
+                    #return str(data)
+        except:
+            self.log.error('Error during datagram_received')
 
 
     def broadcast(self, data):
-        self.log.info('>> ssdp/broadcast %s' % data)
-        self.transport.sendto(data.encode(), ('192.168.0.255', 9000))
-
+        try:
+            self.log.info('>> ssdp/broadcast %s' % data)
+            self.transport.sendto(data.encode(), ('192.168.0.255', 9000))
+        except:
+            self.log.error('Error during broadcast')
 
     def etree_to_dict(self, t):
         
-        d = {t.tag: {} if t.attrib else None}
-        children = list(t)
-        if children:
-            dd = defaultdict(list)
-            for dc in map(self.etree_to_dict, children):
-                for k, v in dc.items():
-                    dd[k].append(v)
-            d = {t.tag: {k: v[0] if len(v) == 1 else v for k, v in dd.items()}}
-        if t.attrib:
-            d[t.tag].update(('@' + k, v) for k, v in t.attrib.items())
-        if t.text:
-            text = t.text.strip()
-            if children or t.attrib:
-                if text:
-                    d[t.tag]['#text'] = text
-            else:
-                d[t.tag] = text
-        return d
+        try:
+            d = {t.tag: {} if t.attrib else None}
+            children = list(t)
+            if children:
+                dd = defaultdict(list)
+                for dc in map(self.etree_to_dict, children):
+                    for k, v in dc.items():
+                        dd[k].append(v)
+                d = {t.tag: {k: v[0] if len(v) == 1 else v for k, v in dd.items()}}
+            if t.attrib:
+                d[t.tag].update(('@' + k, v) for k, v in t.attrib.items())
+            if t.text:
+                text = t.text.strip()
+                if children or t.attrib:
+                    if text:
+                        d[t.tag]['#text'] = text
+                else:
+                    d[t.tag] = text
+            return d
+        except:
+            self.log.error('Error converting etree to dict')
 
 
     def processUPNPevent(self, event):   
 
         try:
+            #self.log.info('Event: %s' % event)
             asyncio.ensure_future(self.returnMessage(event))
 
         except:
@@ -147,7 +162,7 @@ class yamahaXML():
             url = 'http://%s:%s/YamahaRemoteControl/ctrl' % (self.dataset.config['address'], self.dataset.config['port'])
             #self.log.info('Command: %s %s' % (url, data))
             headers = { "Content-type": "text/xml" }
-            self.log.debug('Sending: %s %s %s' % (url, data, headers))
+            self.log.info('Sending: %s %s %s' % (url, data, headers))
             async with aiohttp.ClientSession() as client:
                 response=await client.post(url, data=data, headers=headers)
                 xml=await response.read()
@@ -233,7 +248,16 @@ class yamaha(sofabase):
             except:
                 self.log.error('Error updating everything', exc_info=True)
 
-            
+        def make_ssdp_sock(self):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(('', 1900))
+            group = socket.inet_aton('239.255.255.250')
+            mreq = struct.pack('4sL', group, socket.INADDR_ANY)
+            sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)    
+            return sock            
             
         async def start(self):
 
@@ -246,7 +270,8 @@ class yamaha(sofabase):
                 self.log.error('error with update',exc_info=True)
 
             try:
-                self.ssdp = self.loop.create_datagram_endpoint(lambda: BroadcastProtocol(self.loop, self.log, self.ssdpkeywords, returnmessage=self.processUPNP), local_addr=("239.255.255.250", 1900))
+                sock=self.make_ssdp_sock()
+                self.ssdp = self.loop.create_datagram_endpoint(lambda: BroadcastProtocol(self.loop, self.log, self.ssdpkeywords, returnmessage=self.processUPNP), sock=sock)
                 await self.ssdp
             except:
                 self.log.error('error with ssdp',exc_info=True)

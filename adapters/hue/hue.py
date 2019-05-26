@@ -18,6 +18,7 @@ import json
 from huecolor import ColorHelper, colorConverter
 from ahue import Bridge, QhueException, create_new_username
 import asyncio
+import aiohttp
 
 class hue(sofabase):
     
@@ -47,26 +48,33 @@ class hue(sofabase):
                 try:
                     #self.log.info("Polling bridge data")
                     await self.getHueBridgeData('all')
-                    await asyncio.sleep(self.polltime)
                 except:
                     self.log.error('Error fetching Hue Bridge Data', exc_info=True)
-
+                
+                await asyncio.sleep(self.polltime)
+                    
 
         async def getHueBridgeData(self, category='all', device=None):
             
-            #self.log.info('Polling %s' % category)
-            changes=[]
-            if category=="all":
-                alldata=await self.getHueAll()
-                changes=await self.dataset.ingest({'lights':alldata['lights'], 'sensors':alldata['sensors'], 'groups':alldata['groups']})
-            elif category=="lights":
-                changes=await self.dataset.ingest({'lights': await self.getHueLights(device)})
-            elif category=="groups":
-                await self.dataset.ingest({'groups': await self.getHueGroups()})
-            elif category=="sensors":
-                await self.dataset.ingest({'sensors':await self.getHueSensors()})
-                
-            return changes
+            try:
+                #self.log.info('Polling %s' % category)
+                changes=[]
+                if category=="all":
+                    alldata=await self.getHueAll()
+                    if alldata:
+                        changes=await self.dataset.ingest({'lights':alldata['lights'], 'sensors':alldata['sensors'], 'groups':alldata['groups']})
+                elif category=="lights":
+                    changes=await self.dataset.ingest({'lights': await self.getHueLights(device)})
+                elif category=="groups":
+                    await self.dataset.ingest({'groups': await self.getHueGroups()})
+                elif category=="sensors":
+                    await self.dataset.ingest({'sensors':await self.getHueSensors()})
+                    
+                return changes
+
+            except:
+                self.log.error('Error fetching Hue Bridge Data', exc_info=True)
+                return {}
 
 
         def percentage(self, percent, whole):
@@ -107,6 +115,13 @@ class hue(sofabase):
         async def getHueAll(self):
             try:
                 return await self.bridge()
+            except aiohttp.client_exceptions.ClientConnectorError:
+                self.log.error("!! Error connecting to hue bridge.")
+                return {}
+            except aiohttp.client_exceptions.ServerDisconnectedError:
+                self.log.error("!! Error - hue bridge disconnected while retrieving data.")
+                return {}
+
             except:
                 self.log.error("Error getting hue data.",exc_info=True)
                 return {}
@@ -195,12 +210,12 @@ class hue(sofabase):
 
 
         # Adapter Overlays that will be called from dataset
-        def addSmartDevice(self, path):
+        async def addSmartDevice(self, path):
             
             try:
                 if path.split("/")[1]=="lights":
-                    self.log.info('device path: %s' % path)
-                    return self.addSmartLight(path.split("/")[2])
+                    #self.log.info('device path: %s' % path)
+                    return await self.addSmartLight(path.split("/")[2])
 
             except:
                 self.log.error('Error defining smart device', exc_info=True)
@@ -280,10 +295,8 @@ class hue(sofabase):
                             nativeCommand['on']=False
                 elif controller=="ColorController":
                     if command=="SetColor":
-                        self.log.info('Setcolor with HSB: %s' % payload)
                         if type(payload['color']) is not dict:
                             payloadColor=json.loads(payload['color'])
-                            self.log.info('Fixed payload color: %s' % payloadColor)
                         else:
                             payloadColor=payload['color']
                         nativeCommand["bri"]=int(float(payloadColor['brightness'])*255)
@@ -291,8 +304,6 @@ class hue(sofabase):
                         nativeCommand["hue"]=int((float(payloadColor['hue'])/360)*65536)
                         nativeCommand["transitiontime"]=1
                         nativeCommand['on']=True
-
-                        #nativeCommand['bri']=self.percentage(int(payload['brightness']), 255)
 
                 elif controller=="ColorTemperatureController":
                     if command=="SetColorTemperature":
@@ -302,6 +313,12 @@ class hue(sofabase):
                
                 if nativeCommand:
                     await self.setHueLight(device, nativeCommand)
+                    
+                    # this was added to improve UI response speed, but doubles the number of requests to the bridge and
+                    # needs further load testing under a heavy stream of commands
+                    await asyncio.sleep(1)
+                    await self.dataset.ingest({'lights': await self.getHueLights(device)})
+
                     response=await self.dataset.generateResponse(endpointId, correlationToken)
                     return response
                     

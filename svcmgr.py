@@ -89,5 +89,5 @@ class sofa_service_manager():
         
 
 if __name__ == '__main__':
-    svcmgr=sofa_service_manager('amcrest')
+    svcmgr=sofa_service_manager('homekitcamera')
     svcmgr.start()

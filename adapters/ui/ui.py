@@ -23,6 +23,8 @@ from aiohttp_security import check_permission, \
     setup as setup_security, SessionIdentityPolicy
 from aiohttp_security.abc import AbstractAuthorizationPolicy
 
+from aiohttp_sse import sse_response
+
 #import aiohttp_jinja2
 #import jinja2
 
@@ -68,8 +70,6 @@ class sofaWebUI():
         self.cardcache={}
         self.fieldcache={}
         self.dataset=dataset
-        self.wsclients=[]
-        self.wsclientInfo=[]
         self.allowCardCaching=False
         self.notify=notify
         self.discover=discover
@@ -77,6 +77,8 @@ class sofaWebUI():
         self.stateReportCache={}
         self.layout={}
         self.adapterTimeout=2
+        self.sse_updates=[]
+        self.sse_last_update=datetime.datetime.now(datetime.timezone.utc)
 
     async def initialize(self):
 
@@ -119,10 +121,12 @@ class sofaWebUI():
             self.serverApp.router.add_get('/displayCategory/{category:.+}', self.displayCategoryHandler)
             self.serverApp.router.add_get('/image/{item:.+}', self.imageHandler)
             self.serverApp.router.add_get('/thumbnail/{item:.+}', self.imageHandler)
-            self.serverApp.router.add_get('/ws', self.websocket_handler)
-            self.serverApp.router.add_get('/ws/', self.websocket_handler)    
             self.serverApp.router.add_get('/refresh', self.refresh_handler)  
             self.serverApp.router.add_post('/data/{item:.+}', self.dataPostHandler)
+            
+            self.serverApp.router.add_get('/sse', self.sse_handler)
+            self.serverApp.router.add_get('/lastupdate', self.sse_last_update_handler)
+            
             self.serverApp.router.add_static('/log/', path=self.dataset.baseConfig['logDirectory'])
             self.serverApp.router.add_static('/bundle', path=self.config['client_bundle_directory'])
             self.serverApp.router.add_static('/', path=self.config['client_static_directory'])
@@ -380,7 +384,7 @@ class sofaWebUI():
             return None
 
         except concurrent.futures._base.CancelledError:
-            self.log.error('Error getting image %s (cancelled)' % item)
+            self.log.warn('.. image request cancelled for %s' % item)
         except:
             self.log.error('Error getting image %s' % item, exc_info=True)
             return None
@@ -436,10 +440,10 @@ class sofaWebUI():
 
         except aiohttp.client_exceptions.ClientConnectorError:
             self.log.error('Connection refused for adapter %s.  Adapter is likely stopped' % source)
-
         except ConnectionRefusedError:
             self.log.error('Connection refused for adapter %s.  Adapter is likely stopped' % source)
-            
+        except concurrent.futures._base.TimeoutError:
+            self.log.error('Error getting list data %s (timed out)' % item)
         except concurrent.futures._base.CancelledError:
             self.log.error('Error getting list data %s (cancelled)' % item)
         except:
@@ -461,7 +465,7 @@ class sofaWebUI():
                 if source in self.dataset.adapters:
                     result='#'
                     url = 'http://%s:%s/list/%s' % (self.dataset.adapters[source]['address'], self.dataset.adapters[source]['port'], item.split('/',1)[1] )
-                    self.log.info('Posting Save Data to: %s' % url)
+                    self.log.info('>> Posting list request to %s %s' % (source, item.split('/',1)[1] ))
                     async with aiohttp.ClientSession() as client:
                         async with client.post(url, data=body) as response:
                             result=await response.read()
@@ -513,7 +517,6 @@ class sofaWebUI():
                 if source in self.dataset.adapters:
                     result='#'
                     url = 'http://%s:%s/save/%s' % (self.dataset.adapters[source]['address'], self.dataset.adapters[source]['port'], item.split('/',1)[1] )
-                    self.log.info('Posting Save Data to: %s' % url)
                     async with aiohttp.ClientSession() as client:
                         async with client.post(url, data=body) as response:
                             result=await response.read()
@@ -626,21 +629,15 @@ class sofaWebUI():
         # the full dashboard layout is not used.
 
         try:
-            self.log.info('<- %s devicelistwithdata request' % (request.remote))
-            #devices=[]
             devices=list(self.dataset.devices.values())
-            #for dev in self.dataset.devices:
-            #    devices.append(self.dataset.devices[dev])
-                
-            getByAdapter={}                
+
+            getByAdapter={} 
             for dev in self.dataset.devices:
-                result=self.adapter.getDeviceByfriendlyName(dev)
-                adapter=result['endpointId'].split(':')[0]
+                adapter=dev.split(':')[0]
                 if adapter not in getByAdapter:
                     getByAdapter[adapter]=[]
-                getByAdapter[adapter].append(result['friendlyName'])
-                #alldevs.append(result['endpointId'])
-
+                getByAdapter[adapter].append(dev)
+                
             allstates=await asyncio.gather(*[self.dataset.requestReportStates(adapter, getByAdapter[adapter]) for adapter in getByAdapter ])
             
             states={}
@@ -648,7 +645,7 @@ class sofaWebUI():
                 for device in statelist:
                     states[device]=statelist[device]
                     
-            return web.Response(text=json.dumps({"devices":devices, "state": states}, default=self.date_handler))
+            return web.Response(text=json.dumps({"event": { "header": { "name": "Multistate"}}, "devices":devices, "state": states}, default=self.date_handler))
         except:
             self.log.error('Error transferring list of devices: %s' % self.dataset.devices.keys(),exc_info=True)
 
@@ -657,35 +654,26 @@ class sofaWebUI():
             
         if request.body_exists:
             rqid=str(uuid.uuid1())
-            #self.log.info('Data Post Handler started: %s' % rqid)
             try:
                 outputData={}
                 body=await request.read()
                 devices=json.loads(body.decode('utf-8'))
-                #self.log.info('Data Post Handler body read: %s' % body)
                 getByAdapter={}
                 alldevs=[]
                 for dev in devices:
                     result=self.adapter.getDeviceByfriendlyName(dev)
-                    #result=self.dataset.getObjectFromPath("/%s" % dev, trynames=True)
-                    #self.log.info('result: %s' % result)
-                    adapter=result['endpointId'].split(':')[0]
+                    adapter=dev.split(':')[0]
                     if adapter not in getByAdapter:
                         getByAdapter[adapter]=[]
-                    getByAdapter[adapter].append(result['friendlyName'])
-                    alldevs.append(result['endpointId'])
+                    getByAdapter[adapter].append(dev)
+                    alldevs.append(dev)
 
                 allstates=await asyncio.gather(*[self.dataset.requestReportStates(adapter, getByAdapter[adapter]) for adapter in getByAdapter ])
-                    
-                #allstates = await asyncio.gather(*[self.dataset.requestReportState(dev) for dev in alldevs ])
-                #self.log.info('allstates: %s' % allstates)
+
                 outd={}
                 for statelist in allstates:
                     for device in statelist:
                         outd[device]=statelist[device]
-
-                #self.log.info('allstates: %s' % outd)
-                #self.log.info('by adapter: %s' % getByAdapter)
 
                 return web.Response(text=json.dumps(outd, default=self.date_handler))
             except:
@@ -698,18 +686,15 @@ class sofaWebUI():
             
         if request.body_exists:
             rqid=str(uuid.uuid1())
-            self.log.info('Data Post Handler started: %s' % rqid)
             try:
                 outputData={}
                 body=await request.read()
                 devices=json.loads(body.decode('utf-8'))
-                self.log.info('Data Post Handler body read: %s' % rqid)
                 for dev in devices:
                     result=await self.dataSender("%s/%s" % (request.match_info['item'], dev))
                     if request.query_string:
                         result=await self.queryStringAdjuster(request.query_string, result)
                     outputData[dev]=result
-                self.log.info('Data Post response assembled: %s' % rqid)
 
             except:
                 self.log.error('Error transferring command: %s' % body,exc_info=True)
@@ -745,66 +730,39 @@ class sofaWebUI():
             self.log.error('Error restarting adapter', exc_info=True)
             return web.Response(text="Error restarting adapter %s" % adapter)
 
+    async def sse_last_update_handler(self, request):
+      
+        return web.Response(text=json.dumps({"lastupdate":self.sse_last_update},default=self.date_handler))
 
-    async def websocket_handler(self, request):
 
-        # everything should be moved to the POST based API, and endpoints should not need to send commands via
-        # websocket.  The websocket is still needed for streaming updates from server to client.
-
+    async def sse_handler(self, request):
         try:
-            try:
-                peername=request.transport.get_extra_info('peername')
-            except:
-                peername=("(unknown)",0)
-                
-            self.log.info('++ %s/%s websocket connected' % peername)
-            
-            ws = web.WebSocketResponse()
-            self.wsclients.append(ws)
-            await ws.prepare(request)
-
-            async for msg in ws:
-                if msg.type == aiohttp.WSMsgType.TEXT:
-                    self.log.info('<- wsdata: %s' % msg.data)
-                    try:
-                        message=json.loads(msg.data)
-                        if 'directive' in message:
-                            await self.dataset.sendDirectiveToAdapter(message)
-
-                    except:
-                        self.log.error('!! Error decoding websocket message: %s' % msg.data, exc_info=True)
-                    if msg.data == 'close':
-                        await ws.close()
-                    #else:
-                    #    await ws.send_str("msg.data + '/answer')
-                elif msg.type == aiohttp.WSMsgType.ERROR:
-                    self.log.error('-! ws connection closed with exception: %s' % ws.exception())
-
-            self.log.info('-- %s/%s websocket closed' % peername)
-            return ws
+            client_sse_date=datetime.datetime.now(datetime.timezone.utc)
+            async with sse_response(request) as resp:
+                while True:
+                    if self.sse_last_update>client_sse_date:
+                        sendupdates=[]
+                        for update in reversed(self.sse_updates):
+                            if update['date']>client_sse_date:
+                                sendupdates.append(update['message'])
+                            else:
+                                break
+                        for update in reversed(sendupdates):
+                            #self.log.info('Sending SSE update: %s' % update )
+                            await resp.send(json.dumps(update))
+                        client_sse_date=self.sse_last_update
+                    if client_sse_date<datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=10):
+                        await resp.send(json.dumps({"event": {"header": {"name": "Heartbeat"}}, "heartbeat":self.sse_last_update, "lastupdate":self.sse_last_update },default=self.date_handler))
+                        client_sse_date=datetime.datetime.now(datetime.timezone.utc)
+                    await asyncio.sleep(.1)
+            return resp
         except concurrent.futures._base.CancelledError:
-            self.wsclients.remove(ws)
-            
-            try:
-                ws.close()
-            except:
-                self.log.error('-! Could not close websocket')
-            
-            self.log.info('-- Websocket cancelled: %s %s (this is a normal close for mobile safari)' % peername)
-            return ws
-            
+            self.log.info('Client cancelled SSE = Probably IOS client closing')
+            return resp
         except:
-            try:
-                ws.close()
-            except:
-                self.log.error('Could not close websocket')
-            self.log.error('Websocket error', exc_info=True)
-            try:
-                if self.wsclients.index(ws):
-                    del self.wsclients[self.wsclients.index(ws)]
-            except:
-                self.log.error('Error deleting busted websocket', exc_info=True)
-                
+            self.log.error('Error in SSE loop', exc_info=True)
+            return resp
+
 
     async def root_handler(self, request):
         try:
@@ -812,30 +770,22 @@ class sofaWebUI():
         except:
             return aiohttp.web.HTTPFound('/login')
 
-
-    async def wsBroadcast(self, message):
+    def add_sse_update(self, message):
         
         try:
-            liveclients=[]
-            openSocketList=[]
-            for i, wsclient in enumerate(self.wsclients):
-                try:
-                    if not wsclient.closed:
-                        await wsclient.send_str(message)
-                        openSocketList.append(wsclient)
-                        liveclients.append(wsclient._req.transport.get_extra_info('peername'))
-                except:
-                    self.log.error('Something was wrong with websocket %s (%s), and it will be removed.' % (i, wsclient.__dict__))
-                    
-            # This purges the closed websockets
-            if self.wsclients!=openSocketList:
-                deadlist = list(set(self.wsclientInfo) - set(liveclients))
-                self.log.info('-> (wsbc) live: %s / dead: %s)' % (liveclients, deadlist))
-                self.wsclientInfo=liveclients
-            self.wsclients=openSocketList
+            clearindex=0
+            for i,update in enumerate(self.sse_updates):
+                if update['date']<datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=120):
+                    clearindex=i+1
+                    break
+            #self.log.info('updates that have aged out: %s' % clearindex)
+            if clearindex>0:
+                del self.sse_updates[:clearindex]
+            self.sse_updates.append({'date': datetime.datetime.now(datetime.timezone.utc), 'message':message})
+            self.sse_last_update=datetime.datetime.now(datetime.timezone.utc)
         except:
-            self.log.error('Error broadcasting to websockets: %s' % message, exc_info=True)
- 
+            self.log.error('Error adding update to SSE', exc_info=True)
+
 
 class ui(sofabase):
 
@@ -861,8 +811,7 @@ class ui(sofabase):
         
             try:
                 await super().handleStateReport(message)
-                # Just send the state report for now so that I can finish react testing
-                await self.uiServer.wsBroadcast(json.dumps(message))
+                self.uiServer.add_sse_update(message)
 
             except:
                 self.log.error('Error updating from state report: %s' % message, exc_info=True)
@@ -874,11 +823,10 @@ class ui(sofabase):
                 if message:
                     try:
                         if 'log_change_reports' in self.dataset.config:
-                            self.log.info('-> ws %s %s' % (message['event']['header']['name'],message))
-                        
-                        await self.uiServer.wsBroadcast(json.dumps(message))
+                            self.log.info('-> SSE %s %s' % (message['event']['header']['name'],message))
+                        self.uiServer.add_sse_update(message)
                     except:
-                        self.log.warn('!. bad or empty ChangeReport message not sent to ws: %s' % message, exc_info=True)
+                        self.log.warn('!. bad or empty ChangeReport message not sent to SSE: %s' % message, exc_info=True)
 
             except:
                 self.log.error('Error updating from change report', exc_info=True)
