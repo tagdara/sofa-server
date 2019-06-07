@@ -669,27 +669,32 @@ class SurroundControllerInterface(smartInterface):
 
 class AreaControllerInterface(smartInterface):
     
-    def __init__(self, namespace="Sofa", children=[], shortcuts=[], SetChildren=None, SetShortcuts=None):
+    def __init__(self, namespace="Sofa", children=[], shortcuts=[], scene="", SetChildren=None, SetShortcuts=None, SetScene=None):
         self.controller="AreaController"
         self._namespace="Sofa"
         self.children=children
         self.shortcuts=shortcuts
+        self.scene=""
         self.SetChildren=SetChildren
         self.SetShortcuts=SetShortcuts
+        self.SetScene=SetScene
 
     @property            
     def directives(self):
-        return { "SetChildren": { "children": "list" }, "SetShortcuts": { "shortcuts": "list" }}
+        return { "SetChildren": { "children": "list" }, "SetShortcuts": { "shortcuts": "list" }, "SetScene": {"scene":"string"}}
         
     @property          
     def props(self):
-        return { "children": { "value" : "list"}, "shortcuts": {"value": "list"}}
+        return { "children": { "value" : "list"}, "shortcuts": {"value": "list"}, "scene" : {"value":"string"}}
 
     def updateChildren(self, value):
         self.children=value
 
     def updateShortcuts(self, value):
         self.shortcuts=value
+        
+    def updateScene(self, value):
+        self.scene=value
 
 
         
@@ -1419,7 +1424,7 @@ class simpleArea(smartObject):
 
     def __init__(self, path, name, description="", manufacturer="sofa", log=None, native=None):
         self._friendlyName=name
-        self._displayCategories=["LOGIC"]
+        self._displayCategories=["AREA"]
         self._description=description
         self._manufacturer=manufacturer
         self.AreaController=AreaControllerInterface()

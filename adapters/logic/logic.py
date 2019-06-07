@@ -384,18 +384,19 @@ class logicServer(sofabase):
 
                 self.capturedDevices={}
                 await self.buildLogicCommand()
+                
+                for scene in self.scenes:
+                    await self.dataset.ingest({"scene": { scene : self.scenes[scene] }})
 
                 for area in self.areas:
                     await self.dataset.ingest({"area": { area : self.areas[area] }})
-                
+                    
                 for auto in self.automations:
                     await self.dataset.ingest({"activity": { auto : self.automations[auto] }})
 
                 for mode in self.modes:
                     await self.dataset.ingest({"mode": { mode : self.modes[mode] }})
                     
-                for scene in self.scenes:
-                    await self.dataset.ingest({"scene": { scene : self.scenes[scene] }})
                 
                 await self.pollSchedule()
             
@@ -529,6 +530,47 @@ class logicServer(sofabase):
             except:
                 self.log.error('Error executing Alexa Command: %s %s %s %s' % (command, controller, endpointId, payload), exc_info=True)
                 return {}
+
+        async def captureSceneFromArea(self, areaid, scenename):
+            
+            try:
+                capdevs={}
+                areaprops=await self.dataset.requestReportState(areaid)
+                self.log.info('Areaprops: %s %s' % (areaid, areaprops))
+                for prop in areaprops['context']['properties']:
+                    if prop['name']=='children':
+                        self.log.info('Prop: %s' % prop['value'])
+                        children=prop['value']
+                        for dev in children:
+                            device=self.getDeviceByEndpointId(dev)
+                            if 'LIGHT' in device['displayCategories']:
+                                cdev={}
+                                self.log.info('Will capture: %s %s' % (device['friendlyName'], device))
+                                devprops=await self.dataset.requestReportState(device['endpointId'])
+                                for prop in devprops['context']['properties']:
+                                    if prop['name']=='powerState':
+                                        cdev['powerState']=prop['value']
+                                    elif prop['name']=='brightness':
+                                        cdev['brightness']=prop['value']
+                                    elif prop['name']=='color':
+                                        cdev['hue']=prop['value']['hue']
+                                        cdev['saturation']=prop['value']['saturation']
+                                if cdev:
+                                    capdevs[device['friendlyName']]=cdev
+                
+                self.log.info('Scene will be captured: %s' % capdevs)
+                if capdevs:
+                    self.saveScene(scenename, capdevs)
+                    areaname=areaid.split(':')[2]
+                    if 'logic:scene:%s' % scenename not in self.areas[areaname]['children']:
+                        self.areas[areaname]['children'].append('logic:scene:%s' % scenename)
+                        self.saveArea(areaname, self.areas[areaname])
+                                        
+                            
+            except:
+                self.log.error('Error snapshotting device state', exc_info=True)
+
+
 
         async def captureDeviceState(self, endpointId, deviceName):
             
@@ -741,7 +783,11 @@ class logicServer(sofabase):
                     except:
                         self.log.error('Error gettind endpointId for %s' % light, exc_info=True)
                         continue
-                    if int(scene[light]['brightness'])==0:
+                    if 'powerState' in scene[light]:
+                        if scene[light]['powerState']=='OFF':
+                            acts.append({'command':'TurnOff', 'controller':'PowerController', 'endpointId':epid, 'value': None})
+
+                    if int(scene[light]['brightness'])==0 and 'powerState' not in scene[light]:
                         acts.append({'command':'TurnOff', 'controller':'PowerController', 'endpointId':epid, 'value': None})
                     else:
                         if 'hue' in scene[light]:
@@ -812,6 +858,12 @@ class logicServer(sofabase):
             try:
                 device=endpointId.split(":")[2]
                 nativeCommand={}
+
+                if controller=="AreaController":
+                    if command=='Snapshot':
+                        self.log.info('Snapshotting Area as scene: %s %s' % (endpointId, payload))
+                        await self.captureSceneFromArea(endpointId,payload)
+                        return {}
                 
                 if controller=="PowerController":
                     if device in self.modes:
@@ -895,7 +947,7 @@ class logicServer(sofabase):
                     if detail=='time' or detail=='':
                         controllerlist["LogicController"]=["time"]
                 elif itempath.startswith('/area'):
-                    controllerlist["AreaController"]=["children","shortcuts"]
+                    controllerlist["AreaController"]=["children","shortcuts","scene"]
 
 
                 return controllerlist
@@ -913,6 +965,12 @@ class logicServer(sofabase):
                     return datetime.datetime.now().time()
                 if controllerProp=='children':
                     return nativeObj['children']
+                if controllerProp=='scene':
+                    if 'scene' in nativeObj:
+                        return nativeObj['scene']
+                    else:
+                        return ""
+
                 if controllerProp=='shortcuts':
                     if 'newshortcuts' in nativeObj:
                         return nativeObj['newshortcuts']
@@ -998,19 +1056,107 @@ class logicServer(sofabase):
                 return allacts
             except:
                 self.log.error('Error executing threaded event reactions', exc_info=True)
+
+
+        async def calculateAreaLevel(self, area):
+            
+            # This jumps through a lot of hoops right now because scenes are saved by friendlyname instead of 
+            # endpointid.  Changing the scenes.json format to use device ID's will simplify this greatly but probably requires
+            # changes to the region/area/scene portion of the client.
+            
+            try:
+                devstateCache={}
+                highscore=0
+                bestscene=""
+                for child in self.areas[area]['children']:
+                    if child.startswith('logic:scene:'):
+                        scenescore=0
+                        scenename=''
+                        #self.log.info('Looking for scene: %s = %s' % (child,self.getDeviceByEndpointId(child)))
+                        for device in self.dataset.localDevices:
+                            if self.dataset.localDevices[device].endpointId==child:
+                                scenename=self.dataset.localDevices[device].friendlyName
+                                #self.log.info('%s: %s' % (device,self.dataset.localDevices[device].friendlyName))
+
+
+
+                        #scene=self.getDeviceByEndpointId(child)
+                        # scenename=scene.friendlyName
+                        
+                        if not scenename:
+                            self.log.warn('Could not find scene: %s' % child)
+                            continue
+                        for light in self.scenes[scenename]:
+                            try:
+                                #self.log.info('xx3 %s: %s' % (light,self.getDeviceByfriendlyName(light)))
+                                lightid=self.getDeviceByfriendlyName(light)['endpointId']
+                                if lightid not in devstateCache:
+                                    devstate=await self.dataset.requestReportState(lightid)
+                                    devstateCache[lightid]=devstate['context']['properties']  
+                                devstate=devstateCache[lightid]
+                                devon=False
+                                devbri=0
+                                for prop in devstate:
+                                    if prop['name']=="powerState":
+                                        if prop['value']=='ON':
+                                            devon=True
+                                    if prop['name']=="brightness":
+                                        devbri=prop['value']
+                                if not devon:
+                                    devbri=0
+                                scenescore+=(50-abs(devbri-self.scenes[scenename][light]['brightness']))
+                            except:
+                                scenescore=0
+                                break
                             
+                        if scenescore>highscore:
+                            highscore=scenescore
+                            bestscene=child
+                        
+                return bestscene
+
+            except:
+                self.log.error('Error in virtual change handler: %s' % (area), exc_info=True)
+                return ""
+                
+
+        async def virtualAddDevice(self, deviceId, change):
+            
+            try:
+                for area in self.areas:
+                    if deviceId in self.areas[area]['children']:
+                        #self.log.info('Area %s' % (self.dataset.nativeDevices['area'][area]))
+                        bestscene=await self.calculateAreaLevel(area)
+                        if bestscene:
+                            if 'scene' not in self.dataset.nativeDevices['area'][area] or bestscene!=self.dataset.nativeDevices['area'][area]['scene']:
+                                self.log.info('Best scene for %s: %s' % (area, bestscene))
+                        changes=await self.dataset.ingest({ "area" : { area: {'scene': bestscene }}})
+            except:
+                self.log.error('Error in virtual add handler: %s %s' % (deviceId, change), exc_info=True)
+                
        
         async def virtualChangeHandler(self, deviceId, change):
             
             try:
+
+                
                 trigname="%s.%s.%s=%s" % (deviceId, change['namespace'].split('.')[1], change['name'], change['value'])
                 if trigname in self.eventTriggers:
                     self.log.info('!+ This is a trigger we are watching for: %s %s' % (trigname, change))
                     change['endpointId']=deviceId
                     self.loop.run_in_executor(self.logicpool, self.runEventsThread, self.eventTriggers[trigname], change, trigname, self.loop)
                     #await self.runEvents(self.eventTriggers[trigname], change, trigname)
+                
+                for area in self.areas:
+                    if deviceId in self.areas[area]['children']:
+                        bestscene=await self.calculateAreaLevel(area)
+                        if bestscene!=self.dataset.nativeDevices['area'][area]['scene']:
+                            self.log.info('Best scene for %s: %s' % (area, bestscene))
+
+                        changes=await self.dataset.ingest({ "area" : { area: {'scene': bestscene }}})
+
             except:
-                self.log.error('Error in virtual change handler: %s %s' % (deviceName, change), exc_info=True)
+                self.log.error('Error in virtual change handler: %s %s' % (deviceId, change), exc_info=True)
 
         async def virtualEventHandler(self, event, source, deviceId, message):
             

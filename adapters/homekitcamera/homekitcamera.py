@@ -187,7 +187,7 @@ class homekitcamera(sofabase):
                 index=0
                 asyncio.get_child_watcher()
                 for cam in self.dataset.config['cameras'].keys():
-                    self.drivers[cam] = AccessoryDriver(port=51830+index, persist_file='/opt/sofa-server/adapters/homekitcamera/%s-state.json' % cam)
+                    self.drivers[cam] = AccessoryDriver(port=51830+index, persist_file='/opt/sofa-server/config/homekitcamera-%s.json' % cam)
                     self.log.info('Camera: %s PIN: %s' % (self.dataset.config['cameras'][cam]['name'], self.drivers[cam].state.pincode))
                     self.log.info('Options: %s' % self.options)
                     cameraconfig['camera_id']=self.dataset.config['cameras'][cam]['id']

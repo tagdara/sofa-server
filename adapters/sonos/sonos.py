@@ -458,12 +458,12 @@ class sonos(sofabase):
 
             try:
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                self.log.debug('Checking object for controllers: %s' % nativeObject)
+                #self.log.debug('Checking object for controllers: %s' % nativeObject)
                 try:
                     detail=itempath.split("/",3)[3]
                 except:
                     detail=""
-                self.log.info('Checking object path: %s %s' % (itempath, detail))
+                #self.log.info('Checking object path: %s %s' % (itempath, detail))
 
                 controllerlist={}
                 if "speaker" in nativeObject:
