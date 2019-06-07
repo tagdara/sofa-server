@@ -226,7 +226,7 @@ class hue(sofabase):
             
             nativeObject=self.dataset.nativeDevices['lights'][deviceid]
             if nativeObject['name'] not in self.dataset.localDevices:
-                if nativeObject["type"] in ["Extended color light"]:
+                if nativeObject["type"] in ["Extended color light", "Color light"]:
                     return self.dataset.addDevice(nativeObject['name'], devices.colorLight('hue/lights/%s' % deviceid, nativeObject['name'], native=nativeObject))
                 elif nativeObject["type"] in ["Color temperature light"]:
                     return self.dataset.addDevice(nativeObject['name'], devices.tunableLight('hue/lights/%s' % deviceid, nativeObject['name'], native=nativeObject))
@@ -246,7 +246,7 @@ class hue(sofabase):
                     detail=""
 
                 controllerlist={}
-                if nativeObject["type"] in ["Extended color light"]:
+                if nativeObject["type"] in ["Extended color light", "Color light"]:
                     if detail=="state/on" or detail=="":
                         controllerlist["PowerController"]=["powerState"]
                     if detail=="state/bri" or detail=="":
@@ -338,7 +338,7 @@ class hue(sofabase):
                     detail=""
 
                 controllerlist={}
-                if nativeObject["type"] in ["Extended color light"]:
+                if nativeObject["type"] in ["Extended color light", "Color light"]:
                     if detail=="state/on" or detail=="":
                         controllerlist["PowerController"]=["powerState"]
                     if detail=="state/bri" or detail=="":
