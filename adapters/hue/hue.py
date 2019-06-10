@@ -234,7 +234,9 @@ class hue(sofabase):
             return False
 
 
-        def updateSmartDevice(self, itempath, value):
+        def updateSmartDeviceXXX(self, itempath, value):
+            
+            # is this still needed or legacy?  I dont believe this still gets called
 
             try:
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
@@ -347,6 +349,8 @@ class hue(sofabase):
                         controllerlist["ColorController"]=["color"]
                     if detail=="state/ct" or detail=="":
                         controllerlist["ColorTemperatureController"]=["colorTemperatureInKelvin"]
+                    if detail=="state/reachable" or detail=="":
+                        controllerlist["EndpointHealth"]=["connectivity"]
 
                 elif nativeObject["type"] in ["Color temperature light"]:
                     if detail=="state/on" or detail=="":
@@ -355,6 +359,8 @@ class hue(sofabase):
                         controllerlist["BrightnessController"]=["brightness"]
                     if detail=="state/ct" or detail=="":
                         controllerlist["ColorTemperatureController"]=["colorTemperatureInKelvin"]
+                    if detail=="state/reachable" or detail=="":
+                        controllerlist["EndpointHealth"]=["connectivity"]
                         
                 return controllerlist
             except KeyError:
@@ -394,6 +400,10 @@ class hue(sofabase):
                     # The real values are based on this {"bri":int(hsbdata['brightness']*255), "sat":int(hsbdata['saturation']*255), "hue":int((hsbdata['hue']/360)*65536)}
                     return {"hue":round((int(nativeObj['state']["hue"])/65536)*360,1), "saturation":round(int(nativeObj['state']["sat"])/255,4), "brightness":round(int(nativeObj['state']["bri"])/255,4) }
                     #return self.hueColor.xy_to_hex(nativeObj['state']['xy'][0], nativeObj['state']['xy'][1], nativeObj['state']['bri'])
+
+                elif controllerProp=='connectivity':
+                    return 'OK' if nativeObj['state']['reachable'] else "UNREACHABLE"
+
                 else:
                     self.log.info('Unknown controller property mapping: %s' % controllerProp)
                     return {}

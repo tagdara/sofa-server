@@ -256,9 +256,10 @@ class ColorTemperatureControllerInterface(smartInterface):
 
 class InputControllerInterface(smartInterface):
     
-    def __init__(self, inputName="Input", SelectInput=None):
+    def __init__(self, inputName="Input", SelectInput=None, inputs=[]):
         self.controller="InputController"
         self._input=inputName
+        self._inputs=inputs
         if SelectInput:
             self.SelectInput=SelectInput
 
@@ -283,6 +284,24 @@ class InputControllerInterface(smartInterface):
         
     def SelectInput(self, value):
         self.inputName=value            
+
+    @property
+    def inputs(self):
+        inputlist=[]
+        for inp in self._inputs:
+            inputlist.append({'name':inp})
+        return inputlist
+
+    @property
+    def capability(self):
+        basecapability={"interface":self.interface, "version": self.version, "type": self.capabilityType, "properties": self.properties}
+        if self.inputs:
+            basecapability['inputs']=self.inputs
+        if self.configuration:
+            basecapability['configuration']=self.configuration
+            
+        return basecapability
+ 
 
 
 class RemoteControllerInterface(smartInterface):
@@ -793,9 +812,10 @@ class DoorbellEventSourceInterface(smartInterface):
 
 class EndpointHealthInterface(smartInterface):
     
-    def __init__(self, connectivity="OK", namespace="Alexa"):
+    def __init__(self, connectivity="OK", namespace="Alexa", SetEndpointHealth=None):
         self.controller="EndpointHealth"
         self.connectivity=connectivity
+        self.SetEndpointHealth=SetEndpointHealth
 
     @property
     def state(self):
@@ -1197,7 +1217,7 @@ class lightSwitch(smartObject):
         
 class tunableLight(smartObject):
     
-    def __init__(self, path, name, description="Tunable White Light", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, SetColorTemperature=None, log=None, native=None):
+    def __init__(self, path, name, description="Tunable White Light", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, SetColorTemperature=None, SetEndpointHealth=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["LIGHT"]
         self._description=description
@@ -1205,12 +1225,13 @@ class tunableLight(smartObject):
         self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
         self.BrightnessController=BrightnessControllerInterface(SetBrightness)
         self.ColorTemperatureController=ColorTemperatureControllerInterface(SetColorTemperature)
-        self._interfaces=[self.PowerController, self.BrightnessController, self.ColorTemperatureController]
+        self.EndpointHealth=EndpointHealthInterface(SetEndpointHealth)
+        self._interfaces=[self.PowerController, self.BrightnessController, self.ColorTemperatureController, self.EndpointHealth]
         self._path=path
 
 class colorLight(smartObject):
     
-    def __init__(self, path, name, description="Color Light", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, SetColorTemperature=None, SetColor=None, log=None, native=None):
+    def __init__(self, path, name, description="Color Light", manufacturer="sofa", TurnOn=None, TurnOff=None, SetBrightness=None, SetColorTemperature=None, SetColor=None, SetEndpointHealth=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["LIGHT"]
         self._description=description
@@ -1219,8 +1240,22 @@ class colorLight(smartObject):
         self.BrightnessController=BrightnessControllerInterface(SetBrightness=SetBrightness)
         self.ColorController=ColorControllerInterface(SetColor)
         self.ColorTemperatureController=ColorTemperatureControllerInterface(SetColorTemperature)
-        self._interfaces=[self.PowerController, self.BrightnessController, self.ColorController, self.ColorTemperatureController]
+        self.EndpointHealth=EndpointHealthInterface(SetEndpointHealth)
+        self._interfaces=[self.PowerController, self.BrightnessController, self.ColorController, self.ColorTemperatureController, self.EndpointHealth]
         self._path=path
+
+class colorOnlyLight(smartObject):
+    
+    def __init__(self, path, name, description="Color Light", manufacturer="sofa", TurnOn=None, TurnOff=None, SetColor=None, log=None, native=None):
+        self._friendlyName=name
+        self._displayCategories=["LIGHT"]
+        self._description=description
+        self._manufacturer=manufacturer
+        self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
+        self.ColorController=ColorControllerInterface(SetColor)
+        self._interfaces=[self.PowerController, self.ColorController]
+        self._path=path
+
 
 class soundSystem(smartObject):
     
@@ -1249,19 +1284,24 @@ class receiver(smartObject):
         self._interfaces=[self.PowerController, self.InputController, self.SpeakerController, self.SurroundController]
         self._path=path
         
+
 class tv(smartObject):
 
-    def __init__(self, path, name, description="Television", manufacturer="sofa", SetVolume=None, SetMute=None, TurnOn=None, TurnOff=None, SelectInput=None, PressRemoteButton=None, log=None, native=None):
+    def __init__(self, path, name, description="Television", manufacturer="sofa", SetVolume=None, SetMute=None, TurnOn=None, TurnOff=None, inputs=[], noSpeaker=False, SelectInput=None, PressRemoteButton=None, log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["TV"]
         self._description=description
         self._manufacturer=manufacturer
         self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
-        self.InputController=InputControllerInterface(SelectInput)
-        self.SpeakerController=SpeakerControllerInterface(SetVolume, SetMute)
+        self.InputController=InputControllerInterface(SelectInput,inputs=inputs)
         self.RemoteController=RemoteControllerInterface(PressRemoteButton)
-        self._interfaces=[self.PowerController, self.InputController, self.RemoteController, self.SpeakerController]
+        self._interfaces=[self.PowerController, self.InputController, self.RemoteController]
+
+        if not noSpeaker:
+            self.SpeakerController=SpeakerControllerInterface(SetVolume, SetMute)
+            self._interfaces.append(self.SpeakerController)
         self._path=path
+
 
 class smartSpeaker(smartObject):
     
