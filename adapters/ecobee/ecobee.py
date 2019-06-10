@@ -159,7 +159,7 @@ class ecobee(sofabase):
                             for cap in rsensor.capability:
                                 if cap.type=="temperature":
                                     if cap.value=="unknown":
-                                        self.log.info('Rsensor has unknown: %s' % rsensor.capability)
+                                        #self.log.info('Rsensor has unknown: %s' % rsensor.capability)
                                         sensor['temperature']=70
                                     else:
                                         sensor['temperature']=int(int(cap.value)/10)

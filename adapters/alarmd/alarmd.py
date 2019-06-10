@@ -50,6 +50,7 @@ class alarmd(sofabase):
             
             try:
                 asyncio.set_event_loop(self.loop)
+                self.log.info('Config: %s' % self.dataset.config)
                 self.SERIAL_DEVICE = self.dataset.config["device"]
                 self.BAUDRATE = self.dataset.config["baudrate"]
                 self.createSerialDevice()
@@ -195,7 +196,9 @@ class alarmd(sofabase):
 
             try:
                 self.lastMessage=message
+                #self.log.info('Message: %s' % message)
                 self.lastMessageTime=datetime.datetime.now()
+                #self.log.info('faulted: %s %s' % (self.faultedZones, sender._zonetracker._zones_faulted))
                 if self.faultedZones!=sender._zonetracker._zones_faulted:
                     fzones=[]
                     self.compareZoneChanges(self.faultedZones, list(sender._zonetracker._zones_faulted), message)
@@ -219,6 +222,7 @@ class alarmd(sofabase):
         def addSmartDevice(self, path):
             
             try:
+                self.log.info('Attempting to add %s' % path)
                 if path.split("/")[1]=="zones":
                     return self.addZone(path.split("/")[2])
                     
