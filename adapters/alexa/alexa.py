@@ -512,13 +512,16 @@ class alexaBridge(sofabase):
                 url="https://api.amazonalexa.com/v3/events"
                 headers = { "Content-type": "application/json", "Authorization": "Bearer %s" % self.grant['access_token'] }
 
-                self.log.info('Sending to alexa event gateway: %s' % body)
+                self.log.debug('Sending to alexa event gateway: %s' % body)
 
                 async with aiohttp.ClientSession() as client:
                     response=await client.post(url, data=json.dumps(body), headers=headers)
-                    cresponse=await response.read()
-                    cresponse=cresponse.decode()
-                    self.log.info('Proactive Event result: %s' % cresponse)
+                    if response.status==202:
+                        self.log.debug('Proactive event succesfully sent to gateway')
+                    else:
+                        cresponse=await response.read()
+                        cresponse=cresponse.decode()
+                        self.log.info('Proactive Event failure: %s %s' % (response.status,cresponse))
             except:
                 self.log.error('Error refreshing token', exc_info=True)
 

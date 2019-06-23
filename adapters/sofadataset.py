@@ -317,6 +317,7 @@ class sofaDataset():
             
         try:
             updates=[]
+
             # Check to see if this is a new smart device that has not been added yet
             for item in data:
                 if len(item['path'].split('/'))>2: # ignore root level adds
@@ -349,12 +350,14 @@ class sofaDataset():
     async def updateDeviceState(self, path, controllers={}, newDevice=False, correlationToken=None, patch=""):
 
         try:
+            
             nativeObject=self.getObjectFromPath(self.getObjectPath(path))
             try:
                 smartDevice=self.getDeviceByEndpointId("%s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
             except:
-                #self.log.error('Error getting device by endpointId: %s%s' % (self.adaptername, self.getObjectPath(path).replace("/",":")) )
+                self.log.error('Error getting device by endpointId: %s%s' % (self.adaptername, self.getObjectPath(path).replace("/",":")) )
                 return None
+
             if not smartDevice:
                 if path not in self.nodevices:
                     self.log.info(".? No device for %s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
@@ -421,8 +424,12 @@ class sofaDataset():
             
         try:
             return self.getDeviceByEndpointId(endpointId).StateReport(correlationToken, bearerToken)
+        except AttributeError:
+            self.log.warn('Device not ready for state report: %s' % endpointId)
+            return {}
+            
         except:
-            self.log.error('Error generating state report: %s' % path, exc_info=True)
+            self.log.error('Error generating state report for %s' % endpointId, exc_info=True)
             return {}
 
     async def generateResponse(self, endpointId, correlationToken, controller=''):
@@ -482,7 +489,7 @@ class sofaDataset():
                         await self.adapter.handleStateReport(statereport)
                         return statereport
             
-            self.log.warn('.! No State Report returned')            
+            self.log.warn('.! No State Report returned for %s' % endpointId)            
             return {}
 
         except:
@@ -517,9 +524,13 @@ class sofaDataset():
     async def requestReportStates(self, adapter, devicelist):
         
         try:
+            reqstart=datetime.datetime.now()
             if adapter in self.adapters:
                 url=self.adapters[adapter]['url']+"/deviceStates"
-                return await self.restPost(url, devicelist)
+                outdata=await self.restPost(url, devicelist)
+                if (datetime.datetime.now()-reqstart).total_seconds()>1:
+                    self.log.info('Warning - %s Report States took %s seconds to respond' % (adapter, (datetime.datetime.now()-reqstart).total_seconds()))
+                return outdata
 
         except:
             self.log.error("Error requesting states for %s (%s)" % (adapter, devicelist),exc_info=True)

@@ -88,8 +88,15 @@ class unifivideo(sofabase):
                     except concurrent.futures._base.CancelledError:
                         self.log.warn('concurrent Couldnt get thumbnail image for %s (cancelled)' % path)
                         return None
+            except TimeoutError:
+                self.log.error('Couldnt get thumbnail image for %s (timeout)' % path)
+                return None
+            except ConnectionRefusedError:
+                self.log.error('Couldnt get thumbnail image for %s (connection refused)' % path)
+                return None
             except:
                 self.log.error('Couldnt get thumbnail image for %s' % path, exc_info=True)
+                return None
 
         async def virtualImage(self, path, client=None):
             

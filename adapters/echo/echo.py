@@ -54,6 +54,7 @@ class echo(sofabase):
                 try:
                     self.log.info("Polling alexa data")
                     devices=self.alexa_devices.update()
+                    self.log.info('Devices: %s' % self.alexa_devices.alexa_clients)
                     await self.dataset.ingest({'devices':devices})
                 except:
                     self.log.error('Error fetching alexa Data', exc_info=True)
@@ -153,17 +154,10 @@ class echo(sofabase):
 
             elif controllerProp=='input':
                 try:
-                    # Sonos doesn't always populate the zone_group_name field, even when a player is grouped.  It's probably just a Sonos
-                    # thing, but it might be a Soco thing.  Anyway, here's Wonderwall.
-                    #if nativeObj['ZoneGroupTopology']['zone_group_name']==None:
-                    return nativeObj['accountName']
-
-                    # Sometimes it's right tho   
-                    # But we're still not using it as it's kinda arbitrary
-                    #return nativeObj['ZoneGroupTopology']['zone_group_name']
+                    return ''
                 except:
                     self.log.error('Error checking input status', exc_info=True)
-                    return nativeObj['accountName']
+                    return ''
                     
             elif controllerProp=='artist':
                 
@@ -224,6 +218,39 @@ class echo(sofabase):
             else:
                 self.log.info('Unknown controller property mapping: %s' % controllerProp)
                 return {}
+                
+                
+        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
+    
+            try:
+                self.log.info('Directive for %s: %s %s' % (endpointId, controller, command))
+                dev=self.dataset.getDeviceByEndpointId(endpointId)
+                playerid=endpointId.split(':')[2]
+                player=self.alexa_devices.alexa_clients[playerid]
+                self.log.info('Player: %s' % player)
+                if controller=="MusicController":
+                    if command=='Play':
+                        player.media_play()
+                    elif command=='Pause':
+                        player.media_pause()
+                    elif command=='Stop':
+                        player.media_pause()
+                    elif command=='Next':
+                        player.media_next_track()
+                    elif command=='Previous':
+                        player.media_previous_track()
+                    else:
+                        self.log.warn('Requested command not available for %s: %s' % (playerid, command))
+                        response=await self.dataset.generateResponse(endpointId, correlationToken)
+                        return response
+
+                    response=await self.dataset.generateResponse(endpointId, correlationToken)
+                    return response
+
+                return {}
+
+            except:
+                self.log.error('Error executing state change.', exc_info=True)
 
 
                 

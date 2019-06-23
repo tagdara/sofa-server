@@ -35,6 +35,7 @@ class logicServer(sofabase):
             self.dataset.nativeDevices['logic']={}
             self.dataset.nativeDevices['mode']={}
             self.dataset.nativeDevices['area']={}
+            self.area_calc_pending=[]
             
             self.logicpool = ThreadPoolExecutor(10)
 
@@ -171,7 +172,10 @@ class logicServer(sofabase):
         async def saveScene(self, name, data):
             
             try:
-                data=json.loads(data)
+                try:
+                    data=json.loads(data)
+                except TypeError:
+                    pass
                 self.scenes[name]=data
                 self.saveJSON('scenes',self.scenes)
                 return True
@@ -361,7 +365,27 @@ class logicServer(sofabase):
                         await self.saveAutomation(auto, json.dumps(self.automations[auto]))
             except:
                 self.log.error('Error fixing automations', exc_info=True)
-                    
+         
+        async def fixScenes(self, scenes):
+            
+            try:
+                newscenes={}
+                for scene in scenes:
+                    newscene={}
+                    newscene['endpointId']='logic:scene:%s' % scene
+                    newscene['friendlyName']=scene
+                    newscene['children']={}
+                    for child in scenes[scene]:
+                        dev=self.dataset.getDeviceByfriendlyName(child)
+                        newscene['children'][dev['endpointId']]=scenes[scene][child]
+                        
+                    newscenes[scene]=newscene
+                    changes=False
+                
+                self.saveJSON('newscenes',newscenes)
+                return newscenes
+            except:
+                self.log.error('Error fixing scenes', exc_info=True)
                         
                 
         async def start(self):
@@ -373,7 +397,7 @@ class logicServer(sofabase):
                 self.users=self.loadJSON('users')
                 self.modes=self.loadJSON('modes')
                 self.areas=self.loadJSON('areas')
-                self.scenes=self.loadJSON('scenes')
+                self.scenes=self.loadJSON('newscenes')
                 self.security=self.loadJSON('security')
                 self.automations=self.loadJSON('automations')
                 await self.fixAutomationTypes()
@@ -499,8 +523,8 @@ class logicServer(sofabase):
             
             nativeObject=self.dataset.nativeDevices['scene'][name]
             
-            if name not in self.dataset.devices:
-                return self.dataset.addDevice(name, devices.simpleScene('logic:scene:%s' % name, name))
+            if nativeObject['endpointId'] not in self.dataset.devices:
+                return self.dataset.addDevice(nativeObject['friendlyName'], devices.simpleScene(nativeObject['endpointId'], nativeObject['friendlyName']))
             
             return False
 
@@ -560,11 +584,12 @@ class logicServer(sofabase):
                 
                 self.log.info('Scene will be captured: %s' % capdevs)
                 if capdevs:
-                    self.saveScene(scenename, capdevs)
-                    areaname=areaid.split(':')[2]
-                    if 'logic:scene:%s' % scenename not in self.areas[areaname]['children']:
-                        self.areas[areaname]['children'].append('logic:scene:%s' % scenename)
-                        self.saveArea(areaname, self.areas[areaname])
+                    if await self.saveScene(scenename, capdevs):
+                        areaname=areaid.split(':')[2]
+                        self.log.info('Adding scene %s to area %s' % (scenename,areaname))
+                        if 'logic:scene:%s' % scenename not in self.areas[areaname]['children']:
+                            self.areas[areaname]['children'].append('logic:scene:%s' % scenename)
+                            await self.saveArea(areaname, self.areas[areaname])
                                         
                             
             except:
@@ -776,27 +801,21 @@ class logicServer(sofabase):
                 scene=self.scenes[sceneName]
                 acts=[]
                 
-                for light in scene:
-                    try:
-                        self.log.info('scene dev: %s' % self.dataset.getDeviceByfriendlyName(light))
-                        epid=self.dataset.getDeviceByfriendlyName(light)['endpointId']
-                    except:
-                        self.log.error('Error gettind endpointId for %s' % light, exc_info=True)
-                        continue
-                    if 'powerState' in scene[light]:
-                        if scene[light]['powerState']=='OFF':
-                            acts.append({'command':'TurnOff', 'controller':'PowerController', 'endpointId':epid, 'value': None})
+                for light in scene['children']:
+                    if 'powerState' in scene['children'][light]:
+                        if scene['children'][light]['powerState']=='OFF':
+                            acts.append({'command':'TurnOff', 'controller':'PowerController', 'endpointId':light, 'value': None})
 
-                    if int(scene[light]['brightness'])==0 and 'powerState' not in scene[light]:
-                        acts.append({'command':'TurnOff', 'controller':'PowerController', 'endpointId':epid, 'value': None})
+                    if int(scene['children'][light]['brightness'])==0 and 'powerState' not in scene['children'][light]:
+                        acts.append({'command':'TurnOff', 'controller':'PowerController', 'endpointId':light, 'value': None})
                     else:
-                        if 'hue' in scene[light]:
-                            acts.append({'command':'SetColor', 'controller':'ColorController', 'endpointId':epid, "value": { 'color': { 
-                                "brightness": scene[light]['brightness']/100,
-                                "saturation": scene[light]['saturation'],
-                                "hue": scene[light]['hue'] }}})
+                        if 'hue' in scene['children'][light]:
+                            acts.append({'command':'SetColor', 'controller':'ColorController', 'endpointId':light, "value": { 'color': { 
+                                "brightness": scene['children'][light]['brightness']/100,
+                                "saturation": scene['children'][light]['saturation'],
+                                "hue": scene['children'][light]['hue'] }}})
                         else:
-                            acts.append({'command':'SetBrightness', 'controller':'BrightnessController', 'endpointId':epid, 'value': { "brightness": int(scene[light]['brightness']) }} )
+                            acts.append({'command':'SetBrightness', 'controller':'BrightnessController', 'endpointId':light, 'value': { "brightness": int(scene['children'][light]['brightness']) }} )
 
                         
                 allacts = await asyncio.gather(*[self.sendAlexaDirective(action) for action in acts ])
@@ -1060,43 +1079,40 @@ class logicServer(sofabase):
 
         async def calculateAreaLevel(self, area):
             
-            # This jumps through a lot of hoops right now because scenes are saved by friendlyname instead of 
-            # endpointid.  Changing the scenes.json format to use device ID's will simplify this greatly but probably requires
-            # changes to the region/area/scene portion of the client.
-            
             try:
-                devstateCache={}
+                if 'logic:scene:' not in ', '.join(self.areas[area]['children']):
+                    return ''
+                if area in self.area_calc_pending:
+                    return ''
+                    
+                #self.log.info('pending: %s' % self.area_calc_pending)
+                self.area_calc_pending.append(area)
+    
+                devstate_cache={}
                 highscore=0
                 bestscene=""
+                self.log.info('Calculating for area: %s %s' % (area,self.areas[area]['children']))
                 for child in self.areas[area]['children']:
                     if child.startswith('logic:scene:'):
                         scenescore=0
-                        scenename=''
-                        #self.log.info('Looking for scene: %s = %s' % (child,self.getDeviceByEndpointId(child)))
-                        for device in self.dataset.localDevices:
-                            if self.dataset.localDevices[device].endpointId==child:
-                                scenename=self.dataset.localDevices[device].friendlyName
-                                #self.log.info('%s: %s' % (device,self.dataset.localDevices[device].friendlyName))
-
-
-
-                        #scene=self.getDeviceByEndpointId(child)
-                        # scenename=scene.friendlyName
-                        
-                        if not scenename:
-                            self.log.warn('Could not find scene: %s' % child)
-                            continue
-                        for light in self.scenes[scenename]:
-                            try:
-                                #self.log.info('xx3 %s: %s' % (light,self.getDeviceByfriendlyName(light)))
-                                lightid=self.getDeviceByfriendlyName(light)['endpointId']
-                                if lightid not in devstateCache:
-                                    devstate=await self.dataset.requestReportState(lightid)
-                                    devstateCache[lightid]=devstate['context']['properties']  
-                                devstate=devstateCache[lightid]
+                        scene=child.split(':')[2]
+                        try:
+                            getlights=[]
+                            for light in self.scenes[scene]['children']:
+                                if light not in devstate_cache:
+                                    getlights.append(light)
+                                    
+                            if getlights:
+                                #self.log.info('Calculation pending for device states: %s' % getlights)
+                                newdevs = await asyncio.gather(*[self.dataset.requestReportState(light) for light in getlights ])
+                                for dev in newdevs:
+                                    devstate_cache[dev['event']['endpoint']['endpointId']]=dev
+                                #self.log.info('device states received: %s' % getlights)
+                                
+                            for light in self.scenes[scene]['children']:
                                 devon=False
                                 devbri=0
-                                for prop in devstate:
+                                for prop in devstate_cache[light]['context']['properties']:
                                     if prop['name']=="powerState":
                                         if prop['value']=='ON':
                                             devon=True
@@ -1104,19 +1120,22 @@ class logicServer(sofabase):
                                         devbri=prop['value']
                                 if not devon:
                                     devbri=0
-                                scenescore+=(50-abs(devbri-self.scenes[scenename][light]['brightness']))
-                            except:
-                                scenescore=0
-                                break
+                                scenescore+=(50-abs(devbri-self.scenes[scene]['children'][light]['brightness']))
+ 
+                        except:
+                            #self.log.error('ouch', exc_info=True)
+                            scenescore=0
+                            break
                             
                         if scenescore>highscore:
                             highscore=scenescore
                             bestscene=child
-                        
+                
+                self.area_calc_pending.remove(area)        
                 return bestscene
 
             except:
-                self.log.error('Error in virtual change handler: %s' % (area), exc_info=True)
+                self.log.error('Error in area scene calc: %s' % (area), exc_info=True)
                 return ""
                 
 
@@ -1197,6 +1216,9 @@ class logicServer(sofabase):
             try:
                 if itempath=="automations":
                     return self.automations
+            
+                if itempath=='fixscenes':
+                    return await self.fixScenes(self.scenes)
 
                 if itempath=='schedule':
                     scheduled=[]

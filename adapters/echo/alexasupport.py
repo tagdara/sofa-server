@@ -285,7 +285,8 @@ class AlexaClient():
 
     def media_play(self):
         """Send play command."""
-        if not (self.state in ["Playing", "Paused"]
+        print(self.state)
+        if not (self.state in ["Playing", "Paused", 'Idle']
                 and self.available):
             return
         self.alexa_api.play()

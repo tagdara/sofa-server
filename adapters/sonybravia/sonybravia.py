@@ -266,12 +266,20 @@ class sonybravia(sofabase):
             return sysinfo[0]['name']
 
         async def start(self):
+            try:
+                self.input_list=[]
+                for port in self.dataset.config['hdmi_port_names']:
+                    self.input_list.append(self.dataset.config['hdmi_port_names'][port])
+            except:
+                self.log.error('Error defining port list', exc_info=True)
+                
             self.tv=sonyRest(log=self.log, dataset=self.dataset)
             self.tvName=await self.getTVname()
 
             try:
                 await self.getInitialData()
                 await self.getUpdate()
+
             except:
                 self.log.error('error with update',exc_info=True)
 
@@ -323,7 +331,7 @@ class sonybravia(sofabase):
             nativeObject=self.dataset.nativeDevices['tv'][deviceid]
             if name not in self.dataset.localDevices:
                 if "systemInformation" in nativeObject and "power" in nativeObject:
-                    return self.dataset.addDevice(name, devices.tv('sonybravia/tv/%s' % deviceid, name))
+                    return self.dataset.addDevice(name, devices.tv('sonybravia/tv/%s' % deviceid, name, inputs= self.input_list, noSpeaker=True))
             
             return False
             

@@ -108,6 +108,9 @@ class hue(sofabase):
                 else:
                     #self.log.info('Lights: %s' % json.dumps(self.bridge.lights()))
                     return await self.bridge.lights()
+            except aiohttp.client_exceptions.ClientConnectorError:
+                self.log.error("Error getting hue config. (Failed to connect to hub)")
+                
             except:
                 self.log.error("Error getting hue config.",exc_info=True)
                 return {}

@@ -85,14 +85,14 @@ class sonos(sofabase):
             try:
                 self.subscriptions=[]
                 self.players=await self.sonosDiscovery()
-                self.log.info('Players: %s' % self.players)
-                for player in self.players:
-                    for subService in ['avTransport','deviceProperties','renderingControl','zoneGroupTopology']:
-                        newsub=self.subscribeSonos(player,subService)
-                        self.log.info('++ sonos state subscription: %s/%s' % (player.player_name, newsub.service.service_type))
-                        self.subscriptions.append(newsub)
-                self.sonosGetSonosFavorites(self.players[0])
-                self.connect_needed=False
+                if self.players:
+                    for player in self.players:
+                        for subService in ['avTransport','deviceProperties','renderingControl','zoneGroupTopology']:
+                            newsub=self.subscribeSonos(player,subService)
+                            self.log.info('++ sonos state subscription: %s/%s' % (player.player_name, newsub.service.service_type))
+                            self.subscriptions.append(newsub)
+                    self.sonosGetSonosFavorites(self.players[0])
+                    self.connect_needed=False
             except:
                 self.log.error('Error starting sonos connections',exc_info=True)
             
@@ -123,10 +123,20 @@ class sonos(sofabase):
         async def sonosDiscovery(self):
         
             try:
-                discoverlist=list(soco.discover())
+                discovered=soco.discover()
+                if discovered:
+                    discoverlist=list(discovered)
+                    self.log.info('Players: %s' % discoverlist)
+                else:
+                    discoverlist=None
                 if discoverlist==None:
                     self.log.error('Discover: No sonos devices detected')
+                    self.connect_needed=True
+                    self.polltime=self.polltime*2
+                    if self.polltime<5:
+                        self.polltime=5
                     return None
+                self.polltime=.1
                 for player in discoverlist:
                     spinfo=player.get_speaker_info()
                     await self.dataset.ingest({"player": { spinfo["uid"]: { "speaker": spinfo, "name":player.player_name, "ip_address":player.ip_address }}})

@@ -313,6 +313,9 @@ class homekit(sofabase):
                     elif dev['services'][0]=='ContactSensor':
                         newdev=ContactSensor(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
                         self.bridge.add_accessory(newdev)
+                    elif dev['services'][0]=='Doorbell':
+                        newdev=Doorbell(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
+                        self.bridge.add_accessory(newdev)
                         
                     # Speakers are not really supported at this point
                     #elif dev['services'][0]=='Speaker':

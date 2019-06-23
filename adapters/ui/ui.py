@@ -354,7 +354,9 @@ class sofaWebUI():
             async with aiofiles.open(os.path.join(self.config['client_static_directory'], 'sofa.appcache'), mode='r') as f:
                 manifest = await f.read()
                                            # v-auto
-                manifest=manifest.replace('# v-auto', '# v%s' % datetime.datetime.now().strftime("%I:%M%p on %B %d, %Y"))
+                manifest=manifest.replace('# version-auto', '# v%s' % datetime.datetime.now().strftime("%I:%M%p on %B %d, %Y"))
+                manifest=manifest.replace('url-auto', 'https://%s' % self.config['web_address'])
+
                 return manifest
         except:
             self.log.error('Error getting file for cache: %s' % filename, exc_info=True)
@@ -733,7 +735,6 @@ class sofaWebUI():
     async def sse_last_update_handler(self, request):
       
         return web.Response(text=json.dumps({"lastupdate":self.sse_last_update},default=self.date_handler))
-
 
     async def sse_handler(self, request):
         try:
