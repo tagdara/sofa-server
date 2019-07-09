@@ -514,9 +514,9 @@ class AlexaLogin():
         #self._cookiefile = configpath("{}.pickle".format(ALEXA_DATA))
         #self._debugpost = configpath("{}post.html".format(ALEXA_DATA))
         #self._debugget = configpath("{}get.html".format(ALEXA_DATA))
-        self._cookiefile = "/opt/sofa-server/echo/%s.pickle" % ALEXA_DATA
-        self._debugpost =  "/opt/sofa-server/echo/%spost.html" % ALEXA_DATA
-        self._debugget = "/opt/sofa-server/echo/%sget.html" % ALEXA_DATA
+        self._cookiefile = "/opt/sofa-server/config/%s.pickle" % ALEXA_DATA
+        self._debugpost =  "/opt/sofa-server/config/%spost.html" % ALEXA_DATA
+        self._debugget = "/opt/sofa-server/config/%sget.html" % ALEXA_DATA
 
 
         self._lastreq = None
@@ -950,7 +950,7 @@ class AlexaDeviceUpdater():
         
         try:
             self.log.info('url: %s - %s' % (art_url, self.cookies))
-            pic_name = "/opt/sofaclient/dist/albumart-%s.jpg" % devicename
+            pic_name = "/opt/sofa-client/static/albumart-%s.jpg" % devicename
             self._session = requests.Session()
 
             '''define session headers'''

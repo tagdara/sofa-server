@@ -72,10 +72,39 @@ class SofaAccessory(Accessory):
                 command['directive']['header']['name']="SetBrightness"
                 command['directive']['payload']={'brightness': int(data['value'])}
 
+            elif data['characteristic']=='Hue':
+                command['directive']['header']['namespace']='Alexa.ColorController'
+                command['directive']['header']['name']="SetColor"
+                command['directive']['payload']={'color': data['value'] }
+
+            elif data['characteristic']=='Saturation':
+                command['directive']['header']['namespace']='Alexa.ColorController'
+                command['directive']['header']['name']="SetColor"
+                command['directive']['payload']={'color': data['value'] }
+
             elif data['characteristic']=='Volume':
                 command['directive']['header']['namespace']='Alexa.SpeakerController'
                 command['directive']['header']['name']="SetVolume"
                 command['directive']['payload']={'volume': int(data['value'])}
+
+            elif data['characteristic']=='TargetHeatingCoolingState':
+                command['directive']['header']['namespace']='Alexa.ThermostatController'
+                command['directive']['header']['name']="SetThermostatMode"
+                vals=['OFF','HEAT']
+                command['directive']['payload']={'thermostatMode': {'value': vals[data['value']]}}
+
+            elif data['characteristic']=='CurrentHeatingCoolingState':
+                command['directive']['header']['namespace']='Alexa.ThermostatController'
+                command['directive']['header']['name']="SetThermostatMode"
+                vals=['OFF','HEAT']
+                command['directive']['payload']={'thermostatMode': {'value': vals[data['value']]}}
+
+
+            elif data['characteristic']=='Temperature':
+                command['directive']['header']['namespace']='Alexa.ThermostatController'
+                command['directive']['header']['name']="SetTargetSetpoint"
+                command['directive']['payload']={'temperature': vals[data['value']]}
+
                 
             return command
                 
@@ -103,16 +132,23 @@ class LightBulb(SofaAccessory):
 
     category = pyhap.const.CATEGORY_LIGHTBULB
     
-    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
+    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, color=False, **kwargs):
         
         self.event_loop=loop
         self.endpointId=endpointId
         self.adapterUrl=adapterUrl
+        self.color=color
         self.log = logging.getLogger('homekit')
         super().__init__(*args, **kwargs)
-        serv_light = self.add_preload_service('Lightbulb',chars=["Name", "On", "Brightness"])
+        if self.color:
+            serv_light = self.add_preload_service('Lightbulb',chars=["Name", "On", "Brightness", "Hue", "Saturation"])
+            self.char_hue=serv_light.configure_char('Hue', setter_callback = self.set_Hue)
+            self.char_sat=serv_light.configure_char('Saturation', setter_callback = self.set_Saturation)
+        else:
+            serv_light = self.add_preload_service('Lightbulb',chars=["Name", "On", "Brightness"])
         self.char_on = serv_light.configure_char('On', setter_callback=self.set_On)
         self.char_brightness = serv_light.configure_char("Brightness", setter_callback = self.set_Brightness)
+        self.reachable=True
 
 
     def __setstate__(self, state):
@@ -138,11 +174,59 @@ class LightBulb(SofaAccessory):
         except:
             self.log.error('Error in setbright', exc_info=True)
 
+    def set_Hue(self, value):
+        
+        try:
+            colorval={"hue": self.char_hue.value, "saturation": self.char_sat.value/100, "brightness": self.char_brightness.value/100}
+            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Hue", "value":colorval}), loop=self.event_loop)
+        except:
+            self.log.error('Error in set hue', exc_info=True)
+
+    def set_Saturation(self, value):
+        
+        try:
+            colorval={"hue": self.char_hue.value, "saturation": self.char_sat.value/100, "brightness": self.char_brightness.value/100}
+            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Hue", "value":colorval}), loop=self.event_loop)
+        except:
+            self.log.error('Error in set sat', exc_info=True)
+
+
 
     async def stop(self):
         await super(LightBulb, self).stop()
 
+class Switch(SofaAccessory):
 
+    category = pyhap.const.CATEGORY_SWITCH
+    
+    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
+        
+        self.event_loop=loop
+        self.endpointId=endpointId
+        self.adapterUrl=adapterUrl
+        self.log = logging.getLogger('homekit')
+        super().__init__(*args, **kwargs)
+        serv_switch = self.add_preload_service('Switch')
+        self.char_on = serv_switch.configure_char('On', setter_callback=self.set_On)
+        self.reachable=True
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+
+    def set_On(self, value):
+        
+        try:
+            self.log.info('Sending OnOff command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"On", "value":value} )
+            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"On", "value":value}), loop=self.event_loop)
+
+        except:
+            self.log.error('Error in set on', exc_info=True)
+            self.log.error(self.__dict__)
+
+
+    async def stop(self):
+        await super(Switch, self).stop()
 
 class TemperatureSensor(SofaAccessory):
 
@@ -158,6 +242,63 @@ class TemperatureSensor(SofaAccessory):
         serv_temp = self.add_preload_service('TemperatureSensor')
         #self.char_temp = serv_temp.configure_char('CurrentTemperature', setter_callback = self.set_Temperature)
         self.char_temp = serv_temp.configure_char('CurrentTemperature')
+
+    def run(self):
+        pass
+    
+class Thermostat(SofaAccessory):
+
+    category = pyhap.const.CATEGORY_THERMOSTAT
+
+    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
+        
+        self.event_loop=loop
+        self.endpointId=endpointId
+        self.adapterUrl=adapterUrl
+        self.log = logging.getLogger('homekit')     
+        super().__init__(*args, **kwargs)
+        serv_temp = self.add_preload_service('Thermostat')
+        #chars=['Name', 'CurrentTemperature', 'TargetTemperature', 'TargetHeatingCoolingState', 'CurrentHeatingCoolingState'])
+
+        #self.char_temp = serv_temp.configure_char('CurrentTemperature', setter_callback = self.set_Temperature)
+        self.char_temp = serv_temp.configure_char('CurrentTemperature')
+        self.char_TargetHeatingCoolingState = serv_temp.configure_char('TargetHeatingCoolingState',setter_callback=self.set_TargetHeatingCoolingState)
+        self.char_CurrentHeatingCoolingState = serv_temp.configure_char('CurrentHeatingCoolingState',setter_callback=self.set_CurrentHeatingCoolingState)
+
+        self.char_TargetTemperature = serv_temp.configure_char('TargetTemperature', setter_callback=self.set_TargetTemperature)
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+    def set_TargetTemperature(self, value):
+        
+        try:
+            self.log.info('Sending thermostat temperature command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"TargetTemperature", "value":value} )
+            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"TargetTemperature", "value":value}), loop=self.event_loop)
+
+        except:
+            self.log.error('Error in set target temp', exc_info=True)
+            self.log.error(self.__dict__)
+
+    def set_TargetHeatingCoolingState(self, value):
+        
+        try:
+            self.log.info('Sending thermostat mode command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"TargetHeatingCoolingState", "value":value} )
+            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"TargetHeatingCoolingState", "value":value}), loop=self.event_loop)
+
+        except:
+            self.log.error('Error in set thermostate mode', exc_info=True)
+            self.log.error(self.__dict__)
+
+    def set_CurrentHeatingCoolingState(self, value):
+        
+        try:
+            self.log.info('Sending thermostat mode command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"CurrentHeatingCoolingState", "value":value} )
+            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"CurrentHeatingCoolingState", "value":value}), loop=self.event_loop)
+
+        except:
+            self.log.error('Error in set thermostate mode', exc_info=True)
+            self.log.error(self.__dict__)
 
     def run(self):
         pass
@@ -270,19 +411,12 @@ class homekit(sofabase):
                 #self.log.info('Known devices: %s' % self.dataset.nativeDevices['accessorymap'])
                 self.getNewAid()
                 self.accloop=asyncio.new_event_loop()
-                #self.getAccessorySet()
-                #self.driver = AccessoryDriver(self.acc, self.dataset.config['accessory_port'], persist_file=self.persistfile, loop=self.accloop)
                 self.driver = AccessoryDriver(port=self.dataset.config['accessory_port'], persist_file='/opt/sofa-server/config/accessory.state', pincode=self.dataset.config['pin_code'].encode('utf-8'))
-                #self.log.info('Driver state: %s' % self.driver.state.__dict__)
-                #self.log.info('Driver: %s' % self.driver.__dict__)
-                #self.bridge = Bridge(self.driver, 'Bridge')
+
                 self.buildBridge()
                 self.driver.add_accessory(accessory=self.bridge)
                 self.log.info('PIN: %s' % self.driver.state.pincode)
                 signal.signal(signal.SIGTERM, self.driver.signal_handler)
-                #self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-                #asyncio.ensure_future(self.loop.run_in_executor(self.executor, self.driver.start,))
-                #await self.loop.run_in_executor(self.executor, self.driver.start,)
                 self.executor.submit(self.driver.start)
                 self.log.info('Accessory Bridge Driver started')
             except:
@@ -305,17 +439,29 @@ class homekit(sofabase):
                     newdev=None
                     dev=self.dataset.nativeDevices['accessorymap'][devname]
                     if dev['services'][0]=='Lightbulb':
-                        newdev=LightBulb(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
+                        if 'color' in dev:
+                            newdev=LightBulb(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, color=dev['color'], aid=dev['id'])
+                        else:
+                            newdev=LightBulb(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
+                            
                         self.bridge.add_accessory(newdev)
                     elif dev['services'][0]=='TemperatureSensor':
                         newdev=TemperatureSensor(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
                         self.bridge.add_accessory(newdev)
+                    elif dev['services'][0]=='Thermostat':
+                        newdev=Thermostat(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
+                        self.bridge.add_accessory(newdev)
+
                     elif dev['services'][0]=='ContactSensor':
                         newdev=ContactSensor(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
                         self.bridge.add_accessory(newdev)
                     elif dev['services'][0]=='Doorbell':
                         newdev=Doorbell(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
                         self.bridge.add_accessory(newdev)
+                    elif dev['services'][0]=='Switch':
+                        newdev=Switch(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
+                        self.bridge.add_accessory(newdev)
+
                         
                     # Speakers are not really supported at this point
                     #elif dev['services'][0]=='Speaker':
@@ -389,7 +535,7 @@ class homekit(sofabase):
         async def virtualAddDevice(self, devname, device):
         
             try:
-                if device['displayCategories'][0] not in ['TEMPERATURE_SENSOR', 'LIGHT', 'CONTACT_SENSOR', 'RECEIVER', 'DOORBELL']:
+                if device['displayCategories'][0] not in ['DEVICE', 'TEMPERATURE_SENSOR', 'THERMOSTAT', 'LIGHT', 'CONTACT_SENSOR', 'DOORBELL']:
                     return False
                 
                 if device['friendlyName'] in self.dataset.nativeDevices['accessorymap']:
@@ -416,11 +562,15 @@ class homekit(sofabase):
                     self.log.error('Error - could not get aid for device')
                     return False
 
-                if device['displayCategories'][0]=='TEMPERATURE_SENSOR':
+                if device['displayCategories'][0]=='THERMOSTAT':
+                    newdev=Thermostat(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+
+                elif device['displayCategories'][0]=='TEMPERATURE_SENSOR':
                     newdev=TemperatureSensor(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
 
                 elif device['displayCategories'][0]=='LIGHT':
-                    newdev=LightBulb(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+                    self.log.info('Light: %s' % device)
+                    newdev=LightBulb(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid, color=False)
 
                 elif device['displayCategories'][0]=='CONTACT_SENSOR':
                     newdev=ContactSensor(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
@@ -430,6 +580,9 @@ class homekit(sofabase):
 
                 elif device['displayCategories'][0]=='DOORBELL':
                     newdev=Doorbell(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+
+                elif device['displayCategories'][0]=='DEVICE':
+                    newdev=Switch(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
 
 
                 if newdev:
@@ -506,8 +659,11 @@ class homekit(sofabase):
 
                 #self.log.info('.. Changed %s/%s %s = %s' % (deviceId, prop['namespace'], prop['name'], prop['value']))
                 if prop['name']=='brightness':
+                    if acc.reachable:
                     #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
-                    acc.char_brightness.set_value(prop['value'])
+                        acc.char_brightness.set_value(prop['value'])
+                    else:
+                        acc.char_brightness.set_value(0)
                     #acc.char_temp.set_value(prop['value']['value'])
                 elif prop['name']=='volume':
                     #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
@@ -520,10 +676,20 @@ class homekit(sofabase):
                         acc.char_state.set_value(1)
                     else:
                         acc.char_state.set_value(0)
+                        
+                elif prop['name']=='connectivity':
+                    if prop['value']['value']=='UNREACHABLE':
+                        acc.reachable=False
+                        acc.char_on.set_value(False)
+                    else:
+                        acc.reachable=True
 
                 elif prop['name']=='powerState':
                     if prop['value']=='ON':
-                        acc.char_on.set_value(True)
+                        if acc.reachable:
+                            acc.char_on.set_value(True)
+                        else:
+                            acc.char_on.set_value(False)
                         #self.setCharacteristic(thisaid, 'Lightbulb', 'On', True)
                     elif prop['value']=='OFF':
                         acc.char_on.set_value(False)
@@ -534,6 +700,21 @@ class homekit(sofabase):
                         acc.char_temp.set_value((int(prop['value']['value'])-32) * 5.0 / 9.0)
                     else:
                         acc.char_temp.set_value(prop['value']['value'])
+                        
+                elif prop['name']=='targetSetpoint' or prop['name']=='upperSetpoint':
+                    #self.setCharacteristic(thisaid, 'TemperatureSensor', 'CurrentTemperature', prop['value'])
+                    if prop['value']['scale']=='FAHRENHEIT':
+                        acc.char_temp.set_value((int(prop['value']['value'])-32) * 5.0 / 9.0)
+                    else:
+                        acc.char_temp.set_value(prop['value']['value'])
+
+                elif prop['name']=='thermostatMode':
+                    modes={"AUTO": 3, "COOL": 2, "HEAT": 1, "OFF": 0 }
+                    acc.char_TargetHeatingCoolingState.set_value(modes[prop['value']])
+                    if prop['value']=='AUTO': 
+                        acc.char_CurrentHeatingCoolingState.set_value(2)
+                    else:
+                        acc.char_CurrentHeatingCoolingState.set_value(modes[prop['value']])
                 
             except:
                 self.log.error('Error in virtual change handler: %s %s' % (deviceId, change), exc_info=True)
@@ -541,7 +722,8 @@ class homekit(sofabase):
 
         async def handleStateReport(self, message):
             #thisaid=self.getAccessoryFromEndpointId(message['event']['endpoint']['endpointId'])
-            acc=self.getAccessoryFromEndpointId(message['event']['endpoint']['endpointId'])
+            deviceId=message['event']['endpoint']['endpointId']
+            acc=self.getAccessoryFromEndpointId(deviceId)
             
             if not acc:
                 return None
@@ -557,6 +739,15 @@ class homekit(sofabase):
                     acc.char_volume.set_value(prop['value'])
                     #acc.char_temp.set_value(prop['value']['value'])
 
+                elif prop['name']=='connectivity':
+                    #self.log.info('%s is %s' % (deviceId,prop['value']))
+                    if prop['value']['value']=='UNREACHABLE':
+                        #self.log.info('%s is unreachable' % deviceId)
+                        acc.reachable=False
+                        acc.char_on.set_value(False)
+                    else:
+                        acc.reachable=True
+
                 elif prop['name']=='powerState':
                     if getattr(acc, "char_on", None):
                         if prop['value']=='ON':
@@ -571,6 +762,22 @@ class homekit(sofabase):
                         acc.char_temp.set_value((int(prop['value']['value'])-32) * 5.0 / 9.0)
                     else:
                         acc.char_temp.set_value(prop['value']['value'])
+                        
+                elif prop['name']=='targetSetpoint' or prop['name']=='upperSetpoint':
+                    if prop['value']['scale']=='FAHRENHEIT':
+                        acc.char_TargetTemperature.set_value((int(prop['value']['value'])-32) * 5.0 / 9.0)
+                    else:
+                        acc.char_TargetTemperature.set_value(prop['value']['value'])
+
+                elif prop['name']=='thermostatMode':
+                    modes={"AUTO": 3, "COOL": 2, "HEAT": 1, "OFF": 0 }
+                    acc.char_TargetHeatingCoolingState.set_value(modes[prop['value']])
+                    if prop['value']=='AUTO': 
+                        acc.char_CurrentHeatingCoolingState.set_value(2)
+                    else:
+                        acc.char_CurrentHeatingCoolingState.set_value(modes[prop['value']])
+                    
+
 
         def getAccessoryFromEndpointId(self, endpointId):
             try:

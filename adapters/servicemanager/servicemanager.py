@@ -71,7 +71,10 @@ class servicemanager(sofabase):
             
             try:
                 self.log.info('Getting discovered adapter status for %s' % adapter)
-                await self.get_adapter_status(adapter)
+                adapterstate=await self.get_adapter_status(adapter)
+                adapterstate['service']=await self.get_service_status(adapter)
+                adapterstate['rest']=self.dataset.adapters[adapter]
+                await self.dataset.ingest({'adapters': { adapter : adapterstate}})
             except:
                 self.log.info('Error getting adapter status after discovery: %s' % adapter, exc_info=True)
 
@@ -82,6 +85,25 @@ class servicemanager(sofabase):
                 await self.get_adapter_status(adapter)
             except:
                 self.log.info('Error updating adapter status after discovery: %s' % adapter, exc_info=True)
+
+        # Adapter Overlays that will be called from dataset
+        async def addSmartDevice(self, path):
+            
+            try:
+                if path.split("/")[1]=="adapters":
+                    return await self.addSmartAdapter(path.split("/")[2])
+
+            except:
+                self.log.error('Error defining smart device', exc_info=True)
+                return False
+
+        async def addSmartAdapter(self, deviceid):
+            
+            nativeObject=self.dataset.nativeDevices['adapters'][deviceid]
+            if deviceid not in self.dataset.localDevices:
+                return self.dataset.addDevice(deviceid, devices.smartAdapter('servicemanager/adapters/%s' % deviceid, deviceid, native=nativeObject))
+            
+            return False
 
         
         async def get_adapter_status(self, adaptername):
@@ -129,21 +151,6 @@ class servicemanager(sofabase):
     
             except:
                 self.log.error('Error restarting adapter', exc_info=True)
-
-
-        # Adapter Overlays that will be called from dataset
-        async def addSmartDevice(self, path):
-            
-            try:
-                if path.split("/")[1]=="devices":
-                    #self.log.info('device path: %s' % path)
-                    if nativeObject['name'] not in self.dataset.localDevices:
-                        pass
-                        #return self.dataset.addDevice(nativeObject['name'], devices.tunableLight('hue/lights/%s' % deviceid, nativeObject['name'], native=nativeObject))
-                return {}
-            except:
-                self.log.error('Error defining smart device', exc_info=True)
-                return False
 
 
         def getNativeFromEndpointId(self, endpointId):

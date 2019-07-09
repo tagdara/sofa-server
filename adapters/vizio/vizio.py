@@ -43,29 +43,32 @@ class vizio(sofabase):
                     await self.getTvData()
                     await asyncio.sleep(self.polltime)
                 except:
-                    self.log.error('Error fetching Hue Bridge Data', exc_info=True)
-
+                    self.log.error('Error polling TV', exc_info=True)
+                    await asyncio.sleep(self.polltime)
 
         async def getTvData(self):
 
-            tvdata={}
-            tvdata['power']=self.tv.get_power_state()
-            tvdata['volume']=self.tv.get_current_volume()
-
-            tvdata['input_list']=[]
-            allinputs=self.tv.get_inputs()
-            for input_ in allinputs:
-                #self.log.info('Input: %s' % input_.__dict__)
-                tvdata['input_list'].append(input_.name)
-
             try:
-                tvdata['input']=self.tv.get_current_input().meta_name
-            except AttributeError:
-                self.log.warn('TV does not have current input: %s' % self.tv.get_current_input() )
-                tvdata['input']=tvdata['input_list'][0]
-
-            await self.dataset.ingest({'tv': { self.dataset.config['tv_name']: tvdata}})
-            return tvdata
+                tvdata={}
+                tvdata['power']=self.tv.get_power_state()
+                tvdata['volume']=self.tv.get_current_volume()
+    
+                tvdata['input_list']=[]
+                allinputs=self.tv.get_inputs()
+                for input_ in allinputs:
+                    #self.log.info('Input: %s' % input_.__dict__)
+                    tvdata['input_list'].append(input_.name)
+    
+                try:
+                    tvdata['input']=self.tv.get_current_input().meta_name
+                except AttributeError:
+                    self.log.warn('TV does not have current input: %s' % self.tv.get_current_input() )
+                    tvdata['input']=tvdata['input_list'][0]
+    
+                await self.dataset.ingest({'tv': { self.dataset.config['tv_name']: tvdata}})
+                return tvdata
+            except:
+                self.log.info('Error getting TV data', exc_info=True)
 
 
         # Adapter Overlays that will be called from dataset

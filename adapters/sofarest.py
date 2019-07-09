@@ -199,13 +199,15 @@ class sofaRest():
                     try:
                         result[dev]=self.dataset.getDeviceByEndpointId(dev).StateReport()
                         #result[dev]=self.dataset.getDeviceByfriendlyName(dev).StateReport()
+                    except AttributeError: 
+                        self.log.warn('Warning - device was not ready for statereport: %s' % dev)
                     except:
                         self.log.error('Error getting statereport for %s' % dev, exc_info=True)
 
                 return web.Response(text=json.dumps(result, default=self.date_handler))
             else:
                 return web.Response(text="{}")        
-                
+
         except:
             self.log.error('Error delivering device states report: %s' % body, exc_info=True)
             return web.Response(text="{}")        
@@ -363,7 +365,8 @@ class sofaRest():
 
 
     async def itemLookupHandler(self, request):
-        subset=await self.dataset.getObjectsByDisplayCategory(request.match_info['category'])
+        self.log.info('Request: %s %s' % (request.match_info['category'], request))
+        subset=self.dataset.getObjectsByDisplayCategory(request.match_info['category'])
         #subset=await self.dataset.getCategory(request.match_info['category'])
         self.log.info('Relative path: %s' % request.rel_url)
         #subset=self.lookupAddressOrName(urllib.parse.unquote(request.match_info['item']), subset)

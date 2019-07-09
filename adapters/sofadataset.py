@@ -60,6 +60,7 @@ class sofaDataset():
                 
             if not data:
                 data=self.nativeDevices
+                
                     
 
             for part in path.split("/")[1:]:
@@ -69,6 +70,7 @@ class sofaDataset():
                     if trynames:
                         result=None
                         for item in data:
+                            self.log.info('data: %s vs %s' % (item, part))
                             try:
                                 if data[item]['name']==part:
                                     result=data[item]
@@ -96,7 +98,8 @@ class sofaDataset():
                         if not result:
                             return {}
                         data=result
-                                
+            
+            self.log.info('Path: %s %s' % (path,data))                    
             return data
         
         except:
@@ -359,9 +362,10 @@ class sofaDataset():
                 return None
 
             if not smartDevice:
-                if path not in self.nodevices:
-                    self.log.info(".? No device for %s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":")))
-                    self.nodevices.append(path)
+                nodevpath="%s%s" % (self.adaptername, self.getObjectPath(path).replace("/",":"))
+                if nodevpath not in self.nodevices:
+                    self.log.info(".? No device for %s (%s)" % (nodevpath, path))
+                    self.nodevices.append(nodevpath)
                 # This device does not exist yet.  Some adapters may update out of order, and this change will be picked up
                 # when the device is created.  This has the side effect of indicating when an adapter is putting up possible
                 # devices that sofa is not handling, and might spam the logs.
@@ -441,7 +445,7 @@ class sofaDataset():
             return {}
 
 
-    async def restPost(self, url, data={}, headers={ "Content-type": "text/xml" }):  
+    async def restPost(self, url, data={}, headers={ "Content-type": "text/xml" }, adapter=''):  
         
         try:
             timeout = aiohttp.ClientTimeout(total=self.restTimeout)
@@ -527,7 +531,7 @@ class sofaDataset():
             reqstart=datetime.datetime.now()
             if adapter in self.adapters:
                 url=self.adapters[adapter]['url']+"/deviceStates"
-                outdata=await self.restPost(url, devicelist)
+                outdata=await self.restPost(url, devicelist, adapter=adapter)
                 if (datetime.datetime.now()-reqstart).total_seconds()>1:
                     self.log.info('Warning - %s Report States took %s seconds to respond' % (adapter, (datetime.datetime.now()-reqstart).total_seconds()))
                 return outdata
@@ -555,6 +559,9 @@ class sofaDataset():
                 self.log.info('<< %s %s response: %s' % (adapter, directiveName, response))    
                 return response
 
+        except ConnectionRefusedError:
+            self.log.error("Error sending Directive to Adapter: %s (connection refused)" % data)
+            
         except:
             self.log.error("Error sending Directive to Adapter: %s" % data,exc_info=True)
         

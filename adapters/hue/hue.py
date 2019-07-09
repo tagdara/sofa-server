@@ -392,6 +392,8 @@ class hue(sofabase):
                     return int((float(nativeObj['state']['bri'])/254)*100)
                     
                 elif controllerProp=='powerState':
+                    if not nativeObj['state']['reachable']:
+                        return "OFF"
                     return "ON" if nativeObj['state']['on'] else "OFF"
 
                 elif controllerProp=='colorTemperatureInKelvin':

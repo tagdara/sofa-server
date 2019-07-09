@@ -669,9 +669,10 @@ class sofaWebUI():
                         getByAdapter[adapter]=[]
                     getByAdapter[adapter].append(dev)
                     alldevs.append(dev)
-
-                allstates=await asyncio.gather(*[self.dataset.requestReportStates(adapter, getByAdapter[adapter]) for adapter in getByAdapter ])
-
+                try:
+                    allstates=await asyncio.gather(*[self.dataset.requestReportStates(adapter, getByAdapter[adapter]) for adapter in getByAdapter ], return_exceptions=True)
+                except:
+                    self.log.error('Error collecting states from adapters', exc_info=True)
                 outd={}
                 for statelist in allstates:
                     for device in statelist:

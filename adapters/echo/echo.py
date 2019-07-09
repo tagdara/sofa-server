@@ -10,6 +10,7 @@ import devices
 #import definitions
 
 import asyncio
+import datetime
 
 from alexasupport import AlexaClient, AlexaAPI, AlexaLogin, AlexaDeviceUpdater
 
@@ -27,6 +28,9 @@ class echo(sofabase):
             self.log=log
             self.notify=notify
             self.polltime=10
+            self.captcha_time=None
+            self.captcha_needed=False
+            self.captcha=None
             if not loop:
                 self.loop = asyncio.new_event_loop()
             else:
@@ -38,24 +42,43 @@ class echo(sofabase):
             self.login = AlexaLogin(self.config['url'], self.config['email'], self.config['password'], self.config['path'], log=self.log)
             #result=login.login()  
             self.log.info('Result: %s' % self.login.status)
-            if 'captcha_required' in self.login.status and self.login.status['captcha_required']:
-                self.login.captchaDownload(self.login.status['captcha_image_url'])
-                captcha=input('Enter the captcha:')
-                result=self.login.login(captcha=captcha)
-                self.log.info('Result: %s %s' % (result, self.login.status))
+            await self.waitforcaptcha()
     
             if 'login_successful' in self.login.status and self.login.status['login_successful']:
                 self.alexa_devices=AlexaDeviceUpdater(self.config, self.data, self.login, self.log)
                 self.alexa_devices.cookies=self.login.cookies
                 await self.pollAlexa()
+                
+        async def waitforcaptcha(self):
+            try:
+                if 'captcha_required' in self.login.status and self.login.status['captcha_required']:
+                    self.captcha_needed=True
+                
+                while self.captcha_needed:
+                    if self.captcha_time==None or (datetime.datetime.now()-self.captcha_time)>datetime.timedelta(seconds=300):
+                        self.captcha_time=datetime.datetime.now()
+                        self.login.captchaDownload(self.login.status['captcha_image_url'])
+                    
+                    if self.captcha:
+                        result=self.login.login(captcha=self.captcha)
+                        self.captcha=None
+                        self.log.info('Result: %s %s' % (result, self.login.status))
+                        self.captcha_needed=False
+                        self.captcha_time=None
+                        
+                    await asyncio.sleep(.1)
+            except:
+                self.log.error('Error waiting for the captcha', exc_info=True)
 
         async def pollAlexa(self):
             while True:
                 try:
-                    self.log.info("Polling alexa data")
+                    #self.log.info("Polling alexa data")
                     devices=self.alexa_devices.update()
-                    self.log.info('Devices: %s' % self.alexa_devices.alexa_clients)
-                    await self.dataset.ingest({'devices':devices})
+                    #self.log.info('Devices: %s' % self.alexa_devices.alexa_clients)
+                    changes=await self.dataset.ingest({'devices':devices})
+                    if changes:
+                        self.log.info('Changes: %s' % changes)
                 except:
                     self.log.error('Error fetching alexa Data', exc_info=True)
                 await asyncio.sleep(self.polltime)
@@ -85,8 +108,8 @@ class echo(sofabase):
 
             try:
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                self.log.debug('Checking object for controllers: %s' % nativeObject)
-                self.log.debug('Checking object path: %s' % itempath)
+                self.log.info('Checking object for controllers: %s' % nativeObject)
+                self.log.info('Checking object path: %s' % itempath)
                 try:
                     detail=itempath.split("/",3)[3]
                 except:
@@ -252,6 +275,18 @@ class echo(sofabase):
             except:
                 self.log.error('Error executing state change.', exc_info=True)
 
+        async def virtualList(self, itempath, query={}):
+
+            try:
+                self.log.info('List: %s' % itempath)
+                items=itempath.split('/')
+                if items[0]=="captcha":
+                    self.log.info('Setting captcha reply to %s' % items[1])
+                    self.captcha=items[1]
+                return {}
+
+            except:
+                self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
 
                 
 if __name__ == '__main__':

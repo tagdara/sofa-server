@@ -397,6 +397,7 @@ class logicServer(sofabase):
                 self.users=self.loadJSON('users')
                 self.modes=self.loadJSON('modes')
                 self.areas=self.loadJSON('areas')
+                #self.scenes=self.loadJSON('scenes')
                 self.scenes=self.loadJSON('newscenes')
                 self.security=self.loadJSON('security')
                 self.automations=self.loadJSON('automations')
@@ -405,7 +406,6 @@ class logicServer(sofabase):
                 self.virtualDevices=self.loadJSON('virtualDevices')
                 self.eventTriggers=self.buildTriggerList()
                 self.calculateNextRun()
-
                 self.capturedDevices={}
                 await self.buildLogicCommand()
                 
@@ -1103,23 +1103,27 @@ class logicServer(sofabase):
                                     getlights.append(light)
                                     
                             if getlights:
-                                #self.log.info('Calculation pending for device states: %s' % getlights)
+                                self.log.info('Calculation pending for device states: %s' % getlights)
                                 newdevs = await asyncio.gather(*[self.dataset.requestReportState(light) for light in getlights ])
                                 for dev in newdevs:
                                     devstate_cache[dev['event']['endpoint']['endpointId']]=dev
                                 #self.log.info('device states received: %s' % getlights)
                                 
                             for light in self.scenes[scene]['children']:
-                                devon=False
+
                                 devbri=0
                                 for prop in devstate_cache[light]['context']['properties']:
                                     if prop['name']=="powerState":
-                                        if prop['value']=='ON':
-                                            devon=True
-                                    if prop['name']=="brightness":
+                                        if prop['value']=='OFF':
+                                            devbri=0
+                                            break
+                                    elif prop['name']=="brightness":
                                         devbri=prop['value']
-                                if not devon:
-                                    devbri=0
+                                    elif prop['name']=='connectivity':
+                                        if prop['value']['value']=='UNREACHABLE':
+                                            devbri=0
+                                            break
+                                        
                                 scenescore+=(50-abs(devbri-self.scenes[scene]['children'][light]['brightness']))
  
                         except:

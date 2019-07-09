@@ -249,7 +249,7 @@ class sofabase():
         self.dataset.notifyChanges=self.mqttServer.notifyChanges
         self.dataset.mqttRequestReply=self.mqttServer.requestReply
         
-        self.log.info('.. starting REST server on port %s' % self.dataset.config['rest_port'])
+        self.log.info('.. starting REST server: http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port']))
         self.restServer = sofarest.sofaRest(port=self.dataset.config['rest_port'], loop=self.loop, log=self.log, dataset=self.dataset)
         self.restServer.initialize()
 

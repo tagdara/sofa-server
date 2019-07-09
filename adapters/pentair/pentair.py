@@ -51,7 +51,20 @@ class pentair(sofabase):
             try:
                 #self.log.info("Polling bridge data")
                 pooldata=self.poolquery.advancedQueryGateway()
-                await self.dataset.ingest(json.loads(json.dumps(pooldata)))
+                try:
+                    # This is a little bit of a hack to make display work properly.  Since the spa temp only updates
+                    # when the heater is on, we overwrite the temp with the pool temp 
+                    if pooldata['bodies']['spa']['heatStatus']==0:
+                        pooldata['bodies']['spa']['currentTemp']=pooldata['bodies']['pool']['currentTemp']
+                    # We also want to get the external air temp but it doesn't make sense as a root level item so
+                    # promoting it into bodies as a workaround simplifies that data
+                    pooldata['bodies']['air']={ "bodyType":2, "heatStatus": 0, "currentTemp":pooldata['airtemp'] }
+                
+                except:
+                    pass
+                changes=await self.dataset.ingest(json.loads(json.dumps(pooldata)))
+                if changes:
+                    self.log.info('Changes: %s' % changes)
             except:
                 self.log.error('Error fetching Pool Data', exc_info=True)
                  
@@ -85,8 +98,8 @@ class pentair(sofabase):
         async def addSmartDevice(self, path):
             
             try:
-                if path.split("/")[1]=="airtemp":
-                    return await self.addSimpleThermostat("airtemp","Outdoor Temperature")
+                if path.split("/")[2]=="air":
+                    return await self.addSimpleThermostat("air","Outdoor Temperature")
                 if path.split("/")[2]=="pool":
                     return await self.addSmartThermostat("pool","Pool Temperature")
                 if path.split("/")[2]=="spa":
@@ -97,6 +110,10 @@ class pentair(sofabase):
                     circuitfunction=self.dataset.nativeDevices['circuits'][path.split('/')[2]]['function']
                     circuitid=path.split('/')[2]
                     circuitname=self.dataset.nativeDevices['circuits'][circuitid]['name']
+                    if circuitfunction == 2:
+                        return await self.addBasicDevice(circuitid,'Pool Pump')
+                    if circuitfunction == 1:
+                        return await self.addBasicDevice(circuitid,'Spa Jets')
                     if circuitfunction == 16:
                         #self.log.info('Active Circuit: %s' % circuitid )
                         return await self.addColorLight(circuitid, circuitname)
@@ -106,7 +123,7 @@ class pentair(sofabase):
                         return await self.addSimpleLight(circuitid, circuitname)
                         #return await self.add
                         
-                #self.log.info('Did not add device for %s' % path)
+                self.log.info('Did not add device for %s' % path)
                 return False
 
             except:
@@ -117,7 +134,7 @@ class pentair(sofabase):
         async def addSmartThermostat(self, deviceid, devicename):
         
             if devicename not in self.dataset.localDevices:
-                return self.dataset.addDevice(devicename, devices.smartThermostat('pentair/bodies/%s' % deviceid, devicename, supportedModes=["AUTO", "HEAT", "OFF"] ))
+                return self.dataset.addDevice(devicename, devices.smartThermostat('pentair/bodies/%s' % deviceid, devicename, supportedModes=["HEAT", "OFF"] ))
             
             return False
 
@@ -134,6 +151,14 @@ class pentair(sofabase):
                 return self.dataset.addDevice(devicename, devices.simpleLight('pentair/circuits/%s' % deviceid, devicename))
 
             return False
+
+        async def addBasicDevice(self, deviceid, devicename):
+            
+            if devicename not in self.dataset.localDevices:
+                return self.dataset.addDevice(devicename, devices.basicDevice('pentair/circuits/%s' % deviceid, devicename))
+
+            return False
+
 
         async def addColorLight(self, deviceid, devicename):
             
@@ -218,7 +243,6 @@ class pentair(sofabase):
         def virtualControllers(self, itempath):
 
             try:
-                self.log.info('Getting controllers for %s' % itempath)
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
                 #self.log.debug('Checking object for controllers: %s' % nativeObject)
                 
@@ -227,22 +251,20 @@ class pentair(sofabase):
                 except:
                     detail=""
                     
-                self.log.info('Detail: %s' % detail)
                 controllerlist={}
 
-                if detail in ['spa', 'pool','airtemp', 'pool/currentTemp', 'spa/currentTemp' ]:
+                if detail in ['spa', 'pool','air', 'pool/currentTemp', 'spa/currentTemp', 'air/currentTemp' ]:
                     controllerlist=self.addControllerProps(controllerlist, "TemperatureSensor","temperature")
 
                 if detail in ['spa', 'pool']:
                     controllerlist=self.addControllerProps(controllerlist,"ThermostatController","targetSetpoint")
                     controllerlist=self.addControllerProps(controllerlist,"ThermostatController","thermostatMode")
-
                     
                 if itempath.split("/")[1]=='circuits':
                     if nativeObject['function']==16:
                         controllerlist['PowerController']=['powerState']
                         controllerlist["ColorController"]=["color"]
-                    if nativeObject['function']==7:
+                    if nativeObject['function'] in [1, 2, 7]:
                         controllerlist['PowerController']=['powerState']
                         
                 return controllerlist
@@ -257,12 +279,7 @@ class pentair(sofabase):
             try:
                 #self.log.info('vcp: %s %s' % (controllerProp, nativeObj))
                 if controllerProp=='temperature':
-                    if type(nativeObj)==int:
-                        return nativeObj
-                    if nativeObj['bodyType']==1 and nativeObj['heatStatus']==0:
-                        return self.dataset.nativeDevices['bodies']['pool']['currentTemp']
-                    else:
-                        return nativeObj['currentTemp']  
+                    return nativeObj['currentTemp']  
 
                 if controllerProp=='thermostatMode':
                     circuit=None
@@ -271,14 +288,11 @@ class pentair(sofabase):
                     if nativeObj['bodyType']==1:
                         circuit=self.find_circuit('spa')
                     self.log.info('Circuit: %s' % circuit)
-                    if circuit:
-                        if circuit['state']==0:
-                            return 'OFF'
-                    
-                        if nativeObj['heatStatus']==0:
-                            return 'AUTO'
-                        if nativeObj['heatStatus']==1:
-                            return 'HEAT'
+
+                    if nativeObj['heatMode']==0:
+                        return 'OFF'
+                    if nativeObj['heatMode']==3:
+                        return 'HEAT'
 
                     return 'OFF'
 
@@ -286,7 +300,7 @@ class pentair(sofabase):
                     return nativeObj['setPoint']
                         
                 if controllerProp=='powerState':
-                    if nativeObj['function']==16 or nativeObj['function']==7:
+                    if nativeObj['function'] in [1,2,7,16]:
                         if nativeObj['state']==0:
                             return 'OFF'
                         else:

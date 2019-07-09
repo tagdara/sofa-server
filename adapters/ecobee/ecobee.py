@@ -263,7 +263,7 @@ class ecobee(sofabase):
             nativeObject=self.dataset.nativeDevices['thermostat'][deviceid]
             if nativeObject['name'] not in self.dataset.localDevices:
                 if nativeObject["brand"]=="ecobee":
-                    return self.dataset.addDevice(nativeObject['name'], devices.smartThermostat('ecobee/thermostat/%s' % deviceid, nativeObject['name'], supportedModes=["AUTO", "HEAT", "COOL", "FAN", "OFF"] ))
+                    return self.dataset.addDevice(nativeObject['name'], devices.dualThermostat('ecobee/thermostat/%s' % deviceid, nativeObject['name'], supportedModes=["AUTO", "HEAT", "COOL", "FAN", "OFF"] ))
             return False
 
 
@@ -321,10 +321,8 @@ class ecobee(sofabase):
                         controllerlist=self.addControllerProps(controllerlist,"TemperatureSensor","temperature")
                     if detail=="runtime/desired_heat" or detail=="":
                         controllerlist=self.addControllerProps(controllerlist,"ThermostatController","lowerSetpoint")
-                        controllerlist=self.addControllerProps(controllerlist,"ThermostatController","targetSetpoint")
                     if detail=="runtime/desired_cool" or detail=="":
                         controllerlist=self.addControllerProps(controllerlist,"ThermostatController","upperSetpoint")
-                        controllerlist=self.addControllerProps(controllerlist,"ThermostatController","targetSetpoint")
 
                     if detail=="runtime/desired_fan_mode" or detail=="":
                         controllerlist=self.addControllerProps(controllerlist,"ThermostatController","thermostatMode")

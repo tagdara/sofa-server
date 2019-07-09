@@ -536,6 +536,49 @@ class ThermostatControllerInterface(smartInterface):
     def updateTargetSetpoint(self, value):
         self.targetSetpoint=value
 
+class DualThermostatControllerInterface(smartInterface):
+    
+    def __init__(self, lowerSetpoint=70, upperSetpoint=70, thermostatMode="AUTO", scale="FAHRENHEIT", supportedModes=["HEAT", "COOL", "AUTO", "OFF"], supportsScheduling=False):
+        self.controller="ThermostatController"
+        self.scale=scale
+        self.lowerSetpoint=lowerSetpoint
+        self.upperSetpoint=upperSetpoint
+        self.thermostatMode=thermostatMode
+        self.supportedModes=supportedModes
+        self.supportsScheduling=supportsScheduling
+
+    @property
+    def configuration(self):
+        return {"supportsScheduling": self.supportsScheduling, "supportedModes": self.supportedModes }
+
+    @property            
+    def directives(self):
+        return { "SetTargetTemperature": { "upperSetpoint": { "value": "integer", "scale":"string" }, "lowerSetpoint": { "value": "integer", "scale":"string" }}, "SetThermostatMode": {"thermostatMode": {"value": "string"}} }
+        
+    @property          
+    def props(self):
+        return { "upperSetpoint" : { "value":"integer", "scale":"string" },  "lowerSetpoint" : { "value":"integer", "scale":"string" }, "thermostatMode": { "value" : "string" }}
+
+
+    @property
+    def state(self):
+        thisState=super().state
+        for item in thisState:
+            if item['name'] in ["temperature", "lowerSetpoint", "upperSetpoint"]:
+                item['value']={'value': item['value'], 'scale':self.scale}
+                
+        return thisState
+        
+    def SetTargetTemperature(self, upperSetPoint, lowerSetPoint):
+        self.upperSetpoint=upperSetPoint
+        self.lowerSetpoint=lowerSetPoint
+
+    def updateUpperSetpoint(self, value):
+        self.upperSetpoint=value
+
+    def updateLowerSetpoint(self, value):
+        self.lowerSetpoint=value
+
 
 class LogicControllerInterface(smartInterface):
     
@@ -1350,6 +1393,18 @@ class smartThermostat(smartObject):
         self._interfaces=[self.TemperatureSensor, self.ThermostatController]
         self._path=path
         
+class dualThermostat(smartObject):
+    
+    def __init__(self, path, name, description="Thermostat", manufacturer="sofa", SetTargetTemperature=None, supportedModes=["HEAT", "COOL", "AUTO", "OFF"], log=None, native=None):
+        self._friendlyName=name
+        self._displayCategories=["THERMOSTAT"]
+        self._description=description
+        self._manufacturer=manufacturer
+        self.TemperatureSensor=TemperatureSensorInterface()
+        self.ThermostatController=DualThermostatControllerInterface(SetTargetTemperature, supportedModes=supportedModes)
+        self._interfaces=[self.TemperatureSensor, self.ThermostatController]
+        self._path=path
+        
 class smartThermostatFan(smartObject):
     
     def __init__(self, path, name, description="", manufacturer="sofa", SetPowerLevel=None, SetTargetTemperature=None, supportedModes=["HEAT", "COOL", "AUTO", "OFF"], log=None, native=None):
@@ -1469,6 +1524,18 @@ class simpleArea(smartObject):
         self._manufacturer=manufacturer
         self.AreaController=AreaControllerInterface()
         self._interfaces=[self.AreaController]
+        self._path=path
+
+class smartAdapter(smartObject):
+    
+    def __init__(self, path, name, description="Adapter", manufacturer="sofa", TurnOn=None, TurnOff=None, SetEndpointHealth=None, log=None, native=None):
+        self._friendlyName=name
+        self._displayCategories=["ADAPTER"]
+        self._description=description
+        self._manufacturer=manufacturer
+        self.PowerController=PowerControllerInterface(TurnOn, TurnOff)
+        self.EndpointHealth=EndpointHealthInterface(SetEndpointHealth)
+        self._interfaces=[self.PowerController, self.EndpointHealth]
         self._path=path
 
 
