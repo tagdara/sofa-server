@@ -65,19 +65,27 @@ class unifi_camera(camera.Camera):
         self.char_detected.set_value(False)
 
     def get_snapshot(self, image_size):  # pylint: disable=unused-argument, no-self-use
-   
-        future=asyncio.run_coroutine_threadsafe(self.get_unifi_snap(image_size['image-width']), loop=self.loop)
-        return future.result() 
 
+        try:   
+            future=asyncio.run_coroutine_threadsafe(self.get_unifi_snap(image_size['image-width']), loop=self.loop)
+            return future.result() 
+        except:
+            self.log.error('Error getting snapshot', exc_info=True)
+ 
     async def get_unifi_snap(self, width):
 
-        url="https://%s:%s/api/2.0/snapshot/camera/%s?force=true&width=%s&apiKey=%s" % (self.cameraconfig['nvr_address'], self.cameraconfig['nvr_snapshot_port'], self.cameraconfig['camera_id'], width, self.cameraconfig['api_key'])
-
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as client:
-            async with client.get(url) as response:
-                result=await response.read()
-                return result    
-                
+        try:
+            if width<640:
+                width=640
+            url="https://%s:%s/api/2.0/snapshot/camera/%s?force=true&width=%s&apiKey=%s" % (self.cameraconfig['nvr_address'], self.cameraconfig['nvr_snapshot_port'], self.cameraconfig['camera_id'], width, self.cameraconfig['api_key'])
+            #self.log.info('%s URL: %s' % (self.cameraconfig['camera_id'],url))
+            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as client:
+                async with client.get(url) as response:
+                    result=await response.read()
+                    return result  
+        except:
+            self.log.error('Error getting unifi snap', exc_info=True)
+                    
     async def start_stream(self, session_info, stream_config):
         
         try:

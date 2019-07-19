@@ -67,6 +67,14 @@ class SofaAccessory(Accessory):
                 else:
                     command['directive']['header']['name']="TurnOff"
 
+            elif data['characteristic']=='Active':
+                command['directive']['header']['namespace']='Alexa.PowerController'
+                if data['value']:
+                    command['directive']['header']['name']="TurnOn"
+                else:
+                    command['directive']['header']['name']="TurnOff"
+
+
             elif data['characteristic']=='Brightness':
                 command['directive']['header']['namespace']='Alexa.BrightnessController'
                 command['directive']['header']['name']="SetBrightness"
@@ -105,6 +113,13 @@ class SofaAccessory(Accessory):
                 command['directive']['header']['name']="SetTargetSetpoint"
                 command['directive']['payload']={'temperature': vals[data['value']]}
 
+            elif data['characteristic']=='RemoteKey':
+                vals={4:'CursorUp', 5:'CursorDown', 6:'CursorLeft', 7:'CursorRight', 8: 'DpadCenter', 9: 'Exit', 15: 'Home'}
+                command['directive']['header']['namespace']='Alexa.RemoteController'
+                command['directive']['header']['name']="PressRemoteButton"
+                command['directive']['payload']={'buttonName': vals[data['value']]}
+
+
                 
             return command
                 
@@ -132,15 +147,14 @@ class LightBulb(SofaAccessory):
 
     category = pyhap.const.CATEGORY_LIGHTBULB
     
-    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, color=False, **kwargs):
+    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, chars=[], **kwargs):
         
         self.event_loop=loop
         self.endpointId=endpointId
         self.adapterUrl=adapterUrl
-        self.color=color
         self.log = logging.getLogger('homekit')
         super().__init__(*args, **kwargs)
-        if self.color:
+        if 'Hue' in chars:
             serv_light = self.add_preload_service('Lightbulb',chars=["Name", "On", "Brightness", "Hue", "Saturation"])
             self.char_hue=serv_light.configure_char('Hue', setter_callback = self.set_Hue)
             self.char_sat=serv_light.configure_char('Saturation', setter_callback = self.set_Saturation)
@@ -169,6 +183,7 @@ class LightBulb(SofaAccessory):
     def set_Brightness(self, value):
         
         try:
+            #self.log.info('Sending brightness change: %s' % value )
             asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Brightness", "value":value}), loop=self.event_loop)
             #asyncio.run_coroutine_threadsafe(self.sendCommand({"id":self.aid, "name":self.display_name, "characteristic":"Brightness", "value":value}), loop=self.event_loop)
         except:
@@ -177,8 +192,10 @@ class LightBulb(SofaAccessory):
     def set_Hue(self, value):
         
         try:
+
             colorval={"hue": self.char_hue.value, "saturation": self.char_sat.value/100, "brightness": self.char_brightness.value/100}
-            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Hue", "value":colorval}), loop=self.event_loop)
+            #self.log.info('Not Sending Hue change as saturation follows: %s' % colorval )
+            #asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Hue", "value":colorval}), loop=self.event_loop)
         except:
             self.log.error('Error in set hue', exc_info=True)
 
@@ -186,6 +203,7 @@ class LightBulb(SofaAccessory):
         
         try:
             colorval={"hue": self.char_hue.value, "saturation": self.char_sat.value/100, "brightness": self.char_brightness.value/100}
+            #self.log.info('Sending Saturation change: %s' % colorval )
             asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Hue", "value":colorval}), loop=self.event_loop)
         except:
             self.log.error('Error in set sat', exc_info=True)
@@ -245,7 +263,69 @@ class TemperatureSensor(SofaAccessory):
 
     def run(self):
         pass
+
+
+class Television(SofaAccessory):
+
+    category = pyhap.const.CATEGORY_TELEVISION
     
+    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
+        
+        try:
+            self.event_loop=loop
+            self.endpointId=endpointId
+            self.adapterUrl=adapterUrl
+            self.log = logging.getLogger('homekit')   
+            super().__init__(*args, **kwargs)
+            serv_tv = self.add_preload_service('Television', chars=['Active', 'ActiveIdentifier', 'ConfiguredName', 'SleepDiscoveryMode', 'RemoteKey'])
+            serv_tvspeaker = self.add_preload_service('TelevisionSpeaker', chars=['Mute', 'Volume', 'VolumeSelector'])
+            self.char_active = serv_tv.configure_char('Active', setter_callback=self.set_active)
+            self.activeidentifier = serv_tv.configure_char('ActiveIdentifier', setter_callback=self.set_activeidentifier)
+            self.configuredname = serv_tv.configure_char('ConfiguredName')
+            self.sleepdiscoverymode = serv_tv.configure_char('SleepDiscoveryMode', setter_callback=self.set_sleepdiscoverymode)
+            self.remotekey = serv_tv.configure_char('RemoteKey', setter_callback=self.set_remotekey)
+            
+            self.char_mute = serv_tvspeaker.configure_char('Mute', setter_callback=self.set_mute)
+            self.char_volume = serv_tvspeaker.configure_char('Volume', setter_callback=self.set_volume)
+            self.char_volumeselector = serv_tvspeaker.configure_char('VolumeSelector', setter_callback=self.set_volumeselector)
+        
+            self.configuredname.set_value('TV')
+            self.sleepdiscoverymode.set_value(1)
+            self.set_primary_service(serv_tv)
+            self.log.info('Tv primary: %s' % self.get_service('Television').is_primary_service)
+        except:
+            self.log.error('Error initializing TV', exc_info=True)
+
+    def set_activeidentifier(self, value):
+        self.log.info("TV Active Identifier: %s", value)
+
+    def set_active(self, value):
+        cmd={"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Active", "value":value}
+        self.log.info('Sending TV Active OnOff command: %s' % cmd )
+        asyncio.run_coroutine_threadsafe(self.sendCommand(cmd), loop=self.event_loop)
+
+    def set_sleepdiscoverymode(self, value):
+        self.log.info("TV sleep discovery mode : %s", value)
+
+    def set_remotekey(self, value):
+        cmd={"endpointId":self.endpointId, "name":self.display_name, "characteristic":"RemoteKey", "value":value}
+        self.log.info('Sending TV remotekey command: %s' % cmd )
+        asyncio.run_coroutine_threadsafe(self.sendCommand(cmd), loop=self.event_loop)
+
+    def set_mute(self, value):
+        self.log.info("TV set_mute : %s", value)
+
+    def set_volume(self, value):
+        self.log.info("TV set_volume : %s", value)
+
+    def set_volumeselector(self, value):
+        self.log.info("TV set_volumeselector : %s", value)
+
+
+    def run(self):
+        pass
+
+        
 class Thermostat(SofaAccessory):
 
     category = pyhap.const.CATEGORY_THERMOSTAT
@@ -415,6 +495,7 @@ class homekit(sofabase):
 
                 self.buildBridge()
                 self.driver.add_accessory(accessory=self.bridge)
+                #await self.saveAidMap()
                 self.log.info('PIN: %s' % self.driver.state.pincode)
                 signal.signal(signal.SIGTERM, self.driver.signal_handler)
                 self.executor.submit(self.driver.start)
@@ -439,11 +520,8 @@ class homekit(sofabase):
                     newdev=None
                     dev=self.dataset.nativeDevices['accessorymap'][devname]
                     if dev['services'][0]=='Lightbulb':
-                        if 'color' in dev:
-                            newdev=LightBulb(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, color=dev['color'], aid=dev['id'])
-                        else:
-                            newdev=LightBulb(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
-                            
+                        newdev=LightBulb(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, chars=dev['chars'], aid=dev['id'])
+
                         self.bridge.add_accessory(newdev)
                     elif dev['services'][0]=='TemperatureSensor':
                         newdev=TemperatureSensor(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
@@ -461,6 +539,8 @@ class homekit(sofabase):
                     elif dev['services'][0]=='Switch':
                         newdev=Switch(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
                         self.bridge.add_accessory(newdev)
+                    elif dev['services'][0]=='Television':
+                        newdev=Television(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
 
                         
                     # Speakers are not really supported at this point
@@ -518,11 +598,14 @@ class homekit(sofabase):
                 #self.log.info('Bridge Acc: %s' % self.bridge.accessories)
                 for acc in self.bridge.accessories:
                     svcs=[]
+                    chars=[]
                     for svc in self.bridge.accessories[acc].services:
                         if svc.display_name not in ['AccessoryInformation']:
                             svcs.append(svc.display_name)
+                            for char in svc.characteristics:
+                                chars.append(char.display_name)
                     try:    
-                        accmap[self.bridge.accessories[acc].display_name]={'id': acc, 'services': svcs, 'adapterUrl': self.bridge.accessories[acc].adapterUrl, 'endpointId':self.bridge.accessories[acc].endpointId }
+                        accmap[self.bridge.accessories[acc].display_name]={'id': acc, 'services': svcs, 'chars': chars, 'adapterUrl': self.bridge.accessories[acc].adapterUrl, 'endpointId':self.bridge.accessories[acc].endpointId }
                     except:
                         self.log.info('TS')
                 #self.log.info('am: %s' % accmap)
@@ -532,12 +615,24 @@ class homekit(sofabase):
                 self.log.error('Error in virt aid', exc_info=True)
                 
 
+        def isColor(self, device):
+            
+            try:
+                #self.log.info('Device: %s' % device)
+                for prop in device['capabilities']:
+                    if prop['interface']=="Alexa.ColorController":
+                        return True
+                return False
+            except:
+                self.log.error('Error determining if light has color capabilities', exc_info=True)
+                return False
+
         async def virtualAddDevice(self, devname, device):
         
             try:
-                if device['displayCategories'][0] not in ['DEVICE', 'TEMPERATURE_SENSOR', 'THERMOSTAT', 'LIGHT', 'CONTACT_SENSOR', 'DOORBELL']:
+                if device['displayCategories'][0] not in ['DEVICE', 'TEMPERATURE_SENSOR', 'THERMOSTAT', 'LIGHT', 'CONTACT_SENSOR', 'TV']:
                     return False
-                
+                    
                 if device['friendlyName'] in self.dataset.nativeDevices['accessorymap']:
                     if self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['endpointId']!=device['endpointId']:
                         self.log.info('Fixing changed endpointId for %s from %s to %s' % (device['friendlyName'], self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['endpointId'], device['endpointId']))
@@ -569,14 +664,18 @@ class homekit(sofabase):
                     newdev=TemperatureSensor(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
 
                 elif device['displayCategories'][0]=='LIGHT':
-                    self.log.info('Light: %s' % device)
-                    newdev=LightBulb(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid, color=False)
+                    if self.isColor(device):
+                        newdev=LightBulb(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid, chars=['On', 'Name', 'Brightness', 'Hue', 'Saturation'])
+                    else:
+                        newdev=LightBulb(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid, chars=['On', 'Name', 'Brightness'])
 
                 elif device['displayCategories'][0]=='CONTACT_SENSOR':
                     newdev=ContactSensor(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
 
                 elif device['displayCategories'][0]=='RECEIVER':
-                    newdev=Speaker(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+                    # not supported at this time in the Home app
+                    #newdev=Speaker(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+                    pass
 
                 elif device['displayCategories'][0]=='DOORBELL':
                     newdev=Doorbell(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
@@ -584,6 +683,8 @@ class homekit(sofabase):
                 elif device['displayCategories'][0]=='DEVICE':
                     newdev=Switch(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
 
+                elif device['displayCategories'][0]=='TV':
+                    newdev=Television(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
 
                 if newdev:
                     self.log.info('++ New Homekit Device: %s - %s %s' % (aid, devicename, device))
@@ -665,6 +766,13 @@ class homekit(sofabase):
                     else:
                         acc.char_brightness.set_value(0)
                     #acc.char_temp.set_value(prop['value']['value'])
+
+                elif prop['name']=='color':
+                    if acc.reachable:
+                        acc.char_hue.set_value(prop['value']['hue'])
+                        acc.char_hue.set_value(prop['value']['saturation']*100)
+                        acc.char_brightness.set_value(prop['value']['brightness']*100)
+
                 elif prop['name']=='volume':
                     #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
                     acc.char_volume.set_value(prop['value'])
@@ -685,15 +793,25 @@ class homekit(sofabase):
                         acc.reachable=True
 
                 elif prop['name']=='powerState':
-                    if prop['value']=='ON':
-                        if acc.reachable:
-                            acc.char_on.set_value(True)
-                        else:
+                    if getattr(acc, "char_on", None):
+                        if prop['value']=='ON':
+                            if acc.reachable:
+                                acc.char_on.set_value(True)
+                            else:
+                                acc.char_on.set_value(False)
+                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', True)
+                        elif prop['value']=='OFF':
                             acc.char_on.set_value(False)
-                        #self.setCharacteristic(thisaid, 'Lightbulb', 'On', True)
-                    elif prop['value']=='OFF':
-                        acc.char_on.set_value(False)
-                        #self.setCharacteristic(thisaid, 'Lightbulb', 'On', False)
+                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', False)
+                    elif getattr(acc, "char_active", None):
+                        if prop['value']=='ON':
+                            acc.char_active.set_value(True)
+                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', True)
+                        elif prop['value']=='OFF':
+                            acc.char_active.set_value(False)
+                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', False)
+
+
                 elif prop['name']=='temperature':
                     #self.setCharacteristic(thisaid, 'TemperatureSensor', 'CurrentTemperature', prop['value'])
                     if prop['value']['scale']=='FAHRENHEIT':
@@ -756,6 +874,14 @@ class homekit(sofabase):
                         elif prop['value']=='OFF':
                             acc.char_on.set_value(False)
                             #self.setCharacteristic(thisaid, 'Lightbulb', 'On', False)
+                    elif getattr(acc, "char_active", None):
+                        if prop['value']=='ON':
+                            acc.char_active.set_value(True)
+                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', True)
+                        elif prop['value']=='OFF':
+                            acc.char_active.set_value(False)
+                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', False)
+
                 elif prop['name']=='temperature':
                     #self.setCharacteristic(thisaid, 'TemperatureSensor', 'CurrentTemperature', prop['value'])
                     if prop['value']['scale']=='FAHRENHEIT':

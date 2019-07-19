@@ -129,6 +129,14 @@ class sonos(sofabase):
                     self.log.info('Players: %s' % discoverlist)
                 else:
                     discoverlist=None
+                    
+                if discoverlist==None:
+                    if 'players' in self.dataset.config:
+                        discoverlist=[]
+                        for playername in self.dataset.config['players']:
+                            player=soco.SoCo(playername)
+                            discoverlist.append(player)
+                            
                 if discoverlist==None:
                     self.log.error('Discover: No sonos devices detected')
                     self.connect_needed=True
@@ -397,6 +405,10 @@ class sonos(sofabase):
                         self.log.info('Sending %s to coordinator instead: %s' % (command, dev.InputController.input))
                 except:
                     coord=dev.endpointId
+                
+                if self.players==None:
+                    self.log.error('No players are available for command: %s %s %s %s.' % (endpointId, controller, command, payload), exc_info=True)
+                    return None
                     
                 for player in self.players:
                     #if player.player_name==device or player.uid==device:
@@ -451,16 +463,17 @@ class sonos(sofabase):
                         return response
 
                 self.log.info('Did not find player %s' % coord)
-                return {}
+
             except soco.exceptions.SoCoSlaveException:
                 self.log.error('Error from Soco while trying to issue command to a non-coordinator %s %s', (endpointId, command))
             except soco.exceptions.SoCoUPnPException:
                 self.log.error('Error from Soco while trying to issue command %s against possible commands: %s' % (command, actions), exc_info=True)
                 self.log.error("It is likely that we have now lost connection, subscriptions are dead, and the adapter needs to be restarted")
                 self.connect_needed=True
-                return None
             except:
                 self.log.error('Error executing state change.', exc_info=True)
+            
+            return None
 
 
 
@@ -691,12 +704,16 @@ class sonos(sofabase):
                 self.log.error('Attempt to get art cancelled for %s' % path, exc_info=True)
                 self.log.error("It is likely that we have now lost connection, subscriptions are dead, and the adapter needs to be restarted")
                 self.connect_needed=True
-                return self.sonoslogo
-            except:
+
+            except AttributeError:
                 self.log.error('Couldnt get art for %s' % playerObject, exc_info=True)
                 self.connect_needed=True
+                
+            except:
+                self.log.error('Couldnt get art for %s' % playerObject, exc_info=True)
                 #return {'name':playerObject['name'], 'id':playerObject['speaker']['uid'], 'image':""}
-                return self.sonoslogo
+                
+            return self.sonoslogo
                     
         async def virtualCategory(self, category):
             

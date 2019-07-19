@@ -34,6 +34,7 @@ class SofaCollector(sofabase):
                     response=await client.get('%s/discovery' % url)
                     result=await response.read()
                     return json.loads(result.decode())
+                    
             except aiohttp.client_exceptions.ClientConnectorError:
                 self.log.warn('Error discovering adapter devices - adapter not ready: %s' % url)
             except:
@@ -104,9 +105,14 @@ class SofaCollector(sofabase):
                                 break
                             elif change['path']=='/%s/startup' % adapter:
                                 self.log.info('.. mqtt adapter %s startup time change. Scanning for new devices' % adapter)
+                                await self.scrubDevicesOnStartup(adapter)
                                 if hasattr(self, "virtualUpdateAdapter"):
                                     await self.virtualUpdateAdapter(adapter, adapterdata[adapter])
-                                devlist=await self.discoverAdapterDevices(adapterdata[adapter]['url'])
+                                
+                                # This should be unnecessary because once the startup is complete the adapter sends each device in an 
+                                # AddOrUpdate Report
+                                #devlist=await self.discoverAdapterDevices(adapterdata[adapter]['url'])
+                                #self.log.info('.. new devices: %s' % devlist)
                                 break
                                 
                         if devlist:
@@ -117,6 +123,21 @@ class SofaCollector(sofabase):
                             await self.updateDeviceList(devlist)
                 except:
                     self.log.error('Error handling announcement: %s ' % adapterdata[adapter], exc_info=True)
+
+        async def scrubDevicesOnStartup(self, adaptername):
+            
+            try:
+                dead_devs=[]
+                for dev in self.dataset.devices:
+                    if dev.startswith("%s:" % adaptername):
+                        dead_devs.append(dev)
+                
+                for dev in dead_devs:
+                    del self.dataset.devices[dev]
+            
+            except:
+                self.log.error('Error scrubbing devices on adapter restart', exc_info=True)
+
 
         async def handleAddOrUpdateReport(self, devlist):
 

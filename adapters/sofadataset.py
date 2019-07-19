@@ -99,7 +99,7 @@ class sofaDataset():
                             return {}
                         data=result
             
-            self.log.info('Path: %s %s' % (path,data))                    
+            #self.log.info('Path: %s %s' % (path,data))                    
             return data
         
         except:
