@@ -131,10 +131,13 @@ class SofaAccessory(Accessory):
             
         try:
             command=await self.convertAccessoryCommand(data)
+            self.log.info('<- received command %s' % data)
+            self.log.info('>> sending %s' % command)
             headers = { "Content-type": "text/xml" }
             async with aiohttp.ClientSession() as client:
                 response=await client.post(self.adapterUrl, data=json.dumps(command), headers=headers)
                 result=await response.read()
+                self.log.info('<< response %s' % result)
                 return result
         except:
             self.log.error("send command error",exc_info=True)      
@@ -172,7 +175,7 @@ class LightBulb(SofaAccessory):
     def set_On(self, value):
         
         try:
-            self.log.info('Sending OnOff command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"On", "value":value} )
+            #self.log.info('Sending OnOff command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"On", "value":value} )
             asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"On", "value":value}), loop=self.event_loop)
 
         except:
@@ -292,7 +295,6 @@ class Television(SofaAccessory):
             self.configuredname.set_value('TV')
             self.sleepdiscoverymode.set_value(1)
             self.set_primary_service(serv_tv)
-            self.log.info('Tv primary: %s' % self.get_service('Television').is_primary_service)
         except:
             self.log.error('Error initializing TV', exc_info=True)
 

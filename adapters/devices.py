@@ -1134,7 +1134,7 @@ class basicDevice(smartObject):
     
     def __init__(self, path, name, description="Device", manufacturer="sofa", log=None, native=None):
         self._friendlyName=name
-        self._displayCategories=["DEVICE"]
+        self._displayCategories=["SWITCH"]
         self.PowerController=PowerControllerInterface()
         self._interfaces=[self.PowerController]
         self._description=description

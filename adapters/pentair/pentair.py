@@ -201,7 +201,12 @@ class pentair(sofabase):
                         nativeCommand['on']=False
                         self.poolquery.sendButtonPress(int(circuitid),0)
 
-                elif controller=="BrightnessController":
+                elif controller=="BrightnessController-DoNotRun":
+                    
+                    # Skipping processing for brightness at this point.  In all cases where the 
+                    # power state changes, a power command should also be received.
+                    # this should reduce the risk of flapping on the very slow pentair lights
+                    
                     if int(payload['brightness'])>0:
                         nativeCommand['on']=True
                         circuitid=self.dataset.nativeDevices['circuits'][device]['id']
@@ -234,6 +239,9 @@ class pentair(sofabase):
                 if nativeCommand:
                     await asyncio.sleep(updatedelay)
                     await self.updatePentair()
+                    
+                    response=await self.dataset.generateResponse(endpointId, correlationToken)
+                    return response
                 self.log.info('Endpoint: %s / command: %s' % (device, nativeCommand))
                     
             except:

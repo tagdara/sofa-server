@@ -263,7 +263,7 @@ class ecobee(sofabase):
             nativeObject=self.dataset.nativeDevices['thermostat'][deviceid]
             if nativeObject['name'] not in self.dataset.localDevices:
                 if nativeObject["brand"]=="ecobee":
-                    return self.dataset.addDevice(nativeObject['name'], devices.dualThermostat('ecobee/thermostat/%s' % deviceid, nativeObject['name'], supportedModes=["AUTO", "HEAT", "COOL", "FAN", "OFF"] ))
+                    return self.dataset.addDevice(nativeObject['name'], devices.dualThermostat('ecobee/thermostat/%s' % deviceid, nativeObject['name'], supportedModes=["AUTO", "HEAT", "COOL", "OFF"] ))
             return False
 
 

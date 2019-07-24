@@ -143,7 +143,7 @@ class alexaBridge(sofabase):
                                 if 'properties' in response['context']:
                                     response['context']['properties']=self.trimProps(response['context']['properties'])
                             except:
-                                self.log.error('Error trimming properties', exc_info=True)
+                                self.log.error('Error trimming properties from response: %s' % response, exc_info=True)
 
                             if 'correlationToken' in event["directive"]["header"] and response:
                                 if response['event']['header']['name']!='Response':
@@ -664,6 +664,7 @@ class alexaBridge(sofabase):
                                     else:
                                         alexadev=True
                                 if alexadev:
+                                    self.log.info('Discovered device: %s %s' % (dev, adev))
                                     alexadevs.append(adev)
                     except:
                         self.log.error('Error processing device: %s' % dev, exc_info=True)
