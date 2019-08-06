@@ -245,6 +245,31 @@ class SofaCollector(sofabase):
                 self.log.error('Error updating from state report', exc_info=True)
 
 
+        async def handleDeleteReport(self, message):
+            
+            try:
+                if not message:
+                    return {}
+                    
+                if 'event' not in message or 'payload' not in message['event']:
+                    self.log.error('Error: invalid delete report - has no event or event/payload: %s' % message)
+                    return {}
+                    
+                self.log.info('Delete Report: %s' % message)
+                        
+                for prop in message['event']['payload']['endpoints']:
+                    if prop['endpointId'] in self.dataset.devices:
+                        self.log.info('-- Removing device: %s %s' % (prop['endpointId'], self.dataset.devices[prop['endpointId']]))
+                        del self.dataset.devices[prop['endpointId']]
+
+                    if hasattr(self, "virtualDeleteHandler"):
+                        await self.virtualDeleteHandler(prop['endpointId'])
+
+            
+            except:
+                self.log.error('Error handing deletereport: %s' % message, exc_info=True)
+
+
         async def handleChangeReport(self, message):
             
             try:

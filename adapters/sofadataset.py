@@ -416,6 +416,7 @@ class sofaDataset():
                 return changeReport
         
             elif newDevice:
+                self.log.info('++ sending add or update: %s' % smartDevice.addOrUpdateReport)
                 self.notify('sofa/updates',json.dumps(smartDevice.addOrUpdateReport))
                 return None
                 #return smartDevice.addOrUpdateReport
@@ -444,6 +445,35 @@ class sofaDataset():
             self.log.error('Error generating response: %s' % endpointId, exc_info=True)
             return {}
 
+    async def generateDeleteReport(self, endpointId, bearerToken=''):
+            
+        try:
+            report={
+                        "event": {
+                            "header": {
+                                "messageId": str(uuid.uuid1()),
+                                "name": "DeleteReport",
+                                "namespace": "Alexa.Discovery",
+                                "payloadVersion": "3"
+                            },
+                            "payload": {
+                                "endpoints": [
+                                    { "endpointId": endpointId }
+                                ],
+                                "scope": {
+                                    "type": "BearerToken",
+                                    "token": bearerToken
+                                }
+                            }
+                        }
+                    }
+                    
+            self.notify('sofa/updates',json.dumps(report))
+            return report
+
+        except:
+            self.log.error('Error generating delete report: %s' % endpointId, exc_info=True)
+            return {}
 
     async def restPost(self, url, data={}, headers={ "Content-type": "text/xml" }, adapter=''):  
         
@@ -455,17 +485,14 @@ class sofaDataset():
                 if result:
                     return json.loads(result.decode())
                 
-                self.log.warn('No data received from post')
+                self.log.warn('!. No data received from post')
                 return {}
         
-        except concurrent.futures._base.CancelledError:
-            self.log.warn('.! Request to %s canceled for %s' % (url, data))
-
-        except aiohttp.client_exceptions.ClientConnectorError:
-            self.log.error('!. Connection refused for adapter %s.  Adapter is likely stopped' % adapter)
-
-        except ConnectionRefusedError:
-            self.log.error('!. Connection refused for adapter %s.  Adapter is likely stopped' % adapter)
+        except (aiohttp.client_exceptions.ClientConnectorError,
+                ConnectionRefusedError,
+                aiohttp.client_exceptions.ClientOSError,
+                concurrent.futures._base.CancelledError) as e:
+            self.log.error('!. Connection refused for adapter %s. %s' % (adapter, str(e)))       
 
         except:
             self.log.error("!. Error requesting state: %s" % data,exc_info=True)

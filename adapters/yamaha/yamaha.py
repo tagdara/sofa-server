@@ -53,7 +53,7 @@ class BroadcastProtocol:
             for phrase in self.keyphrases:
                 if data.find(phrase)>-1 and data.find("<?xml")>-1:
                     event=self.etree_to_dict(et.fromstring(data[data.find("<?xml"):]))
-                    self.log.info('>> ssdp %s' % event)
+                    self.log.info('-> ssdp %s' % event)
                     self.processUPNPevent(event)
                     #return str(data)
         except:
@@ -395,7 +395,7 @@ class yamaha(sofabase):
                     #volrange={'max':15, 'min':-70}
                     volrange={'max':0, 'min':-80}
                     zvolume=float(nativeObj['Basic_Status']['Volume']['Lvl']['Val'])/10
-                    zpos=int(((volrange['max']-volrange['min'])-(volrange['max']-zvolume))*(100/(volrange['max']-volrange['min'])))
+                    zpos=int(round(((volrange['max']-volrange['min'])-(volrange['max']-zvolume))*(100/(volrange['max']-volrange['min']))))
                     return zpos
                 except:
                     self.log.error('Error checking volume status', exc_info=True)

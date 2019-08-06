@@ -631,6 +631,7 @@ class sofaWebUI():
         # the full dashboard layout is not used.
 
         try:
+            self.log.info('** started device and datalist %s' % request.remote)
             devices=list(self.dataset.devices.values())
 
             getByAdapter={} 
@@ -739,8 +740,11 @@ class sofaWebUI():
 
     async def sse_handler(self, request):
         try:
+            remoteip=request.remote
+            self.log.info('++ SSE started for %s' % request.remote)
             client_sse_date=datetime.datetime.now(datetime.timezone.utc)
             async with sse_response(request) as resp:
+                await self.sseDataUpdater(resp)
                 while True:
                     if self.sse_last_update>client_sse_date:
                         sendupdates=[]
@@ -759,11 +763,37 @@ class sofaWebUI():
                     await asyncio.sleep(.1)
             return resp
         except concurrent.futures._base.CancelledError:
-            self.log.info('Client cancelled SSE = Probably IOS client closing')
+            self.log.info('-- SSE closed for %s' % remoteip)
             return resp
         except:
             self.log.error('Error in SSE loop', exc_info=True)
             return resp
+
+    async def sseDataUpdater(self, resp):
+
+        try:
+            devices=list(self.dataset.devices.values())
+
+            getByAdapter={} 
+            for dev in self.dataset.devices:
+                adapter=dev.split(':')[0]
+                if adapter not in getByAdapter:
+                    getByAdapter[adapter]=[]
+                getByAdapter[adapter].append(dev)
+                
+            gfa=[]
+            
+            for adapter in getByAdapter:
+                gfa.append(self.dataset.requestReportStates(adapter, getByAdapter[adapter]))
+                
+            for f in asyncio.as_completed(gfa):
+                devstate = await f  # Await for next result.
+                devoutput={"event": { "header": { "name": "Multistate" }}, "state": devstate}
+                await resp.send(json.dumps(devoutput))
+                    
+        except:
+            self.log.error('Error sse list of devices', exc_info=True)
+
 
 
     async def root_handler(self, request):
@@ -833,6 +863,14 @@ class ui(sofabase):
             except:
                 self.log.error('Error updating from change report', exc_info=True)
 
+        async def handleDeleteReport(self, message):
+        
+            try:
+                await super().handleDeleteReport(message)
+                self.uiServer.add_sse_update(message)
+
+            except:
+                self.log.error('Error updating from state report: %s' % message, exc_info=True)
 
         async def virtualCategory(self, category):
             

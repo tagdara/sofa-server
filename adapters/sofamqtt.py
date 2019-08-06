@@ -270,6 +270,11 @@ class sofaMQTT():
                     if message['event']['endpoint']['endpointId'].split(":")[0]!=self.adaptername:
                         if hasattr(self.adapter, "handleChangeReport"):
                             await self.adapter.handleChangeReport(message)
+
+                elif message['event']['header']['name']=='DeleteReport':
+                    if hasattr(self.adapter, "handleDeleteReport"):
+                        await self.adapter.handleDeleteReport(message)
+
                 
                 elif message['event']['header']['name']=='AddOrUpdateReport':
                     if hasattr(self.adapter, "handleAddOrUpdateReport"):

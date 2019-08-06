@@ -87,10 +87,21 @@ class sonos(sofabase):
                 self.players=await self.sonosDiscovery()
                 if self.players:
                     for player in self.players:
-                        for subService in ['avTransport','deviceProperties','renderingControl','zoneGroupTopology']:
-                            newsub=self.subscribeSonos(player,subService)
-                            self.log.info('++ sonos state subscription: %s/%s' % (player.player_name, newsub.service.service_type))
-                            self.subscriptions.append(newsub)
+                        try:
+                            if player.is_visible:
+                                for subService in ['avTransport','deviceProperties','renderingControl','zoneGroupTopology']:
+                                    try:
+                                        newsub=self.subscribeSonos(player,subService)
+                                        if newsub:
+                                            self.log.info('++ sonos state subscription: %s/%s' % (player.player_name, newsub.service.service_type))
+                                            self.subscriptions.append(newsub)
+                                        else:
+                                            break
+                                    except:
+                                        self.log.error('!! Error subscripting to sonos state: %s/%s' % (player.player_name, subService))
+                                        break
+                        except requests.exceptions.ConnectionError:
+                            self.log.error('!! Error connecting to player: %s' % player)
                     self.sonosGetSonosFavorites(self.players[0])
                     self.connect_needed=False
             except:
@@ -134,8 +145,18 @@ class sonos(sofabase):
                     if 'players' in self.dataset.config:
                         discoverlist=[]
                         for playername in self.dataset.config['players']:
-                            player=soco.SoCo(playername)
-                            discoverlist.append(player)
+                            try:
+                                player=soco.SoCo(playername)
+                                try:
+                                    spinfo=player.get_speaker_info()
+                                    discoverlist.append(player)
+                                    self.log.info('Added manual player: %s %s' % (player.player_name, playername))
+                                except requests.exceptions.ConnectionError:
+                                    self.log.error('Error getting info from speaker - removed from discovery: %s' % playername)
+                                except:
+                                    self.log.error('Error getting info from speaker - removed from discovery: %s' % playername, exc_info=True)
+                            except:
+                                self.log.error('Error discovering Sonos device: %s' % playername, exc_info=True)
                             
                 if discoverlist==None:
                     self.log.error('Discover: No sonos devices detected')
@@ -146,8 +167,11 @@ class sonos(sofabase):
                     return None
                 self.polltime=.1
                 for player in discoverlist:
-                    spinfo=player.get_speaker_info()
-                    await self.dataset.ingest({"player": { spinfo["uid"]: { "speaker": spinfo, "name":player.player_name, "ip_address":player.ip_address }}})
+                    try:
+                        spinfo=player.get_speaker_info()
+                        await self.dataset.ingest({"player": { spinfo["uid"]: { "speaker": spinfo, "name":player.player_name, "ip_address":player.ip_address }}})
+                    except:
+                        self.log.error('Error getting speaker info: %s' % player)
                 return discoverlist
             except:
                 self.log.error('Error discovering Sonos devices', exc_info=True)
@@ -189,18 +213,8 @@ class sonos(sofabase):
                     for device in self.subscriptions:
                         if device.is_subscribed:
                             if not device.events.empty():
-                                update=self.unpackEvent(device.events.get())
-                                #self.log.info('Ingesting change: %s %s - %s' % (device.service.soco.uid, device.service.service_id, update))
-                                
-                                # Testing elimination of the check for ZoneGroupTopology.  Previously doing an overwrite level, which caused
-                                # ZGT updates that only contained a subset (3rd party media servers) to wipe out all of the real data.
-                                # This may need to be retro'd
-                                #if device.service.service_id=='ZoneGroupTopology' and update:
-                                #    self.log.info('Replacing  %s ZoneGroupTopology with: %s' % (device.service.soco.uid, update))
-                                #    await self.dataset.ingest(update, overwriteLevel='player/%s/%s' % (device.service.soco.uid, device.service.service_id) )
-                                #else:
-                                    #self.log.info('.> Update from %s:%s - %s' % (device.service.soco.uid, device.service.service_id, update ))
-                                
+                                x=device.events.get(timeout=0.2)
+                                update=self.unpackEvent(x)
                                 await self.dataset.ingest({'player': { device.service.soco.uid : { device.service.service_id: update }}})
                         else:
                             self.log.info("Subscription ended: %s" % device.__dict__)
@@ -247,7 +261,8 @@ class sonos(sofabase):
                 #self.log.info('Subscribed to '+zone.player_name+'.'+sonosservice+' for '+str(xsub.timeout))
                 return subscription.subscribe(requested_timeout=180, auto_renew=True)
             except:
-                self.log.error('Error configuring subscription', exc_info=True)
+                self.log.error('Error configuring subscription for %s/%s' % (zone, sonosservice))
+                return None
 
 
         def unpackEvent(self, event):
@@ -256,23 +271,27 @@ class sonos(sofabase):
                 eventVars={}
                 for item in event.variables:
                     eventVars[item]=self.didlunpack(event.variables[item])
-                    if str(eventVars[item])[:1]=="<":
+                    if isinstance(eventVars[item], soco.exceptions.SoCoFault):
+                        self.log.info('!! SoCoFault decoding item: %s %s %s' % (eventVars[item].exception.__dict__, item, eventVars))
+                        eventVars[item]={}
+                    elif str(eventVars[item])[:1]=="<":
                         #self.log.info('Possible XML: %s' % str(eventVars[item]) )
-                        eventVars[item]=self.etree_to_dict(et.fromstring(str(eventVars[item])))
+                        try:
+                            eventVars[item]=self.etree_to_dict(et.fromstring(str(eventVars[item])))
+                        except:
+                            self.log.error('Error unpacking event: %s' % str(eventVars[item]), exc_info=True)
                 return eventVars
                 
                 
             except:
-                self.log.error('Error unpacking event', exc_info=True)
+                self.log.error('Error unpacking event: %s' % event, exc_info=True)
 
 
-        def sonosGetSonosFavorites(self,player):
+        def sonosGetSonosFavorites(self, player=None):
 
             #{'type': 'instantPlay', 'title': 'A fantastic raygun', 'description': 'Amazon Music Playlist', 'parent_id': 'FV:2', 'item_id': 'FV:2/27', 'album_art_uri': 'https://s3.amazonaws.com/redbird-icons/blue_icon_playlists-80x80.png', 'desc': None, 'favorite_nr': '0', 'resource_meta_data': '<DIDL-Lite xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/" xmlns:r="urn:schemas-rinconnetworks-com:metadata-1-0/" xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/"><item id="1006206clibrary%2fplaylists%2f56de4623-3f02-4dc8-8d62-3a580d5325eb%2f%23library_playlist" parentID="10082064library%2fplaylists%2f%23library_playlists" restricted="true"><dc:title>A fantastic raygun</dc:title><upnp:class>object.container.playlistContainer</upnp:class><desc id="cdudn" nameSpace="urn:schemas-rinconnetworks-com:metadata-1-0/">SA_RINCON51463_X_#Svc51463-0-Token</desc></item></DIDL-Lite>', 'resources': [<DidlResource 'x-rincon-cpcontainer:1006206clibrary%2fplaylists%2f56de4623-3f02-4dc8-8d62-3a580d5325eb%2f%23library_playlist' at 0x748733f0>], 'restricted': False}
-
-        
             try:
-                ml=soco.music_library.MusicLibrary()
+                ml=soco.music_library.MusicLibrary(player)
                 favorites=[]
                 sonosfavorites=ml.get_sonos_favorites()
                 #sonosfavorites=player.get_sonos_favorites()
@@ -290,10 +309,10 @@ class sonos(sofabase):
                         newfav['uri']=''
                     favorites.append(newfav)
                 favorites=sorted(favorites, key=itemgetter('title')) 
-                #self.log.info('fav: %s' % favorites)
-                
                 self.dataset.listIngest('favorites',favorites)
-                self.sonosQuery()
+                
+                # not sure why this line is here. causes errors, probably just left over
+                #self.sonosQuery()
             except:
                 self.log.error('Error getting sonos favorites', exc_info=True)
 
@@ -398,7 +417,12 @@ class sonos(sofabase):
                 device=endpointId.split(":")[2]
                 dev=self.dataset.getDeviceByEndpointId(endpointId)
                 #coord=dev.friendlyName
-                coord=dev.endpointId
+                try:
+                    coord=dev.endpointId
+                except AttributeError:
+                    self.log.error('!! Player is not available for command: %s %s %s %s.' % (endpointId, controller, command, payload))
+                    return None
+                    
                 try:
                     if controller=="MusicController" and dev.InputController.input and dev.InputController.input!=dev.endpointId:
                         coord=dev.InputController.input
@@ -407,7 +431,7 @@ class sonos(sofabase):
                     coord=dev.endpointId
                 
                 if self.players==None:
-                    self.log.error('No players are available for command: %s %s %s %s.' % (endpointId, controller, command, payload), exc_info=True)
+                    self.log.error('!! No players are available for command: %s %s %s %s.' % (endpointId, controller, command, payload))
                     return None
                     
                 for player in self.players:
