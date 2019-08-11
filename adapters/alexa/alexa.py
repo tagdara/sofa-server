@@ -663,6 +663,13 @@ class alexaBridge(sofabase):
                                         self.log.info('Trimmed non-alexa cap: %s' % cap)
                                     else:
                                         alexadev=True
+                                    if 'configuration' in cap:
+                                        for config in cap['configuration']:
+                                            # This allows for configuration items to be defined in sofa but blocked
+                                            # because they are not defined or accepted in the official Alexa spec
+                                            # One example is a range for a thermostat
+                                            if config in self.dataset.config['blocked_config']:
+                                                del cap['configuration'][config]
                                 if alexadev:
                                     self.log.info('Discovered device: %s %s' % (dev, adev))
                                     alexadevs.append(adev)

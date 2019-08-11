@@ -332,7 +332,7 @@ class Thermostat(SofaAccessory):
 
     category = pyhap.const.CATEGORY_THERMOSTAT
 
-    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
+    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, props={}, **kwargs):
         
         self.event_loop=loop
         self.endpointId=endpointId
@@ -344,10 +344,18 @@ class Thermostat(SofaAccessory):
 
         #self.char_temp = serv_temp.configure_char('CurrentTemperature', setter_callback = self.set_Temperature)
         self.char_temp = serv_temp.configure_char('CurrentTemperature')
+
         self.char_TargetHeatingCoolingState = serv_temp.configure_char('TargetHeatingCoolingState',setter_callback=self.set_TargetHeatingCoolingState)
         self.char_CurrentHeatingCoolingState = serv_temp.configure_char('CurrentHeatingCoolingState',setter_callback=self.set_CurrentHeatingCoolingState)
 
-        self.char_TargetTemperature = serv_temp.configure_char('TargetTemperature', setter_callback=self.set_TargetTemperature)
+        try:
+            ttprops={}
+            if 'TargetTemperature' in props:
+                ttprops=props['TargetTemperature']
+            self.char_TargetTemperature = serv_temp.configure_char('TargetTemperature', setter_callback=self.set_TargetTemperature, properties=ttprops)
+        except:
+            self.log.error('Error setting up thermostat', exc_info=True)
+            self.char_TargetTemperature = serv_temp.configure_char('TargetTemperature', setter_callback=self.set_TargetTemperature)
 
     def __setstate__(self, state):
         self.__dict__.update(state)
@@ -497,7 +505,7 @@ class homekit(sofabase):
 
                 self.buildBridge()
                 self.driver.add_accessory(accessory=self.bridge)
-                #await self.saveAidMap()
+                await self.saveAidMap()
                 self.log.info('PIN: %s' % self.driver.state.pincode)
                 signal.signal(signal.SIGTERM, self.driver.signal_handler)
                 self.executor.submit(self.driver.start)
@@ -521,15 +529,18 @@ class homekit(sofabase):
                 for devname in self.dataset.nativeDevices['accessorymap']:
                     newdev=None
                     dev=self.dataset.nativeDevices['accessorymap'][devname]
+                    if 'props' in dev:
+                        props=dev['props']
+                    else:
+                        props={}
                     if dev['services'][0]=='Lightbulb':
                         newdev=LightBulb(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, chars=dev['chars'], aid=dev['id'])
-
                         self.bridge.add_accessory(newdev)
                     elif dev['services'][0]=='TemperatureSensor':
                         newdev=TemperatureSensor(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
                         self.bridge.add_accessory(newdev)
                     elif dev['services'][0]=='Thermostat':
-                        newdev=Thermostat(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
+                        newdev=Thermostat(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, props=props, aid=dev['id'])
                         self.bridge.add_accessory(newdev)
 
                     elif dev['services'][0]=='ContactSensor':
@@ -601,13 +612,15 @@ class homekit(sofabase):
                 for acc in self.bridge.accessories:
                     svcs=[]
                     chars=[]
+                    props={}
                     for svc in self.bridge.accessories[acc].services:
                         if svc.display_name not in ['AccessoryInformation']:
                             svcs.append(svc.display_name)
                             for char in svc.characteristics:
                                 chars.append(char.display_name)
+                                props[char.display_name]=char.properties
                     try:    
-                        accmap[self.bridge.accessories[acc].display_name]={'id': acc, 'services': svcs, 'chars': chars, 'adapterUrl': self.bridge.accessories[acc].adapterUrl, 'endpointId':self.bridge.accessories[acc].endpointId }
+                        accmap[self.bridge.accessories[acc].display_name]={'id': acc, 'services': svcs, 'chars': chars, 'props':props, 'adapterUrl': self.bridge.accessories[acc].adapterUrl, 'endpointId':self.bridge.accessories[acc].endpointId }
                     except:
                         self.log.info('TS')
                 #self.log.info('am: %s' % accmap)
@@ -660,6 +673,16 @@ class homekit(sofabase):
                     return False
 
                 if device['displayCategories'][0]=='THERMOSTAT':
+                    props={}
+                    try:
+                        for cap in device['Capabilities']:
+                            if cap['interface']=='Alexa.ThermostatController':
+                                if 'configuration' in cap:
+                                    if 'supportedRange' in cap['configuration']:
+                                        props['minValue']=(int(cap['configuration']['supportedRange'][0])-32) * 5.0 / 9.0
+                                        props['maxValue']=(int(cap['configuration']['supportedRange'][1])-32) * 5.0 / 9.0
+                    except:
+                        self.log.error('Error getting props', exc_info=True)
                     newdev=Thermostat(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
 
                 elif device['displayCategories'][0]=='TEMPERATURE_SENSOR':

@@ -123,7 +123,7 @@ class sofaDataset():
             
         try:
             self.localDevices[name]=obj
-            self.log.info('++ Added %s %s (%s)' % (obj.__class__.__name__, name, obj.endpointId))
+            #self.log.info('++ Added %s %s (%s)' % (obj.__class__.__name__, name, obj.endpointId))
             return self.localDevices[name]
         except:
             self.log.error('Error adding device: %s %s' % (name, obj))
@@ -416,7 +416,7 @@ class sofaDataset():
                 return changeReport
         
             elif newDevice:
-                self.log.info('++ sending add or update: %s' % smartDevice.addOrUpdateReport)
+                self.log.info('++ AddOrUpdateReport: %s (%s) %s' % (smartDevice.friendlyName, smartDevice.endpointId, smartDevice.addOrUpdateReport))
                 self.notify('sofa/updates',json.dumps(smartDevice.addOrUpdateReport))
                 return None
                 #return smartDevice.addOrUpdateReport

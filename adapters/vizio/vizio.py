@@ -55,20 +55,27 @@ class vizio(sofabase):
     
                 tvdata['input_list']=[]
                 allinputs=self.tv.get_inputs()
-                for input_ in allinputs:
-                    #self.log.info('Input: %s' % input_.__dict__)
-                    tvdata['input_list'].append(input_.name)
-    
-                try:
-                    tvdata['input']=self.tv.get_current_input().meta_name
-                except AttributeError:
-                    self.log.warn('TV does not have current input: %s' % self.tv.get_current_input() )
-                    tvdata['input']=tvdata['input_list'][0]
-    
-                await self.dataset.ingest({'tv': { self.dataset.config['tv_name']: tvdata}})
-                return tvdata
+                
+                if allinputs:
+                    for input_ in allinputs:
+                        #self.log.info('Input: %s' % input_.__dict__)
+                        tvdata['input_list'].append(input_.name)
+
+                    try:
+                        tvdata['input']=self.tv.get_current_input().meta_name
+                    except AttributeError:
+                        self.log.warn('TV does not have current input: %s' % self.tv.get_current_input() )
+                        tvdata['input']=tvdata['input_list'][0]
+        
+                    await self.dataset.ingest({'tv': { self.dataset.config['tv_name']: tvdata}})
+                    return tvdata
+                else:
+                    self.log.warn('!! Warning - no list of inputs received. Connection with TV is likely lost')
+                    return tvdata
+
             except:
                 self.log.info('Error getting TV data', exc_info=True)
+                return tvdata
 
 
         # Adapter Overlays that will be called from dataset
@@ -87,10 +94,13 @@ class vizio(sofabase):
 
         def addSmartTV(self, deviceid, name="Vizio"):
             
-            nativeObject=self.dataset.nativeDevices['tv'][name]
-            if name not in self.dataset.localDevices:
-                if "volume" in nativeObject and "power" in nativeObject:
-                    return self.dataset.addDevice(name, devices.tv('vizio/tv/%s' % deviceid, name, inputs= nativeObject['input_list']))
+            try:
+                nativeObject=self.dataset.nativeDevices['tv'][name]
+                if name not in self.dataset.localDevices:
+                    if "volume" in nativeObject and "power" in nativeObject:
+                        return self.dataset.addDevice(name, devices.tv('vizio/tv/%s' % deviceid, name, inputs= nativeObject['input_list']))
+            except:
+                self.log.error('!! Error adding smart TV: %s %s' % (deviceid, name))
             
             return False
 
@@ -146,18 +156,15 @@ class vizio(sofabase):
 
         def virtualControllers(self, itempath):
             
-            nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                
+            controllerlist={}
+               
             try:
                 detail=itempath.split("/",3)[3]
             except:
                 detail=""
-
-            controllerlist={}
             
             try:
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                controllerlist={}
                 
                 if detail=="power" or detail=="":
                     controllerlist=self.addControllerProps(controllerlist,"PowerController","powerState")
@@ -166,27 +173,31 @@ class vizio(sofabase):
                 if detail=="volume" or detail=="":
                     controllerlist=self.addControllerProps(controllerlist,"SpeakerController","volume")
 
-                return controllerlist
             except:
-                self.log.error('Error getting virtual controller types for %s' % nativeObj, exc_info=True)
+                self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
+                
+            return controllerlist
 
            
         def virtualControllerProperty(self, nativeObj, controllerProp):
             
             #self.log.info('NativeObj: %s' % nativeObj)
-
-            if controllerProp=='powerState':
-                return "ON" if nativeObj['power'] else "OFF"
-
-            elif controllerProp=='input':
-                return nativeObj['input']
-
-            elif controllerProp=='volume':
-                return nativeObj['volume']
-
-            else:
-                self.log.info('Unknown controller property mapping: %s' % controllerProp)
-                return {}
+            
+            try:
+                if controllerProp=='powerState':
+                    return "ON" if nativeObj['power'] else "OFF"
+    
+                elif controllerProp=='input':
+                    return nativeObj['input']
+    
+                elif controllerProp=='volume':
+                    return nativeObj['volume']
+    
+                else:
+                    self.log.info('Unknown controller property mapping: %s' % controllerProp)
+                    return {}
+            except:
+                self.log.error('Error getting controller property: %s' % controllerProp, exc_info=True)
                 
         async def virtualList(self, itempath, query={}):
 

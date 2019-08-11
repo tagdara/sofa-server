@@ -188,7 +188,31 @@ class alarmd(sofabase):
             self.log.debug('Zone Restore: %s %s ' % (zone, device._zonetracker.__dict__))
 
         def handle_rfx(self, device, message):
-            self.log.debug('RFX: %s ' % message)
+            # some rf devices dont send fault when the system is not armed
+            # this may be the key to some of the sloppy zone state tracking
+            try:
+                #self.log.info('RFX: %s %s %s %s' % (message.serial_number, (True in message.loop), message.loop, message.__dict__))
+                found=False
+                for dev in self.dataset.config['zones']:
+                    if 'address' in self.dataset.config['zones'][dev] and self.dataset.config['zones'][dev]['address']==message.serial_number:
+                        found=True
+                        if 'loop' in self.dataset.config['zones'][dev]:
+                            loopid=self.dataset.config['zones'][dev]['loop']
+                        else:
+                            loopid=0
+                        if message.loop[loopid]:
+                            zonestate=False
+                            self.log.info('.. rfx %s open' % self.dataset.config['zones'][dev]['name'])
+                        else:
+                            zonestate=True
+                            self.log.info('.. rfx %s closed' % self.dataset.config['zones'][dev]['name'])
+                        asyncio.ensure_future(self.dataset.ingest({"zones": { dev : {**self.dataset.config['zones'][dev], **{'status': zonestate}} }}), loop=self.loop)                        
+
+                if not found:
+                    self.log.info('.. rfx %s unknown device %s %s' % (message.serial_number, message.loop, message.__dict__))
+                
+            except:
+                self.log.error('Error with rfx', exc_info=True)
 
 
         def handle_message(self, sender, message):
@@ -222,7 +246,6 @@ class alarmd(sofabase):
         def addSmartDevice(self, path):
             
             try:
-                self.log.info('Attempting to add %s' % path)
                 if path.split("/")[1]=="zones":
                     return self.addZone(path.split("/")[2])
                     

@@ -498,7 +498,7 @@ class SwitchControllerInterface(smartInterface):
 
 class ThermostatControllerInterface(smartInterface):
     
-    def __init__(self, targetSetpoint=70, lowerSetpoint=70, upperSetpoint=70, thermostatMode="AUTO", scale="FAHRENHEIT", supportedModes=["HEAT", "COOL", "AUTO", "OFF"], supportsScheduling=False):
+    def __init__(self, targetSetpoint=70, lowerSetpoint=70, upperSetpoint=70, thermostatMode="AUTO", scale="FAHRENHEIT", supportedRange=[60,90], supportedModes=["HEAT", "COOL", "AUTO", "OFF"], supportsScheduling=False):
         self.controller="ThermostatController"
         self.scale=scale
         self.targetSetpoint=targetSetpoint
@@ -507,10 +507,11 @@ class ThermostatControllerInterface(smartInterface):
         self.thermostatMode=thermostatMode
         self.supportedModes=supportedModes
         self.supportsScheduling=supportsScheduling
+        self.supportedRange=supportedRange
 
     @property
     def configuration(self):
-        return {"supportsScheduling": self.supportsScheduling, "supportedModes": self.supportedModes }
+        return {"supportsScheduling": self.supportsScheduling, "supportedModes": self.supportedModes, "supportedRange": self.supportedRange }
 
     @property            
     def directives(self):
@@ -1383,13 +1384,13 @@ class simpleThermostat(smartObject):
 
 class smartThermostat(smartObject):
     
-    def __init__(self, path, name, description="Thermostat", manufacturer="sofa", SetTargetTemperature=None, supportedModes=["HEAT", "COOL", "AUTO", "OFF"], log=None, native=None):
+    def __init__(self, path, name, description="Thermostat", manufacturer="sofa", SetTargetTemperature=None, supportedRange=[60,90], supportedModes=["HEAT", "COOL", "AUTO", "OFF"], log=None, native=None):
         self._friendlyName=name
         self._displayCategories=["THERMOSTAT"]
         self._description=description
         self._manufacturer=manufacturer
         self.TemperatureSensor=TemperatureSensorInterface()
-        self.ThermostatController=ThermostatControllerInterface(SetTargetTemperature, supportedModes=supportedModes)
+        self.ThermostatController=ThermostatControllerInterface(SetTargetTemperature, supportedRange=supportedRange, supportedModes=supportedModes)
         self._interfaces=[self.TemperatureSensor, self.ThermostatController]
         self._path=path
         

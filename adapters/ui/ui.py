@@ -107,9 +107,8 @@ class sofaWebUI():
             
             self.serverApp.router.add_get('/adapters', self.adapterHandler)   
             self.serverApp.router.add_get('/restartadapter/{adapter:.+}', self.adapterRestartHandler)
-            self.serverApp.router.add_get('/devices', self.devicesHandler)      
             self.serverApp.router.add_get('/deviceList', self.deviceListHandler)
-            self.serverApp.router.add_get('/deviceListWithData', self.deviceListWithDataHandler)
+            self.serverApp.router.add_get('/deviceListWithData', self.deviceListWithDataHandler) # deprecated
 
             self.serverApp.router.add_post('/deviceState', self.deviceStatePostHandler)
             self.serverApp.router.add_post('/directive', self.directiveHandler) 

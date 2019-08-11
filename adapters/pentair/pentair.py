@@ -13,7 +13,13 @@ import random
 import json
 import asyncio
 
-import findGateway
+import sys
+import socket
+import struct
+import ipaddress
+from constants import me
+
+#import findGateway
 import doQuery
 from constants import me
 
@@ -27,6 +33,7 @@ class pentair(sofabase):
             self.dataset.nativeDevices['circuits']={}
             self.dataset.nativeDevices['bodies']={}
             #self.bridgeAddress=self.dataset.config['address']
+            self.circuits=self.dataset.config['circuits']
             self.log=log
             self.notify=notify
             self.polltime=10
@@ -80,7 +87,7 @@ class pentair(sofabase):
         async def connectPentair(self):
             try:
                 verbose=False
-                self.gatewayIP, self.gatewayPort, gatewayType, gatewaySubtype, gatewayName, okchk = findGateway.findGateway(verbose)
+                self.gatewayIP, self.gatewayPort, gatewayType, gatewaySubtype, gatewayName, okchk = self.findGateway(verbose)
                 return True
             except:
                 self.log.error('Erroring finding gateway', exc_info=True)
@@ -92,6 +99,101 @@ class pentair(sofabase):
                     self.poolquery.checkPentair()
             except:
                 self.log.error('Error in getScreenLogicData', exc_info=True)
+
+
+        def findGateway(self, verbose):
+            # these are only for the datagram so keep them here instead of "constants.py"
+            bcast = "255.255.255.255"
+            port  = 1444
+            wantchk = 2
+            addressfamily = socket.AF_INET
+        
+            # no idea why this datastructure... it works.
+            data  = struct.pack('<bbbbbbbb', 1,0,0,0, 0,0,0,0)
+            # Create a UDP socket
+            try:
+                udpSock = socket.socket(addressfamily, socket.SOCK_DGRAM)
+            except:
+                sys.stderr.write("ERROR: {}: socket.socket boarked.\n".format(me))
+                sys.exit(1)
+        
+            # Get ready to broadcast
+            try:
+                udpSock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+            except:
+                sys.stderr.write("ERROR: {}: udpSock.setsockopt boarked.\n".format(me))
+                sys.exit(2)
+        
+            # send the datagram
+            if(verbose):
+                print("Broadcasting for pentair systems...")
+            try:
+                udpSock.sendto(data, (bcast, port))
+            except:
+                sys.stderr.write("ERROR: {}: udpSock.sendto boarked.\n".format(me))
+                sys.exit(3)
+        
+            # listen for a gateway responding
+            if(verbose):
+                print("Waiting for a response...")
+            try:
+                data, server = udpSock.recvfrom(4096)
+            except:
+                sys.stderr.write("ERROR: {}: udpSock.recvfrom boarked.\n".format(me))
+                sys.exit(4)
+            try:
+                udpSock.close()
+            except:
+                # not sure we really need to exit if we can't close the socket...
+                sys.stderr.write("ERROR: {}: udpSock.close boarked.\n".format(me))
+                sys.exit(5)
+        
+            # "server" is ip_address:port that we got a response from. 
+            # not sure what happens if we have to gateways on a subnet. havoc i suppose.
+            if(verbose):
+                system, port = server
+                print("INFO: {}: Received a response from {}:{}".format(me(), system, port))
+        
+            # the format here is a little different than the documentation. 
+            # the response I get back includes the gateway's name in the form of "Pentair: AB-CD-EF"
+            expectedfmt = "<I4BH2B"
+            paddedfmt = expectedfmt + str(len(data)-struct.calcsize(expectedfmt)) + "s"
+            try:
+                chk, ip1, ip2, ip3, ip4, gatewayPort, gatewayType, gatewaySubtype, gatewayName = struct.unpack(paddedfmt, data)
+            except struct.error as err:
+                print("ERROR: {}: received unpackable data from the gateway: \"{}\"".format(me, err))
+                sys.exit(6)
+        
+            okchk = (chk == wantchk)
+        
+            if(not okchk):
+                # not sure that I need to exit if "chk" isn't what we wanted.
+                sys.stderr.write("ERROR: {}: Incorrect checksum. Wanted '{}', got '{}'\n".format(me, wantchk, chk))
+                #sys.exit(7)
+        
+            # make sure we got a good IP address
+            receivedIP = "{}.{}.{}.{}".format(str(ip1), str(ip2), str(ip3), str(ip4))
+            try:
+                gatewayIP = str(ipaddress.ip_address(receivedIP))
+            except ValueError as err:
+                print("ERROR: {}: got an invalid IP address from the gateway:\n  \"{}\"".format(me, err))
+                sys.exit(8)
+            except NameError as err:
+                print("ERROR: {}: received garbage from the gateway:\n  \"{}\"".format(me, err))
+                sys.exit(9)
+            except:
+                print("ERROR: {}: Couldn't get an IP address for the gateway.".format(me, err))
+                sys.exit(10)
+          
+            if(verbose):
+                print("gatewayIP: '{}'".format(gatewayIP))
+                print("gatewayPort: '{}'".format(gatewayPort))
+                print("gatewayType: '{}'".format(gatewayType))
+                print("gatewaySubtype: '{}'".format(gatewaySubtype))
+                print("gatewayName: '{}'".format(gatewayName.decode("utf-8")))
+        
+            return gatewayIP, gatewayPort, gatewayType, gatewaySubtype, gatewayName, okchk
+
 
 
         # Adapter Overlays that will be called from dataset
@@ -114,6 +216,8 @@ class pentair(sofabase):
                         return await self.addBasicDevice(circuitid,'Pool Pump')
                     if circuitfunction == 1:
                         return await self.addBasicDevice(circuitid,'Spa Jets')
+                    if circuitname=='Cleaner':
+                        return await self.addBasicDevice(circuitid,'Pool Cleaner')
                     if circuitfunction == 16:
                         #self.log.info('Active Circuit: %s' % circuitid )
                         return await self.addColorLight(circuitid, circuitname)
@@ -123,7 +227,7 @@ class pentair(sofabase):
                         return await self.addSimpleLight(circuitid, circuitname)
                         #return await self.add
                         
-                self.log.info('Did not add device for %s' % path)
+                #self.log.info('Did not add device for %s' % path)
                 return False
 
             except:
@@ -131,10 +235,10 @@ class pentair(sofabase):
                 return False
 
 
-        async def addSmartThermostat(self, deviceid, devicename):
+        async def addSmartThermostat(self, deviceid, devicename, supportedRange=[80,104]):
         
             if devicename not in self.dataset.localDevices:
-                return self.dataset.addDevice(devicename, devices.smartThermostat('pentair/bodies/%s' % deviceid, devicename, supportedModes=["HEAT", "OFF"] ))
+                return self.dataset.addDevice(devicename, devices.smartThermostat('pentair/bodies/%s' % deviceid, devicename, supportedRange=supportedRange, supportedModes=["HEAT", "OFF"] ))
             
             return False
 
@@ -259,12 +363,19 @@ class pentair(sofabase):
                 except:
                     detail=""
                     
+                try:
+                    subdetail=itempath.split("/",3)[3]
+                except:
+                    subdetail=""
+                    
                 controllerlist={}
+                
+                #self.log.info('Checking state for: %s %s - %s' % (detail, subdetail, itempath))
 
-                if detail in ['spa', 'pool','air', 'pool/currentTemp', 'spa/currentTemp', 'air/currentTemp' ]:
+                if detail in ['spa', 'pool', 'air'] or subdetail in [ 'currentTemp' ]:
                     controllerlist=self.addControllerProps(controllerlist, "TemperatureSensor","temperature")
 
-                if detail in ['spa', 'pool']:
+                if detail in ['spa', 'pool'] or subdetail in ['heatMode', 'heatStatus', 'setPoint']:
                     controllerlist=self.addControllerProps(controllerlist,"ThermostatController","targetSetpoint")
                     controllerlist=self.addControllerProps(controllerlist,"ThermostatController","thermostatMode")
                     
@@ -272,7 +383,7 @@ class pentair(sofabase):
                     if nativeObject['function']==16:
                         controllerlist['PowerController']=['powerState']
                         controllerlist["ColorController"]=["color"]
-                    if nativeObject['function'] in [1, 2, 7]:
+                    if nativeObject['function'] in [0, 1, 2, 7]:
                         controllerlist['PowerController']=['powerState']
                         
                 return controllerlist
@@ -295,7 +406,7 @@ class pentair(sofabase):
                         circuit=self.find_circuit('pool')
                     if nativeObj['bodyType']==1:
                         circuit=self.find_circuit('spa')
-                    self.log.info('Circuit: %s' % circuit)
+                    #self.log.info('Circuit: %s' % circuit)
 
                     if nativeObj['heatMode']==0:
                         return 'OFF'
@@ -308,7 +419,7 @@ class pentair(sofabase):
                     return nativeObj['setPoint']
                         
                 if controllerProp=='powerState':
-                    if nativeObj['function'] in [1,2,7,16]:
+                    if nativeObj['function'] in [0,1,2,7,16]:
                         if nativeObj['state']==0:
                             return 'OFF'
                         else:

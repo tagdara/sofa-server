@@ -406,8 +406,10 @@ class sofaRest():
                         response=await self.dataset.handleDirective(jsondata)
                         if response:
                             self.log.info('>> %s %s / %s' % (response['event']['header']['name'],response['event']['endpoint']['endpointId'], response))
+            except KeyError:
+                self.log.error('!! Invalid root request from %s: %s' % (request.remote, body))
             except:
-                self.log.error('Error handling root request: %s' % body,exc_info=True)
+                self.log.error('Error handling root request from %s: %s' % (request.remote, body),exc_info=True)
                 response={}
                 
         return web.Response(text=json.dumps(response, default=self.date_handler))
