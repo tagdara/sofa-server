@@ -240,7 +240,7 @@ class homekitcamera(sofabase):
             
             # map open/close events to fake motion sense in order to send images through homekit notifications
             devname=self.getfriendlyNamebyendpointId(deviceId)
-            maps={ "elk:zone:1": "frontdoor", "Front Gate": "frontdoor"}
+            maps=self.dataset.config['motionmap']
             
             try:
                 #self.log.info('.. Changed %s/%s %s = %s' % (deviceId, prop['namespace'], prop['name'], prop['value']))

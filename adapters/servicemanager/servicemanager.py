@@ -22,6 +22,76 @@ import subprocess
 
 class servicemanager(sofabase):
     
+    class EndpointHealth(devices.EndpointHealth):
+        
+        @property            
+        def connectivity(self):
+            return 'OK'
+
+    class AdapterHealth(devices.AdapterHealth):
+        
+        @property
+        def controller(self):
+            return "AdapterHealth"
+    
+        @property
+        def port(self):
+            if 'rest' in self.nativeObject and 'port' in self.nativeObject['rest']:
+                return self.nativeObject['rest']['port']
+            else:
+                return ''
+
+        @property
+        def address(self):
+            if 'rest' in self.nativeObject and 'address' in self.nativeObject['rest']:
+                return self.nativeObject['rest']['address']
+            else:
+                return ''
+
+        @property
+        def url(self):
+            if 'rest' in self.nativeObject and 'port' in self.nativeObject['rest']:
+                return 'http://%s:%s' % (self.nativeObject['rest']['address'], self.nativeObject['rest']['port'])
+            else:
+                return ''
+
+
+        @property
+        def logged(self):
+            if 'logged' in self.nativeObject:
+                return self.nativeObject['logged']
+            else:
+                return {}
+
+        @property
+        def startup(self):
+            if 'rest' in self.nativeObject and 'startup' in self.nativeObject['rest']:
+                return self.nativeObject['rest']['startup']
+            else:
+                return ''
+
+
+    class PowerController(devices.PowerController):
+
+        @property            
+        def powerState(self):
+            if 'rest' in self.nativeObject and 'startup' in self.nativeObject['rest']:
+                return 'ON'
+            else:
+                return 'OFF'
+
+        async def TurnOn(self, device, correlationToken=''):
+            try:
+                return await self.dataset.generateResponse(device.endpointId, correlationToken)
+            except:
+                self.adapter.log.error('!! Error during TurnOn', exc_info=True)
+        
+        async def TurnOff(self, device, correlationToken=''):
+            try:
+                return await self.dataset.generateResponse(device.endpointId, correlationToken)
+            except:
+                self.adapter.log.error('!! Error during TurnOff', exc_info=True)
+    
     class adapterProcess(SofaCollector.collectorAdapter):
     
         def __init__(self, log=None, loop=None, dataset=None, notify=None, request=None, **kwargs):
@@ -34,6 +104,7 @@ class servicemanager(sofabase):
             
         async def start(self):
             self.log.info('.. Starting adapter')
+            await self.add_defined_adapters()
             await self.poll_loop()
             
         async def poll_loop(self):
@@ -47,21 +118,26 @@ class servicemanager(sofabase):
                     
         # Utility Functions
         
+        async def add_defined_adapters(self):
+            
+            try:
+                for adapter in self.dataset.config['adapters']:
+                    newadapter={"name":adapter, "state":{}, "service":{}, "rest": {}}
+                    await self.dataset.ingest({'adapters': { adapter : newadapter}})
+            except:
+                self.log.error('Error populating adapters', exc_info=True)
+        
         async def adapter_checker(self):
             
             try:
                 workingadapters=self.dataset.config['adapters']
                 for adapter in workingadapters:
                     adapterstate={"state":{}, "service":{}, "rest": {}}
-                    if adapter in self.dataset.adapters:
-                        #self.log.info('Checking adapter: %s / %s' % (adapter, self.dataset.adapters[adapter]))
-                        adapterstate['state']=await self.get_adapter_status(adapter)
-                        #self.log.info('Status: %s' % status)
-                        adapterstate['service']=await self.get_service_status(adapter)
-                        adapterstate['rest']=self.dataset.adapters[adapter]
-                    else:
-                        self.log.info('Adapter not discovered yet: %s' % adapter)
-                        
+                    if adapter in self.dataset.nativeDevices['adapters']:
+                        if 'port' in self.dataset.nativeDevices['adapters'][adapter]:
+                            adapterstate['state']=await self.get_adapter_status(adapter)
+                    adapterstate['service']=await self.get_service_status(adapter)
+                    #adapterstate['rest']=self.dataset.nativeDevices['adapters'][adapter]
                     await self.dataset.ingest({'adapters': { adapter : adapterstate}})
                     
             except:
@@ -70,7 +146,7 @@ class servicemanager(sofabase):
         async def virtualAddAdapter(self, adapter, adapterdata):
             
             try:
-                self.log.info('Getting discovered adapter status for %s' % adapter)
+                #self.log.info('Getting discovered adapter status for %s' % adapter)
                 adapterstate=await self.get_adapter_status(adapter)
                 adapterstate['service']=await self.get_service_status(adapter)
                 adapterstate['rest']=self.dataset.adapters[adapter]
@@ -91,19 +167,17 @@ class servicemanager(sofabase):
             
             try:
                 if path.split("/")[1]=="adapters":
-                    return await self.addSmartAdapter(path.split("/")[2])
-
+                    nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(path))
+                    if nativeObject['name'] not in self.dataset.localDevices: 
+                        deviceid=path.split("/")[2]
+                        device=devices.alexaDevice('servicemanager/adapters/%s' % deviceid, deviceid, displayCategories=['ADAPTER'], adapter=self)
+                        device.PowerController=servicemanager.PowerController(device=device)
+                        device.AdapterHealth=servicemanager.AdapterHealth(device=device)
+                        device.EndpointHealth=servicemanager.EndpointHealth(device=device)
+                        return self.dataset.newaddDevice(device) 
             except:
                 self.log.error('Error defining smart device', exc_info=True)
                 return False
-
-        async def addSmartAdapter(self, deviceid):
-            
-            nativeObject=self.dataset.nativeDevices['adapters'][deviceid]
-            if deviceid not in self.dataset.localDevices:
-                return self.dataset.addDevice(deviceid, devices.smartAdapter('servicemanager/adapters/%s' % deviceid, deviceid, native=nativeObject))
-            
-            return False
 
         
         async def get_adapter_status(self, adaptername):
@@ -152,67 +226,6 @@ class servicemanager(sofabase):
             except:
                 self.log.error('Error restarting adapter', exc_info=True)
 
-
-        def getNativeFromEndpointId(self, endpointId):
-            
-            try:
-                return endpointId.split(":")[2]
-            except:
-                return False
-                
-        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
-
-            try:
-                device=endpointId.split(":")[2]
-                nativeCommand=None
-
-                if nativeCommand:
-                    response=await self.dataset.generateResponse(endpointId, correlationToken)
-                    return response
-                    
-                return None
-                    
-            except:
-                self.log.error('Error executing state change.', exc_info=True)
-
-
-        def virtualControllers(self, itempath):
-
-            try:
-                nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                
-                try:
-                    detail=itempath.split("/",3)[3]
-                except:
-                    detail=""
-
-                controllerlist={}
-
-                return controllerlist
-            except KeyError:
-                pass
-            except:
-                self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
-     
-            
-        def virtualControllerProperty(self, nativeObj, controllerProp):
-            
-            try:
-                return {}
-
-            except:
-                self.log.error('Error converting virtual controller property: %s %s' % (controllerProp, nativeObj), exc_info=True)
-                
-        async def virtualList(self, itempath, query={}):
-
-            try:
-                if itempath=="adapters":
-                    return self.dataset.nativeDevices
-                return {}
-
-            except:
-                self.log.error('Error getting virtual list for %s' % itempath, exc_info=True)
-                return {}
 
 
 if __name__ == '__main__':

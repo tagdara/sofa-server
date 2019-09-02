@@ -18,8 +18,6 @@ import definitions
 import time
 
 
-
-
 class Client(asyncio.Protocol):
 
     def __init__(self, loop=None, log=None, notify=None, dataset=None, **kwargs):
@@ -206,8 +204,6 @@ class Client(asyncio.Protocol):
             self.queueForSend(elklogreq+"\r\n")
         self.queueForSend("06cs0064\r\n")
 
-
-
     def requestTasks(self):
         for i in range (1,33):
             # get task string descriptions
@@ -215,33 +211,24 @@ class Client(asyncio.Protocol):
             elklogreq=elklogreq+self.computechecksum(elklogreq)
             self.queueForSend(elklogreq+"\r\n")
 
-
     def requestRealTimeClock(self):
-        
         self.queueForSend("06rr0056\r\n")
 
-
     def requestZoneStatusReport(self):
-        
         self.queueForSend("06zs004D\r\n")
 
 
     def requestZoneDefinitionReport(self):
-
         self.queueForSend("06zd005C\r\n")
         self.queueForSend("06lw0057\r\n")
 
-                
     def requestZoneStringDescription(self, zone):
-
         # Text string description report data
         elkrequest="0Bsd00%s00" % str(int(zone)).zfill(3)
         elkrequest=elkrequest+self.computechecksum(elkrequest)
         self.queueForSend(elkrequest+"\r\n")
 
-
     def clipElkData(self, data):
-        
         try:
             elkdl=int(data[0:2],16)
             data=data[2:elkdl+2]
@@ -420,6 +407,84 @@ class Client(asyncio.Protocol):
         
 class elkm1(sofabase):
 
+    class EndpointHealth(devices.EndpointHealth):
+
+        @property            
+        def connectivity(self):
+            #stubbed out but should reflect whether the panel is connected or not
+            return 'OK'
+
+    class ContactSensor(devices.ContactSensor):
+
+        @property            
+        def detectionState(self):
+            #stubbed out but should reflect whether the panel is connected or not
+            if self.nativeObject['status']=='Normal':
+                return 'NOT_DETECTED'
+            elif self.nativeObject['status']=='Violated':
+                return 'DETECTED'
+
+    class MotionSensor(devices.MotionSensor):
+
+        @property            
+        def detectionState(self):
+            #stubbed out but should reflect whether the panel is connected or not
+            if self.nativeObject['status']=='Normal':
+                return 'NOT_DETECTED'
+            elif self.nativeObject['status']=='Violated':
+                return 'DETECTED'
+
+    class TemperatureSensor(devices.TemperatureSensor):
+
+        @property            
+        def temperature(self):
+            return self.nativeObject['temperature']
+
+    class ButtonController(devices.ButtonController):
+
+        @property            
+        def pressState(self):
+            if 'status' not in self.nativeObject:
+                return 'OFF'
+                
+            elif self.nativeObject['status']=="Off":
+                return 'OFF'
+            else:
+                return 'ON'
+
+        async def Press(self, payload, correlationToken='', **kwargs):
+            try:
+                devicetype=self.device.endpointId.split(":")[1]
+                if devicetype=='task':
+                    await self.adapter.triggerTask(self.deviceid)
+                elif devicetype=='output':
+                    await self.adapter.triggerOutput(self.deviceid)
+                response=await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)
+            except:
+                self.log.error('!! Error during Press', exc_info=True)
+                return None
+                
+        async def Hold(self, payload, correlationToken='', **kwargs):
+            try:
+                devicetype=self.device.endpointId.split(":")[1]
+                if devicetype=='output':
+                    await self.adapter.triggerOutput(self.deviceid, payload['duration'])
+                response=await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)
+            except:
+                self.log.error('!! Error during Press', exc_info=True)
+                return None
+                
+        async def Release(self, correlationToken='', **kwargs):
+            try:
+                devicetype=self.device.endpointId.split(":")[1]
+                if devicetype=='output':
+                    await self.adapter.releaseOutput(self.deviceid)
+                response=await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)
+            except:
+                self.log.error('!! Error during Press', exc_info=True)
+                return None
+
+
     class adapterProcess(adapterbase):
     
         def __init__(self, log=None, dataset=None, notify=None, loop=None, **kwargs):
@@ -450,8 +515,6 @@ class elkm1(sofabase):
                     return self.addSmartZone(path.split("/")[2])
                 elif path.split("/")[1] in ["task","output"]:
                     return self.addSmartButton(path.split("/")[2],path.split("/")[1])
-
-
             except:
                 self.log.error('Error defining smart device', exc_info=True)
 
@@ -465,16 +528,32 @@ class elkm1(sofabase):
                     return False
                 if nativeObject['name'] not in self.dataset.localDevices:
                     if nativeObject["zonetype"].find("Temperature")>-1:
-                        return self.dataset.addDevice(nativeObject['name'], devices.TemperatureSensorDevice('elk/zone/%s' % deviceid, nativeObject['name']))
-                        #return self.dataset.addDevice(nativeObject['name'], devices.simpleThermostat('elk/zone/%s' % deviceid, nativeObject['name']))
+                        device=devices.alexaDevice('elk/zone/%s' % deviceid, nativeObject['name'], displayCategories=['TEMPERATURE_SENSOR'], adapter=self)
+                        device.TemperatureSensor=elkm1.TemperatureSensor(device=device)
+                        device.EndpointHealth=elkm1.EndpointHealth(device=device)
+                        return self.dataset.newaddDevice(device)
                     elif nativeObject["zonetype"].find("Burglar")==0 or nativeObject["zonetype"].find("Non Alarm")==0:
                         if nativeObject["mode"]=="motion":
-                            return self.dataset.addDevice(nativeObject['name'], devices.MotionSensorDevice('elk/zone/%s' % deviceid, nativeObject['name']))
+                            description='Elk Motion Sensor'
+                            if nativeObject['name'] in self.dataset.config['automation']:
+                                description+=' (Automation)'
+                            device=devices.alexaDevice('elk/zone/%s' % deviceid, nativeObject['name'], displayCategories=['MOTION_SENSOR'], adapter=self, description=description)
+                            device.MotionSensor=elkm1.MotionSensor(device=device)
+                            device.EndpointHealth=elkm1.EndpointHealth(device=device)
+                            return self.dataset.newaddDevice(device)
                         if nativeObject["mode"]=="doorbell":
-                            return self.dataset.addDevice(nativeObject['name'], devices.DoorbellDevice('elk/zone/%s' % deviceid, nativeObject['name']))
+                            device=devices.alexaDevice('elk/zone/%s' % deviceid, nativeObject['name'], displayCategories=['DOORBELL'], adapter=self, )
+                            device._noAlexaInterface=True # Quirks mode shit for doorbell should probably be moved up into flexdevice def
+                            device.DoorbellEventSource=devices.DoorbellEventSource(device=device)
+                            return self.dataset.newaddDevice(device)
                         else:
-                            return self.dataset.addDevice(nativeObject['name'], devices.ContactSensorDevice('elk/zone/%s' % deviceid, nativeObject['name']))
-
+                            description='Contact Sensor'
+                            if nativeObject['name'] in self.dataset.config['automation']:
+                                description+=' (Automation)'
+                            device=devices.alexaDevice('elk/zone/%s' % deviceid, nativeObject['name'], displayCategories=['CONTACT_SENSOR'], adapter=self, description=description)
+                            device.ContactSensor=elkm1.ContactSensor(device=device)
+                            device.EndpointHealth=elkm1.EndpointHealth(device=device)
+                            return self.dataset.newaddDevice(device)
                     else:
                         self.log.info('Zonetype no match for %s' % nativeObject['zonetype'])
                         
@@ -482,7 +561,6 @@ class elkm1(sofabase):
 
             except:
                 self.log.error('Error adding Smart Zone  %s' % deviceid, exc_info=True)
-
 
         def addSmartButton(self, deviceid, buttontype):
             
@@ -493,21 +571,13 @@ class elkm1(sofabase):
                     #self.log.info('Name info not present for %s' % deviceid)
                     return False
                 if nativeObject['name'] not in self.dataset.localDevices:
-                    return self.dataset.addDevice(nativeObject['name'], devices.smartButton('elk/%s/%s' % (buttontype,deviceid), nativeObject['name']))
+                    device=devices.alexaDevice('elk/%s/%s' % (buttontype,deviceid), nativeObject['name'], displayCategories=['BUTTON'], adapter=self)
+                    device.ButtonController=elkm1.ButtonController(device=device)
+                    device.EndpointHealth=elkm1.EndpointHealth(device=device)
+                    return self.dataset.newaddDevice(device)
             except:
                 self.log.error('Error adding Smart Button %s' % deviceid, exc_info=True)
 
-        def addBasicDevice(self, deviceid):
-            
-            try:
-                nativeObject=self.dataset.nativeDevices['output'][deviceid]
-                if 'name' not in nativeObject or 'status' not in nativeObject:
-                    #self.log.info('Name info not present for %s' % deviceid)
-                    return False
-                if nativeObject['name'] not in self.dataset.localDevices:
-                    return self.dataset.addDevice(nativeObject['name'], devices.basicDevice('elk/output/%s' % deviceid, nativeObject['name']))
-            except:
-                self.log.error('Error adding Smart Button %s' % deviceid, exc_info=True)
 
         def virtualEventSource(self, itempath, item):
             try:
@@ -517,134 +587,20 @@ class elkm1(sofabase):
                     if nativeObject["mode"]=="doorbell":
                         if item['value']=='Violated':
                             device=self.dataset.getDeviceFromPath(itempath)
-                            if hasattr(device, "doorbellPress"):
-                                return device.doorbellPress(device.endpointId)
+                            if hasattr(device, "DoorbellEventSource"):
+                                return device.DoorbellEventSource.press()
                             else:
-                                self.log.info('Device does not seem to have a doorbell press: %s' % device.__dict__, exc_info=True)
+                                self.log.info('Device does not seem to have a DoorbellEventSource: %s' % device.__dict__, exc_info=True)
                         
                     #self.log.info('Item: %s' % item)
             except:
-                self.log.error('Error getting virtual controller types for %s' % nativeObject, exc_info=True)
-                    
-            
-        def virtualControllers(self, itempath):
-
-            try:
-                itempart=itempath.split("/",3)
-                nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                try:
-                    detail=itempath.split("/",3)[3]
-                except:
-                    detail=""
-
-                controllerlist={}
-                if itempart[1]=='task':
-                    controllerlist=self.addControllerProps(controllerlist,"ButtonController","pressState")
-                elif itempart[1]=='output':
-                    controllerlist=self.addControllerProps(controllerlist,"ButtonController","pressState")
-                elif nativeObject["zonetype"].find("Temperature")>-1:
-                    controllerlist=self.addControllerProps(controllerlist,"TemperatureSensor","temperature")
-
-                elif nativeObject["zonetype"].find("Non Alarm")==0 or nativeObject["zonetype"].find("Burglar")==0:
-                    if nativeObject["mode"]=="doorbell":
-                        pass
-                    elif nativeObject["mode"]=="motion":
-                        if detail=="status" or detail=="":
-                            controllerlist=self.addControllerProps(controllerlist,"MotionSensor","detectionState")
-                    elif nativeObject["mode"]=="contact":
-                        if detail=="status" or detail=="":
-                            controllerlist=self.addControllerProps(controllerlist,"ContactSensor","detectionState")
-                        
-                        #controllerlist=self.addControllerProps(controllerlist,"ZoneSensor","position")
-
-                return controllerlist
-            except:
-                self.log.error('Error getting virtual controller types for %s' % nativeObject, exc_info=True)
-
-
-        def virtualControllerProperty(self, nativeObj, controllerProp):
-
-
-            try:
-                if controllerProp=='duration':
-                    return 1
-                
-                if controllerProp=='pressState':
-                    if 'status' not in nativeObj:
-                        return 'OFF'
-                        
-                    elif nativeObj['status']=="Off":
-                        return 'OFF'
-                    else:
-                        return 'ON'
-                        
-                if controllerProp=='temperature':
-                    return nativeObj['temperature']
-                    
-                if controllerProp=='type':
-                    if nativeObj["zonetype"].find("Burglar")==0:
-                        return 'Alarm'
-                    elif nativeObj["zonetype"].find("Non Alarm")==0:
-                        return 'Automation'
-
-                if controllerProp=='position':
-                    if nativeObj['status']=='Normal':
-                        return 'closed'
-                    elif nativeObj['status']=='Violated':
-                        return 'open'
-                        
-                if controllerProp=='detectionState':
-                    if nativeObj['status']=='Normal':
-                        return 'NOT_DETECTED'
-                    elif nativeObj['status']=='Violated':
-                        return 'DETECTED'
-
-                else:
-                    self.log.info('Unknown controller property mapping: %s' % controllerProp)
-                    return {}
-            except:
-                self.log.error('Error getting virtualcontrollerproperty: %s %s' % (controllerProp, nativeObj), exc_info=True)
-
-        async def processDirective(self, endpointId, controller, command, payload, correlationToken='',cookie={}):
-    
-            try:
-                devicetype=endpointId.split(":")[1]
-                device=endpointId.split(":")[2]
-                nativeCommand=False
-                
-                if controller=="ButtonController":
-                    if command=='Press':
-                        self.log.info('Button press: %s %s %s %s' % (endpointId, controller, command, payload))
-                        if devicetype=='task':
-                            nativeCommand=True
-                            await self.triggerTask(device)
-                        elif devicetype=='output':
-                            nativeCommand=True
-                            await self.triggerOutput(device)
-                            
-                    elif command=='Hold':
-                        if devicetype=='output':
-                            nativeCommand=True
-                            await self.triggerOutput(device, payload['duration'])
-                    
-                    elif command=='Release':
-                        if devicetype=='output':
-                            nativeCommand=True
-                            await self.releaseOutput(device)
-                
-                if nativeCommand:
-                    response=await self.dataset.generateResponse(endpointId, correlationToken)
-                    return response
-                        
-            except:
-                self.log.error('Error executing state change.', exc_info=True)
+                self.log.error('Error accessing virtual event source for %s' % nativeObject, exc_info=True)
+  
 
         async def triggerTask(self, taskname):
             
             try:
-                #self.log.info('Looking for task: %s in %s' % (taskname, self.dataset.nativeDevices['task'].keys()))
                 for task in self.dataset.nativeDevices['task']:
-                    #self.log.info('Looking for task: %s vs %s' % (taskname, self.dataset.nativeDevices['task'][task]['name']))
                     if self.dataset.nativeDevices['task'][task]['name']==taskname:
                         elkcmd="09tn"+task.zfill(3)+"00"
                         elkcmd=elkcmd+self.elkClient.computechecksum(elkcmd)
@@ -682,59 +638,6 @@ class elkm1(sofabase):
             except:
                 self.log.error('Error with trigger Output: %s %s' (outputId,duration), exc_info=True)
  
-        async def virtualCategory(self, category):
-            
-            if category=='temperature':
-                subset={}
-                for item in self.dataset.nativeDevices['zone']:
-                    self.log.debug('Item: %s %s' % (item, self.dataset.nativeDevices['zone'][item]))
-                    if 'zonetype' in self.dataset.nativeDevices['zone'][item]:
-                        if self.dataset.nativeDevices['zone'][item]['zonetype'].find('Temperature')==0:
-                            subset[item]=self.dataset.nativeDevices['zone'][item]
-
-            elif category=='securityzone':
-                subset={}
-                for item in self.dataset.nativeDevices['zone']:
-                    self.log.debug('Item: %s %s' % (item, self.dataset.nativeDevices['zone'][item]))
-                    if 'zonetype' in self.dataset.nativeDevices['zone'][item]:
-                        if self.dataset.nativeDevices['zone'][item]['zonetype'].find('Burglar')==0:
-                            subset[item]=self.dataset.nativeDevices['zone'][item]
-
-            elif category=='TemperatureSensor':
-                subset={}
-                for item in self.dataset.nativeDevices['zone']:
-                    self.log.debug('Item: %s %s' % (item, self.dataset.nativeDevices['zone'][item]))
-                    if 'zonetype' in self.dataset.nativeDevices['zone'][item]:
-                        if self.dataset.nativeDevices['zone'][item]['zonetype'].find('Temperature')==0:
-                            subset[item]=self.dataset.mapProperties(self.dataset.nativeDevices['zone'][item],['TemperatureSensor'])
-
-            elif category=='discovery':
-                subset=[]
-                for item in self.dataset.nativeDevices['zone']:
-                    self.log.debug('Item: %s %s' % (item, self.dataset.nativeDevices['zone'][item]))
-                    if 'zonetype' in self.dataset.nativeDevices['zone'][item]:
-                        if self.dataset.nativeDevices['zone'][item]['zonetype'].find('Temperature')==0:
-                            subset.append(self.dataset.discoveryEndpoint('/zone/%s' % item, ['TemperatureSensor'], ['THERMOSTAT']))
-                            
-            else:
-                subset={}
-
-            return subset
-
-        async def virtualList(self, itempath, query={}):
-
-            try:
-                if itempath=="ring":
-                    event=self.virtualEventSource('elk/zone/16',{"value":"Violated"})
-                    self.log.info('[> mqtt event: %s' % event)
-                    self.dataset.notify('sofa/updates',json.dumps(event))
-
-                    return {"Result": event}
-                return {}
-
-            except:
-                self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
-
 
 if __name__ == '__main__':
     adapter=elkm1(name="elk")

@@ -18,6 +18,32 @@ import aiohttp
 
 
 class post(sofabase):
+
+    class EndpointHealth(devices.EndpointHealth):
+
+        @property            
+        def connectivity(self):
+            return 'OK'
+
+    class PowerController(devices.PowerController):
+
+        @property            
+        def powerState(self):
+            return "ON" if self.nativeObject['status'] else "OFF"
+
+        async def TurnOn(self, correlationToken='', **kwargs):
+            try:
+                response=await self.adapter.executeGet(self.deviceid, 'on')
+                return await self.dataset.generateResponse(self.device.endpointId, correlationToken)    
+            except:
+                self.adapter.log.error('!! Error during TurnOn', exc_info=True)
+        
+        async def TurnOff(self, correlationToken='', **kwargs):
+            try:
+                response=await self.adapter.executeGet(self.deviceid, 'off')
+                return await self.dataset.generateResponse(self.device.endpointId, correlationToken)    
+            except:
+                self.adapter.log.error('!! Error during TurnOff', exc_info=True)
     
     class adapterProcess(adapterbase):
     
@@ -56,8 +82,11 @@ class post(sofabase):
             
             nativeObject=self.dataset.nativeDevices['target'][deviceid]
             if nativeObject['name'] not in self.dataset.localDevices:
-                return self.dataset.addDevice(nativeObject['name'], devices.simpleService('post/target/%s' % deviceid, nativeObject['name'], native=nativeObject))
-            
+                device=devices.alexaDevice('post/target/%s' % deviceid, nativeObject['name'], displayCategories=['OTHER'], adapter=self)
+                device.PowerController=post.PowerController(device=device)
+                device.EndpointHealth=post.EndpointHealth(device=device)
+                return self.dataset.newaddDevice(device)
+
             return False
 
         async def executePost(self, target, command, data=""):
@@ -100,59 +129,6 @@ class post(sofabase):
                 self.log.error("Error requesting state for %s" % target, exc_info=True)
                 return {}
 
-
-
-        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
-
-            try:
-                device=endpointId.split(":")[2]
-
-                if controller=="PowerController":
-                    if command=='TurnOn':
-                        response=await self.executeGet(device, 'on')
-                    elif command=='TurnOff':
-                        response=await self.executeGet(device, 'off')
-
-                response=await self.dataset.generateResponse(endpointId, correlationToken)    
-                return response
-            except:
-                self.log.error('Error executing state change.', exc_info=True)
-
-
-        def virtualControllers(self, itempath):
-
-            try:
-                nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                self.log.debug('Checking object for controllers: %s' % nativeObject)
-                
-                try:
-                    detail=itempath.split("/",3)[3]
-                except:
-                    detail=""
-
-                controllerlist={}
-                if detail=="on" or detail=="":
-                    controllerlist["PowerController"]=["powerState"]
-
-                return controllerlist
-            except KeyError:
-                pass
-            except:
-                self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
-
-
-        def virtualControllerProperty(self, nativeObj, controllerProp):
-            
-            try:
-                if controllerProp=='powerState':
-                    return "ON" if nativeObj['status'] else "OFF"
-                else:
-                    self.log.info('Unknown controller property mapping: %s' % controllerProp)
-                    return {}
-            except:
-                self.log.error('Error converting virtual controller property: %s %s' % (controllerProp, nativeObj), exc_info=True)
-                
-                
 
 
 if __name__ == '__main__':

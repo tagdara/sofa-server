@@ -50,7 +50,24 @@ class sofaDataset():
             return "/%s/%s" % (path.split("/")[1], path.split("/")[2])
         except IndexError:
             return None
-                
+            
+    def getNativeFromPath(self, path):
+
+        try:
+            data=self.nativeDevices
+            for part in path.split("/")[1:]:
+                data=data[part]
+            return data
+                    
+        except:
+            self.log.info('Error getting native from path', exc_info=True)
+        
+    def getNativeFromEndpointId(self, endpointId):
+            
+        try:
+            return endpointId.split(":")[2]
+        except:
+            return False               
             
     def getObjectFromPath(self, path, data=None, trynames=False):
             
@@ -116,6 +133,34 @@ class sofaDataset():
             disco.append(self.localDevices[dev].discoverResponse)
         return disco
 
+    def deleteDevice(self, name):
+            
+        # add a smart device from the devices object set to the local device list
+            
+        try:
+            self.log.info('devices: %s' % self.devices)
+            if name in self.localDevices:
+                del self.localDevices[name]
+            else:
+                for dev in self.localDevices:
+                    if self.localDevices[dev].endpointId==name or self.localDevices[dev].friendlyName==name:    
+                        del self.localDevices[dev]
+                        break
+
+            if name in self.devices:
+                del self.devices[name]
+
+            else:
+                for dev in self.devices:
+                    if self.devices[dev].endpointId==name or self.devices[dev].friendlyName==name:    
+                        del self.devices[dev]
+                        break
+            
+            return True
+        except:
+            self.log.info('Localdevs: %s' % self.localDevices)
+            self.log.error('Error deleting device: %s' % (name), exc_info=True)
+            return False
 
     def addDevice(self, name, obj):
             
@@ -125,6 +170,18 @@ class sofaDataset():
             self.localDevices[name]=obj
             #self.log.info('++ Added %s %s (%s)' % (obj.__class__.__name__, name, obj.endpointId))
             return self.localDevices[name]
+        except:
+            self.log.error('Error adding device: %s %s' % (name, obj))
+            return False
+
+    def newaddDevice(self, obj):
+            
+        # add a smart device from the devices object set to the local device list
+            
+        try:
+            self.localDevices[obj.friendlyName]=obj
+            #self.log.info('** Added %s %s (%s)' % (obj.__class__.__name__, obj.friendlyName, obj.endpointId))
+            return self.localDevices[obj.friendlyName]
         except:
             self.log.error('Error adding device: %s %s' % (name, obj))
             return False
@@ -171,8 +228,11 @@ class sofaDataset():
         
         # now check other devices for collector type adapters
         for device in self.devices:
-            if self.devices[device].endpointId==endpointId:
-                return self.devices[device]
+            try:
+                if self.devices[device]['endpointId']==endpointId:
+                    return self.devices[device]
+            except:
+                self.log.error('Error with %s' % self.devices[device], exc_info=True)
                 
         return None
     
@@ -191,7 +251,6 @@ class sofaDataset():
                 return self.devices[device]
                 
         return None
-
 
     def getObjectsByDisplayCategory(self, category):
             
@@ -219,18 +278,19 @@ class sofaDataset():
                         capname=cap['interface'].split('.')[1]
                         if capname not in directives:
                             try:
-                                controllerclass = getattr(devices, capname+"Interface")
+                                controllerclass = getattr(devices, capname)
                                 xc=controllerclass()
                                 try:
                                     directives[capname]=xc.directives
                                 except AttributeError:
                                     directives[capname]={}
+                                xc=None
                             except:
-                                self.log.error('Error with getting directives from controller class', exc_info=True)
+                                self.log.error('Error with getting directives from controller class: %s' % capname, exc_info=True)
 
         except:
             self.log.error('Error creating list of Alexa directives', exc_info=True)
-            
+        
         return directives
     
     async def getAllProperties(self):
@@ -243,21 +303,21 @@ class sofaDataset():
                         capname=cap['interface'].split('.')[1]
                         if capname not in properties:
                             try:
-                                controllerclass = getattr(devices, capname+"Interface")
+                                controllerclass = getattr(devices, capname)
                                 xc=controllerclass()
                                 try:
                                     properties[capname]=xc.props
                                 except AttributeError:
                                     properties[capname]={}
+                                xc=None
                             except:
                                 self.log.error('Error with getting properties from controller class', exc_info=True)
         except:
             self.log.error('Error creating list of Alexa properties', exc_info=True)
             
         return properties
-
        
-
+       
     async def register(self, adapterdata):
             
         try:
@@ -271,6 +331,7 @@ class sofaDataset():
         except:
             self.log.error('Error registering adapter to dataset: %s' % (adapterdata), exc_info=True)
              
+            
     def nested_set(self, dic, keys, value):
         for key in keys[:-1]:
             dic = dic.setdefault(key, {})
@@ -293,6 +354,53 @@ class sofaDataset():
             self.log.error('Error updating properties', exc_info=True)
                             
 
+    async def checkDevicesForChanges(self, patch, oldDevicePropertyStates):
+        
+        try:
+            done=[]
+            for item in patch:
+                if len(item['path'].split('/'))<3:
+                    # ignore top level category adds
+                    continue
+                if item['op']=='add' and hasattr(self.adapter, "addSmartDevice"):
+                    smartDevice=await self.adapter.addSmartDevice(item['path'])
+                    if smartDevice:
+                        self.log.info('++ AddOrUpdateReport: %s (%s)' % (smartDevice.friendlyName, smartDevice.endpointId))
+                        #self.log.info('++ AddOrUpdateReport: %s (%s) %s' % (smartDevice.friendlyName, smartDevice.endpointId, smartDevice.addOrUpdateReport))
+                        self.notify('sofa/updates',json.dumps(smartDevice.addOrUpdateReport))
+                        done.append(smartDevice.endpointId) 
+                else:
+                    smartDevice=self.getDeviceByEndpointId("%s%s" % (self.adaptername, self.getObjectPath(item['path']).replace("/",":")))
+                    # Why the fuck are we using friendly names for keys in local devices instead of endpoint id's?
+                    #if smartDevice and smartDevice.endpointId in oldDevicePropertyStates:
+                    if smartDevice and smartDevice.endpointId not in done and smartDevice.friendlyName in oldDevicePropertyStates:
+                        newdev={}
+                        olddev={}
+                        for prop in smartDevice.propertyStates: 
+                            newdev[prop['namespace']+'.'+prop['name']]=prop
+                        for prop in oldDevicePropertyStates[smartDevice.friendlyName]:
+                            olddev[prop['namespace']+'.'+prop['name']]=prop
+                        controllers={}
+                        for prop in newdev:
+                            # We may need to walk through the resulting dictionary for values that have a dict
+                            if newdev[prop]['value']!=olddev[prop]['value']:
+                                if newdev[prop]['namespace'] not in controllers:
+                                    controllers[newdev[prop]['namespace']]=[]
+                                controllers[newdev[prop]['namespace']].append(newdev[prop]['name'])
+    
+                        if controllers:
+                            changeReport=smartDevice.changeReport(controllers)
+                            if changeReport:
+                                try:
+                                    for prop in changeReport['event']['payload']['change']['properties']:
+                                        self.log.info('[> mqtt change: %s %s %s %s %s' % (smartDevice.friendlyName, smartDevice.endpointId, prop['namespace'], prop['name'], prop['value'] ))
+                                except:
+                                    self.log.info('[> mqtt changereport: %s' % changeReport, exc_info=True)
+                                self.notify('sofa/updates',json.dumps(changeReport))
+                        done.append(smartDevice.endpointId) 
+        except:
+            self.log.error('Error checking devices', exc_info=True)
+
     async def ingest(self, data, notify=True, overwriteLevel=None, returnChangeReport=True):
         
         try:
@@ -300,15 +408,30 @@ class sofaDataset():
             # and then use jsonpatch to find the differences and report them.  Olddata retains the previous state
             # in case it is needed.
             self.oldNativeDevices = copy.deepcopy(self.nativeDevices)
+            oldDevices={}
+            for dev in self.localDevices:
+                oldDevices[dev]=copy.deepcopy(self.localDevices[dev].propertyStates)
+            
             if overwriteLevel:
                 self.nested_set(self.nativeDevices, overwriteLevel.split('/'), data )
+                patch=[{"op":"change", "value":data, "path":overwriteLevel}]
+                self.log.info('.. patch from ingest with overwrite: %s' % patch)
             else:
                 dpath.util.merge(self.nativeDevices, data, flags=dpath.util.MERGE_REPLACE)
-            patch = jsonpatch.JsonPatch.from_diff(self.oldNativeDevices, self.nativeDevices)
+                patch = jsonpatch.JsonPatch.from_diff(self.oldNativeDevices, self.nativeDevices)
             
             if patch:
-                #self.log.info('Patch: %s' % patch)
-                return await self.updateDevicesFromPatch(patch)
+                # The new model uses checkdevicesforchanges to discover the differences between devices
+                # This should be faster and follows the new object model.
+                # UpdateDevicesFromPatch is still needed for legacy adapters until they are converted.
+                # UpdateDevicesfromPatch also handles new device adds, which needs to be figured out as well.
+                await self.checkDevicesForChanges(patch, oldDevices)
+                #return await self.updateDevicesFromPatch(patch)
+            else:
+                pass
+                #self.log.info('No patch: old %s' % (self.oldNativeDevices))
+                #self.log.info('No patch: new %s' % (self.nativeDevices))
+                
             return {}
                 
         except:
@@ -320,6 +443,8 @@ class sofaDataset():
             
         try:
             updates=[]
+            
+            #self.log.info('patch: %s' % data)
 
             # Check to see if this is a new smart device that has not been added yet
             for item in data:
@@ -334,6 +459,7 @@ class sofaDataset():
                                 if update:
                                     self.log.info('new device update: %s' % update)
                                     updates.append(update)
+
                     else:
                         if hasattr(self.adapter, "virtualEventSource"):
                             event=self.adapter.virtualEventSource(item['path'], item)
@@ -379,7 +505,7 @@ class sofaDataset():
             
             changecontrollers = copy.deepcopy(controllers)            
             for controller in changecontrollers:
-                #self.log.info('Change in controller: %s %s' % (controller, controllers[controller]))
+                self.log.debug('Change in controller: %s %s' % (controller, controllers[controller]))
                 for prop in changecontrollers[controller]:
                     try:
                         smartController=getattr(smartDevice,controller)
@@ -387,7 +513,9 @@ class sofaDataset():
                         try:
                             setattr(smartController, prop, self.adapter.virtualControllerProperty(nativeObject, prop))
                         except AttributeError:
-                            self.log.warn('Not a settable property: %s/%s' % (controller, prop))
+                            # During the transition to object based smart devices this will be triggered
+                            # Moving it to debug for now
+                            self.log.debug('Not a settable property: %s/%s' % (controller, prop))
                         newProp=getattr(smartController, prop)
                         if newProp==smartProp:
                             self.log.debug("Property didn't change: %s.%s" % (controller, prop))
@@ -406,6 +534,7 @@ class sofaDataset():
                 changeReport=None
                 
             if changeReport and not newDevice:
+                self.log.info('Change Report: %s' % changeReport)
                 try:
                     dev=self.getDeviceByEndpointId(changeReport['event']['endpoint']['endpointId'])
                     for prop in changeReport['event']['payload']['change']['properties']:
@@ -492,7 +621,7 @@ class sofaDataset():
                 ConnectionRefusedError,
                 aiohttp.client_exceptions.ClientOSError,
                 concurrent.futures._base.CancelledError) as e:
-            self.log.error('!. Connection refused for adapter %s. %s' % (adapter, str(e)))       
+            self.log.warn('!. Connection refused for adapter %s. %s' % (adapter, str(e)))       
 
         except:
             self.log.error("!. Error requesting state: %s" % data,exc_info=True)
@@ -599,15 +728,34 @@ class sofaDataset():
         
         response={}
         try:
-            if hasattr(self.adapter, "processDirective"):
-                endpointId=data['directive']['endpoint']['endpointId']
-                endpoint=data['directive']['endpoint']['endpointId'].split(":")[2]
-                controller=data['directive']['header']['namespace'].split('.')[1]
-                directive=data['directive']['header']['name']
-                payload=data['directive']['payload']
-                correlationToken=data['directive']['header']['correlationToken']
-                cookie=data['directive']['endpoint']['cookie']
-
+            endpointId=data['directive']['endpoint']['endpointId']
+            endpoint=data['directive']['endpoint']['endpointId'].split(":")[2]
+            controller=data['directive']['header']['namespace'].split('.')[1]
+            directive=data['directive']['header']['name']
+            payload=data['directive']['payload']
+            correlationToken=data['directive']['header']['correlationToken']
+            cookie=data['directive']['endpoint']['cookie']
+            try:
+                device=self.getDeviceByEndpointId(endpointId)
+                if hasattr(device, controller):
+                    device_controller=getattr(device, controller)
+                    if hasattr(device_controller, directive):
+                        if getattr(device_controller, directive)!=None:
+                            args=[]
+                            if payload:
+                                args.append(payload)
+                            kwargs={'correlationToken': correlationToken}
+                            if directive in ['Activate','Deactivate'] and cookie:
+                                kwargs['cookie']=cookie
+                            response=await getattr(device_controller, directive)(*args, **kwargs)
+                            return response
+                else:
+                    self.log.info('No interface found: %s %s' % (controller+'Interface', device.__dict__))
+                self.log.info('~~ Fallthrough on handle directive for %s' % data)
+            except:
+                self.log.info('Could not run device integrated command: %s' % data, exc_info=True)
+        
+            if hasattr(self.adapter, "processDirective"):    
                 response=await self.adapter.processDirective(endpointId, controller, directive, payload, correlationToken=correlationToken, cookie=cookie)
 
         except:

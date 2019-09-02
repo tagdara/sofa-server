@@ -19,6 +19,63 @@ import struct
 
 class pcServer(sofabase):
 
+    class EndpointHealth(devices.EndpointHealth):
+
+        @property            
+        def connectivity(self):
+            return 'OK'
+
+    class PowerController(devices.PowerController):
+
+        @property            
+        def powerState(self):
+            return self.nativeObject['powerState']
+
+        async def TurnOn(self, correlationToken='', **kwargs):
+            try:
+                # should probably check to see if the machine is on, and if so also send the command so that
+                # things like unlock or wake-from-just-monitor-sleep will work without WOL
+                if self.deviceid in self.adapter.dataset.config['cachedMacAddresses']:
+                    self.adapter.wakeonlan(self.adapter.dataset.config['cachedMacAddresses'][self.deviceid])
+                    return self.device.Response(correlationToken)
+                else:
+                    self.adapter.log.info('Did not find MAC address for %s in %s' % ( self.deviceid, self.adapter.dataset.config['cachedMacAddresses']))
+                    return {}
+            except:
+                self.adapter.log.error('!! Error during TurnOn', exc_info=True)
+        
+        async def TurnOff(self, correlationToken='', **kwargs):
+            try:
+                cmd={"op":"set", "property":"powerState", "value":"OFF", 'device': self.deviceid }
+                self.adapter.notify('sofa/pc', json.dumps(cmd)) 
+                return self.device.Response(correlationToken)
+            except:
+                self.adapter.log.error('!! Error during TurnOff', exc_info=True)
+
+    class LockController(devices.LockController):
+        
+        @property            
+        def lockState(self):
+            return self.nativeObject['lockState']
+ 
+        async def Lock(self, correlationToken='', **kwargs):
+
+            try:
+                cmd={"op":"set", "property":"lockState", "value":"LOCKED", 'device': self.deviceid }
+                self.adapter.notify('sofa/pc', json.dumps(cmd))
+                return self.device.Response(correlationToken)
+            except:
+                self.adapter.log.error('!! Error during Lock', exc_info=True)
+
+        async def Unlock(self, correlationToken='', **kwargs):
+            try:
+                cmd={"op":"set", "property":"lockState", "value":"UNLOCKED", 'device': self.deviceid }
+                self.adapter.notify('sofa/pc', json.dumps(cmd))
+                return self.device.Response(correlationToken)
+            except:
+                self.adapter.log.error('!! Error during Unlock', exc_info=True)
+   
+
     class adapterProcess():
         def __init__(self, log=None, loop=None, dataset=None, notify=None, request=None, **kwargs):
             self.dataset=dataset
@@ -93,132 +150,24 @@ class pcServer(sofabase):
                 self.log.error('Error handling Adapter MQTT Data', exc_info=True)
 
 
-        async def updateDevice(self, obj):
-            
-            try:
-                obj['state']={}
-                await self.dataset.ingest({"desktop": { obj['friendlyName'] :obj }})
-            except:
-                self.log.error('Error updating device list: %s' % objlist[obj],exc_info=True)
 
         # Adapter Overlays that will be called from dataset
-        def addSmartDevice(self, path):
+        async def addSmartDevice(self, path):
             
             try:
                 if path.split("/")[1]=="desktop":
-                    return self.addSmartPC(path.split("/")[2])
-
+                    deviceid=path.split("/")[2]    
+                    nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(path))
+                    if deviceid not in self.dataset.localDevices:
+                        device=devices.alexaDevice('pc/desktop/%s' % deviceid, nativeObject['name'], displayCategories=['PC'], adapter=self)
+                        device.PowerController=pcServer.PowerController(device=device)
+                        device.LockController=pcServer.LockController(device=device)
+                        return self.dataset.newaddDevice(device)
+                return False
+                
             except:
                 self.log.error('Error defining smart device', exc_info=True)
                 return False
-
-        def checkCache(self, name):
-
-            try:
-                if 'cachedDevices' not in self.dataset.config:
-                    self.log.info('Config does not have cache: %s' % self.dataset.config)
-                    self.dataset.config['cachedDevices']=[]
-                
-                if name in self.dataset.config['cachedDevices']:
-                    return False
-                #for dev in self.dataset.config['cachedDevices']:
-                #    if dev['friendlyName']==nativeObject['friendlyName']:
-                #        return False
-                        
-                self.dataset.config['cachedDevices'].append(nativeObject)
-                self.log.info('config now: %s' % self.dataset.config)
-                self.dataset.saveConfig()
-            except:
-                self.log.error('Error checking cache', exc_info=True)
-                return False
-
-
-        async def addSmartPC(self, name):
-            
-            nativeObject=self.dataset.nativeDevices['desktop'][name]
-            
-            if name not in self.dataset.localDevices:
-                self.checkCache(name)
-                return self.dataset.addDevice(name, devices.smartPC('pc/desktop/%s' % name, name))
-            
-            return False
-            
-        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
-    
-            try:
-                devicetype=endpointId.split(":")[1]
-                device=endpointId.split(":")[2]
-                nativeCommand=False
-                self.log.info("%s %s %s %s %s" % (endpointId, controller, command, payload, correlationToken))
-                if command=='TurnOn':
-                    # should probably check to see if the machine is on, and if so also send the command so that
-                    # things like unlock or wake-from-just-monitor-sleep will work without WOL
-                    self.log.info('Alexa TurnOn Command')
-                    if device in self.dataset.config['cachedMacAddresses']:
-                        self.log.info('Sending Wake On LAN packet to: %s %s' % (device, self.dataset.config['cachedMacAddresses'][device]))
-                        self.wakeonlan(self.dataset.config['cachedMacAddresses'][device])
-                    else:
-                        self.log.info('Did not find MAC address for %s in %s' % ( device, self.dataset.config['cachedMacAddresses']))
-                        return {}
-
-
-                elif command=='TurnOff':
-                    cmd={"op":"set", "property":"powerState", "value":"OFF", 'device': device }
-                    self.notify('sofa/pc', json.dumps(cmd)) 
-                    
-                elif command=='Lock':         
-                    cmd={"op":"set", "property":"lockState", "value":"LOCKED", 'device': device }
-                    self.notify('sofa/pc', json.dumps(cmd))
-                    
-                elif command=='Unlock':
-                    cmd={"op":"set", "property":"lockState", "value":"UNLOCKED", 'device': device }
-                    self.notify('sofa/pc', json.dumps(cmd))
-                else:
-                    return {}
-
-                response=await self.dataset.generateResponse(endpointId, correlationToken)
-                return response
-                    
-            except:
-                self.log.error('Error executing state change.', exc_info=True)
-
-            
-        def virtualControllers(self, itempath):
-
-            try:
-                itempart=itempath.split("/",3)
-                nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                try:
-                    detail=itempath.split("/",3)[3]
-                except:
-                    detail=""
-
-                controllerlist={}
-
-                if detail=="powerState" or detail=="":
-                    controllerlist["PowerController"]=["powerState"]
-                if detail=="lockState" or detail=="":
-                    controllerlist["LockController"]=["lockState"]
-                
-                return controllerlist
-
-            except:
-                self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
-
-
-        def virtualControllerProperty(self, nativeObj, controllerProp):
-        
-            try:
-                if controllerProp=='powerState':
-                    return nativeObj['powerState']
-
-                if controllerProp=='lockState':
-                    return nativeObj['lockState']
-                    
-                self.log.info('Did not find %s in %s' % (controllerProp,nativeObj['state']))
-
-            except:
-                self.log.error('Error converting virtual controller property: %s %s' % (controllerProp, nativeObj), exc_info=True)
 
         async def virtualList(self, itempath, query={}):
 
@@ -255,16 +204,12 @@ class pcServer(sofabase):
         def wakeonlan(self, macaddress):
         
             try:
-                if len(macaddress) == 12:
-                    pass
-                elif len(macaddress) == 12 + 5:
-                    sep = macaddress[2]
-                    macaddress = macaddress.replace(sep, '')
+                if len(macaddress) == 17: # mac address has unwanted separators
+                    macaddress = macaddress.replace(macaddress[2], '')
  
                 # Pad the synchronization stream.
                 data = ''.join(['FFFFFFFFFFFF', macaddress * 20])
-                send_data = b'' 
-
+                send_data = b''
                 # Split up the hex values and pack.
                 for i in range(0, len(data), 2):
                     send_data = b''.join([send_data, struct.pack('B', int(data[i: i + 2], 16))])
@@ -272,17 +217,10 @@ class pcServer(sofabase):
                 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
                 sock.sendto(send_data, ('<broadcast>', 7))    
-                self.log.info('>> WOL magic packet sent to '+str(macaddress))
+                self.log.info('>> Wake-on-LAN magic packet sent to '+str(macaddress))
             except:
                 self.log.error('Error sending Wake On LAN packet: %s' % macaddress, exc_info=True)
 
-
-        def command(self, category, item, data):
-            pass
-        
-        def get(self, category, item):
-            pass
-        
 
 
 if __name__ == '__main__':

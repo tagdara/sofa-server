@@ -34,6 +34,225 @@ import concurrent.futures
 
 class sonos(sofabase):
 
+    class EndpointHealth(devices.EndpointHealth):
+
+        @property            
+        def connectivity(self):
+            return 'OK'
+
+    class InputController(devices.InputController):
+
+        @property            
+        def input(self):
+            coordinator=self.adapter.getCoordinator(self.nativeObject)
+            return "sonos:player:%s" % coordinator['speaker']['uid']
+
+        async def SelectInput(self, payload, correlationToken=''):
+            try:
+                player=await self.adapter.getPlayerOrCoordinator(self.device, direct=True)
+                coordinator=self.adapter.getCoordinator(self.nativeObject)
+                if coordinator['speaker']['uid']!=player.uid:
+                    self.log.info('..Probably need to update coordinator we are leaving: %s' % coordinator['speaker']['uid'] )
+
+                self.log.info('Changing input for %s: %s' % (player.uid, payload['input']))
+                if payload['input']=='':
+                    player.unjoin()
+                else:
+                    for otherplayer in self.adapter.players:
+                        if otherplayer.uid==payload['input'].split(':')[2]:
+                            player.join(otherplayer)
+                            break
+
+                return self.device.Response(correlationToken)
+            except:
+                self.log.error('!! Error during SelectInput', exc_info=True)
+                self.adapter.connect_needed=True
+                return None
+                
+    class SpeakerController(devices.SpeakerController):
+
+        @property            
+        def volume(self):
+            return int(self.nativeObject['RenderingControl']['volume']['Master'])
+
+        @property            
+        def mute(self):
+            return self.nativeObject['RenderingControl']['mute']['Master']=="1"
+
+        async def SetVolume(self, payload, correlationToken=''):
+            try:
+                player=await self.adapter.getPlayerOrCoordinator(self.device, direct=True)
+                player.volume=int(payload['volume'])
+                return self.device.Response(correlationToken)
+            except:
+                self.log.error('!! Error during SetVolume', exc_info=True)
+                self.adapter.connect_needed=True
+                return None
+
+        async def SetMute(self, payload, correlationToken=''):
+            try:
+                player=await self.adapter.getPlayerOrCoordinator(self.device, direct=True)
+                player.mute=payload['mute']
+                return self.device.Response(correlationToken)
+
+            except:
+                self.log.error('!! Error during SetVolume', exc_info=True)
+                self.adapter.connect_needed=True
+                return None
+
+    class MusicController(devices.MusicController):
+
+        @property            
+        def artist(self):
+            try:
+                coordinator=self.adapter.getCoordinator(self.nativeObject)
+                return coordinator['AVTransport']['current_track_meta_data']['creator']
+            except:
+                return ""
+
+        @property            
+        def title(self):
+            try:
+                coordinator=self.adapter.getCoordinator(self.nativeObject)
+                return coordinator['AVTransport']['current_track_meta_data']['title']
+            except:
+                return ""
+       
+        @property            
+        def album(self):
+            try:
+                coordinator=self.adapter.getCoordinator(self.nativeObject)
+                return coordinator['AVTransport']['current_track_meta_data']['album']
+            except:
+                return ""
+                
+        @property            
+        def art(self):
+            coordinator=self.adapter.getCoordinator(self.nativeObject)
+            try:
+                return "/image/sonos/player/%s/AVTransport/current_track_meta_data/album_art_uri?%s" % (coordinator['speaker']['uid'], coordinator['AVTransport']['current_track_meta_data']['album'])
+            except:
+                return "/image/sonos/logo"
+
+        @property            
+        def url(self):
+            try:
+                coordinator=self.adapter.getCoordinator(self.nativeObject)
+                return coordinator['AVTransport']['enqueued_transport_uri']
+            except:
+                return ""
+
+        @property            
+        def linked(self):
+            try:
+                return self.adapter.getLinkedPlayers(self.nativeObject)
+            except:
+                return []
+
+        @property            
+        def playbackState(self):
+            try:
+                if self.nativeObject['AVTransport']['transport_state']=='TRANSITIONING':
+                    return 'PLAYING'
+                else:
+                    return self.nativeObject['AVTransport']['transport_state']
+            except:
+                return 'STOPPED'
+
+
+        async def Play(self, correlationToken=''):
+            try:
+                player=await self.adapter.getPlayerOrCoordinator(self.device)
+                if 'Play' in await self.adapter.getPlayerActions(player):
+                    player.play()
+                return self.device.Response(correlationToken)
+
+            except:
+                self.log.error('!! Error during Play', exc_info=True)
+                self.connect_needed=True
+                return None
+
+        async def PlayFavorite(self, payload, correlationToken=''):
+            try:
+                player=await self.adapter.getPlayerOrCoordinator(self.device)
+                if 'Play' in await self.adapter.getPlayerActions(player):
+                    player.playFavorite(payload['favorite'])
+                return self.device.Response(correlationToken)
+
+            except:
+                self.log.error('!! Error during Play', exc_info=True)
+                self.connect_needed=True
+                return None
+
+
+        async def Pause(self, correlationToken=''):
+            try:
+                player=await self.adapter.getPlayerOrCoordinator(self.device)
+                if 'Pause' in await self.adapter.getPlayerActions(player):
+                    player.pause()
+                return self.device.Response(correlationToken)
+
+            except:
+                self.log.error('!! Error during Pause', exc_info=True)
+                self.connect_needed=True
+                return None
+                
+        async def Stop(self, correlationToken=''):
+            try:
+                player=await self.adapter.getPlayerOrCoordinator(self.device)
+                if 'Stop' in await self.adapter.getPlayerActions(player):
+                    player.stop()
+                return self.device.Response(correlationToken)
+
+            except:
+                self.log.error('!! Error during Stop', exc_info=True)
+                self.connect_needed=True
+                return None
+                
+        async def Skip(self, correlationToken=''):
+            try:
+                player=await self.adapter.getPlayerOrCoordinator(self.device)
+                if 'Next' in await self.adapter.getPlayerActions(player):
+                    player.next()
+                return self.device.Response(correlationToken)
+
+            except:
+                self.log.error('!! Error during Skip', exc_info=True)
+                self.connect_needed=True
+                return None
+                
+        async def Previous(self, correlationToken=''):
+            try:
+                player=await self.adapter.getPlayerOrCoordinator(self.device)
+                if 'Previous' in await self.adapter.getPlayerActions(player):
+                    player.previous()
+                return self.device.Response(correlationToken)
+            except:
+                self.log.error('!! Error during Skip', exc_info=True)
+                self.connect_needed=True
+                return None
+
+        async def SelectInput(self, payload, correlationToken=''):
+            try:
+                player=await self.adapter.getPlayerOrCoordinator(self.device, direct=True)
+                self.log.info('Changing input for %s: %s' % (player.uid, payload['input']))
+                if payload['input']=='':
+                    player.unjoin()
+                else:
+                    for otherplayer in self.players:
+                        if otherplayer.uid==payload['input'].split(':')[2]:
+                            player.join(otherplayer)
+                            break
+
+                return self.device.Response(correlationToken)
+            except:
+                self.log.error('!! Error during SelectInput', exc_info=True)
+                self.connect_needed=True
+                return None
+
+
+
+
     class adapterProcess(adapterbase):
         
         def setSocoLoggers(self, level):
@@ -387,107 +606,52 @@ class sonos(sofabase):
             
             try:
                 if path.split("/")[1]=="player":
-                    return self.addSoundSystem(path.split("/")[2])
-
+                    deviceid=path.split("/")[2]
+                    nativeObject=self.dataset.nativeDevices['player'][deviceid]
+                    if 'name' not in nativeObject:
+                        self.log.error('No name in %s %s' % (deviceid, nativeObject))
+                        return None
+                        
+                    if nativeObject['name'] not in self.dataset.localDevices:
+                        if 'RenderingControl' in nativeObject:
+                            if 'ZoneGroupTopology' in nativeObject:
+                                device=devices.alexaDevice('sonos/player/%s' % deviceid, nativeObject['name'], displayCategories=["SPEAKER"], adapter=self)
+                                device.InputController=sonos.InputController(device=device)
+                                device.EndpointHealth=sonos.EndpointHealth(device=device)
+                                device.MusicController=sonos.MusicController(device=device)
+                                device.SpeakerController=sonos.SpeakerController(device=device)
+                                return self.dataset.newaddDevice(device)
+                return None
             except:
                 self.log.error('Error defining smart device', exc_info=True)
                 return None
 
 
-        def addSoundSystem(self, deviceid):
+        async def getPlayerOrCoordinator(self, device, direct=False):
             
-            nativeObject=self.dataset.nativeDevices['player'][deviceid]
-            if 'name' not in nativeObject:
-                self.log.error('No name in %s %s' % (deviceid, nativeObject))
-                return None
-                
-
-            if nativeObject['name'] not in self.dataset.localDevices:
-                if 'RenderingControl' in nativeObject:
-                    if 'ZoneGroupTopology' in nativeObject:
-                        return self.dataset.addDevice(nativeObject['name'], devices.soundSystem('sonos/player/%s' % deviceid, nativeObject['name']))
-            
-            return None
-
-
-        #async def stateChange(self, endpointId, controller, command, payload):
-        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
-    
             try:
-                device=endpointId.split(":")[2]
-                dev=self.dataset.getDeviceByEndpointId(endpointId)
-                #coord=dev.friendlyName
+                dev=self.dataset.getDeviceByEndpointId(device.endpointId)
                 try:
                     coord=dev.endpointId
                 except AttributeError:
                     self.log.error('!! Player is not available for command: %s %s %s %s.' % (endpointId, controller, command, payload))
                     return None
-                    
                 try:
-                    if controller=="MusicController" and dev.InputController.input and dev.InputController.input!=dev.endpointId:
+                    if direct==False and dev.InputController.input and dev.InputController.input!=dev.endpointId:
                         coord=dev.InputController.input
-                        self.log.info('Sending %s to coordinator instead: %s' % (command, dev.InputController.input))
+                        self.log.info('Setting %s to coordinator instead: %s' % (device.endpointId, dev.InputController.input))
                 except:
                     coord=dev.endpointId
-                
+
                 if self.players==None:
                     self.log.error('!! No players are available for command: %s %s %s %s.' % (endpointId, controller, command, payload))
                     return None
                     
                 for player in self.players:
-                    #if player.player_name==device or player.uid==device:
                     if 'sonos:player:%s' % player.uid==coord:
-                        try:
-                            actions=player.avTransport.GetCurrentTransportActions([('InstanceID', 0)])['Actions'].split(', ')
-                        except:
-                            self.log.error('Could not get available actions for %s' % player.player_name, exc_info=True)
-                            actions=[]
-
-                        if controller=="SpeakerController":
-                            if command=='SetVolume':
-                                player.volume=int(payload['volume'])
-                            elif command=='SetMute':
-                                player.mute=payload['muted']
-                                
-                        elif controller=="MusicController":
-                            alexa_to_sonos={"Skip":"Next"}
-                            if command in alexa_to_sonos:
-                                command=alexa_to_sonos[command]
-                            
-                            if command in actions:
-                                if command=='PlayFavorite':
-                                    player.playFavorite(payload['favorite'])
-                                elif command=='Play':
-                                    player.play()
-                                elif command=='Pause':
-                                    player.pause()
-                                elif command=='Stop':
-                                    player.stop()
-                                elif command=='Next':
-                                    player.next()
-                                elif command=='Previous':
-                                    player.previous()
-                            else:
-                                self.log.warn('Requested command not available for %s: %s not in %s' % (coord, command, actions))
-                                response=await self.dataset.generateResponse(endpointId, correlationToken)
-                                return response
-                                
-                        elif controller=="InputController":
-                            if command=='SelectInput':
-                                self.log.info('Changing input for %s: %s' % (player.uid, payload['input']))
-                                if payload['input']=='':
-                                    player.unjoin()
-                                else:
-                                    for otherplayer in self.players:
-                                        if otherplayer.uid==payload['input'].split(':')[2]:
-                                            player.join(otherplayer)
-                   
-                        #await self.dataset.ingest({"player": { spinfo["uid"]: { "speaker": spinfo, "name":player.player_name, "ip_address":player.ip_address }}})
-                        response=await self.dataset.generateResponse(endpointId, correlationToken)
-                        return response
-
-                self.log.info('Did not find player %s' % coord)
-
+                        return player
+                        
+                self.log.info('Could not find device: %s' % coord)
             except soco.exceptions.SoCoSlaveException:
                 self.log.error('Error from Soco while trying to issue command to a non-coordinator %s %s', (endpointId, command))
             except soco.exceptions.SoCoUPnPException:
@@ -495,71 +659,19 @@ class sonos(sofabase):
                 self.log.error("It is likely that we have now lost connection, subscriptions are dead, and the adapter needs to be restarted")
                 self.connect_needed=True
             except:
-                self.log.error('Error executing state change.', exc_info=True)
+                self.log.info('!! Error finding proper device or coordinator for %s' % device, exc_info=True)
             
             return None
-
-
-
-        def virtualControllers(self, itempath):
-
+            
+            
+        async def getPlayerActions(self, player):
             try:
-                nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                #self.log.debug('Checking object for controllers: %s' % nativeObject)
-                try:
-                    detail=itempath.split("/",3)[3]
-                except:
-                    detail=""
-                #self.log.info('Checking object path: %s %s' % (itempath, detail))
-
-                controllerlist={}
-                if "speaker" in nativeObject:
-
-                    if detail in ["ZoneGroupTopology/zone_player_uui_ds_in_group", "ZoneGroupTopology/zone_group_name", "ZoneGroupTopology/zone_group_id", "DeviceProperties/is_idle"]:
-                        controllerlist=self.addControllerProps(controllerlist, "InputController", "input")
-                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "linked")
-
-                    if detail.startswith("ZoneGroupTopology/zone_group_state/ZoneGroupState/ZoneGroups"):
-                    #if detail.startswith("ZoneGroupTopology/zone_group_state/ZoneGroups"):
-                        controllerlist=self.addControllerProps(controllerlist, "InputController", "input")
-                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "linked")
-                    if detail=="AVTransport/current_track_meta_data": 
-                        # On the very first track after a stop, current_track_meta_data doesnt exist so the individual data points
-                        # are not present to update and the whole thing comes across as a single item due to the way patches are handled
-                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "playbackState")
-                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "artist")
-                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "title")
-                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "album")
-                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "art")
-                    if detail=="AVTransport/transport_state":
-                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "playbackState")
-                    if detail=="AVTransport/current_track_meta_data/creator":
-                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "artist")
-                    if detail=="AVTransport/current_track_meta_data/title":
-                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "title")
-                    if detail=="AVTransport/current_track_meta_data/album":  
-                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "album")
-                    if detail=="AVTransport/current_track_meta_data/album_art_uri":
-                        controllerlist=self.addControllerProps(controllerlist, "MusicController", "art")
-                    if detail=="AVTransport/current_track_uri":
-                        controllerlist=self.addControllerProps(controllerlist,"MusicController", "url")
-
-                    if detail=="RenderingControl/volume/Master":
-                        controllerlist=self.addControllerProps(controllerlist, "SpeakerController", "volume")
-                    if detail=="RenderingControl/mute/Master":
-                        controllerlist=self.addControllerProps(controllerlist, "SpeakerController", "muted")
-
-                    if detail=="":    
-                        controllerlist={    "MusicController" : ["artist", "title", "album", "url", "art", "linked", "playbackState"],
-                                            "SpeakerController": ["volume","muted"],
-                                            "InputController": ["input"]
-                                        }
-                        
-                return controllerlist
+                return player.avTransport.GetCurrentTransportActions([('InstanceID', 0)])['Actions'].split(', ')
             except:
-                self.log.error('Error getting virtual controller types for %s' % nativeObj, exc_info=True)
-
-
+                self.log.error('Could not get available actions for %s' % player.player_name, exc_info=True)
+                self.connect_needed=True
+            return []
+                
         def getCoordinator(self, nativeObj):
             
             try:
@@ -598,98 +710,14 @@ class sonos(sofabase):
                 return nativeObj
             
 
-        def virtualControllerProperty(self, nativeObj, controllerProp):
+        async def virtualThumbnail(self, path, client=None):
             
-            coordinator=self.getCoordinator(nativeObj)
-            
-            if controllerProp=='volume':
-                try:
-                    return int(nativeObj['RenderingControl']['volume']['Master'])
-                except:
-                    self.log.error('Error checking volume status', exc_info=True)
-
-            elif controllerProp=='muted':
-                return nativeObj['RenderingControl']['mute']['Master']=="1"
-
-            
-            elif controllerProp=='playbackState':
-                try:
-                    if nativeObj['AVTransport']['transport_state']=='TRANSITIONING':
-                        return 'PLAYING'
-                    else:
-                        return nativeObj['AVTransport']['transport_state']
-                except:
-                    return 'STOPPED'
-
-            elif controllerProp=='input':
-                try:
-                    # Sonos doesn't always populate the zone_group_name field, even when a player is grouped.  It's probably just a Sonos
-                    # thing, but it might be a Soco thing.  Anyway, here's Wonderwall.
-                    #if nativeObj['ZoneGroupTopology']['zone_group_name']==None:
-                  
-                    return "sonos:player:%s" % coordinator['speaker']['uid']
-                    #return coordinator['name']
-
-                    # Sometimes it's right tho   
-                    # But we're still not using it as it's kinda arbitrary
-                    #return nativeObj['ZoneGroupTopology']['zone_group_name']
-                except:
-                    self.log.error('Error checking input status', exc_info=True)
-                    return "sonos:player:%s" % nativeObj['speaker']['id']
-                    #return nativeObj['name']
-                    
-            elif controllerProp=='artist':
+            try:
+                return await self.virtualImage(path, client=client)
+            except:
+                self.log.error('Couldnt get art for %s' % playerObject, exc_info=True)
+                #return {'name':playerObject['name'], 'id':playerObject['speaker']['uid'], 'image':""}
                 
-                try:
-                    #self.log.info('Updating artist: %s %s' % (coordinator['AVTransport']['current_track_meta_data']['creator'], coordinator['AVTransport']['current_track_meta_data']))
-                    return coordinator['AVTransport']['current_track_meta_data']['creator']
-
-                except:
-                    self.log.debug('Error checking artist for %s' % nativeObj['name'])
-                    return ""
-
-            elif controllerProp=='title':
-                try:                    
-                    return coordinator['AVTransport']['current_track_meta_data']['title']
-                except:
-                    self.log.debug('Error checking title')
-                    return ""
-
-            elif controllerProp=='album':
-                try:
-                    return coordinator['AVTransport']['current_track_meta_data']['album']
-                except:
-                    self.log.debug('Error checking album')
-                    return ""
-
-            elif controllerProp=='art':
-                try:
-                    return "/image/sonos/player/%s/AVTransport/current_track_meta_data/album_art_uri?%s" % (coordinator['speaker']['uid'], coordinator['AVTransport']['current_track_meta_data']['album'])
-                    #return coordinator['AVTransport']['current_track_meta_data']['album_art_uri']
-                except:
-                    self.log.debug('Error checking art')
-                    return "/image/sonos/logo"
-                    #return ""
-
-            elif controllerProp=='url':
-                try:
-                    return coordinator['AVTransport']['enqueued_transport_uri']
-                except:
-                    self.log.debug('Error checking url')
-                    return ""
-                    
-            elif controllerProp=='linked':
-                try:
-                    return self.getLinkedPlayers(nativeObj)
-                except:
-                    self.log.debug('Error getting linked players')
-                    return []
-                
-
-            else:
-                self.log.info('Unknown controller property mapping: %s' % controllerProp)
-                return {}
-
 
         async def virtualImage(self, path, client=None):
             
@@ -738,14 +766,6 @@ class sonos(sofabase):
                 #return {'name':playerObject['name'], 'id':playerObject['speaker']['uid'], 'image':""}
                 
             return self.sonoslogo
-                    
-        async def virtualCategory(self, category):
-            
-            self.log.info('Virtual Category check: %s' % category)
-            
-            subset={}
-            
-            return subset
 
 
 

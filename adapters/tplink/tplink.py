@@ -91,10 +91,10 @@ class tplink(sofabase):
         # Adapter Overlays that will be called from dataset
         async def addSmartDevice(self, path):
             
-            self.log.info('Path: %s' % path)
+            #self.log.info('Path: %s' % path)
             try:
                 if path.split("/")[1]=="plug":
-                    self.log.info('device path: %s' % path)
+                    #self.log.info('device path: %s' % path)
                     return await self.addSmartPlug(path.split("/")[2])
                     
                 return False
@@ -107,10 +107,14 @@ class tplink(sofabase):
         async def addSmartPlug(self, deviceid):
             
             try:
-                self.log.info('%s %s' % (deviceid, self.dataset.localDevices))
+                #self.log.info('%s %s' % (deviceid, self.dataset.localDevices))
                 nativeObject=self.dataset.nativeDevices['plug'][deviceid]
                 if nativeObject['alias'] not in self.dataset.localDevices:
-                    return self.dataset.addDevice(nativeObject['alias'], devices.basicDevice('tplink/plug/%s' % deviceid, nativeObject['alias'], native=nativeObject))
+                    if deviceid in self.dataset.config['other']:
+                        displayCategories=['OTHER']
+                    else:
+                        displayCategories=['SWITCH']
+                    return self.dataset.addDevice(nativeObject['alias'], devices.switch('tplink/plug/%s' % deviceid, nativeObject['alias'], displayCategories=displayCategories, log=self.log))
     
                 return False
             except:

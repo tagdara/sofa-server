@@ -609,7 +609,7 @@ class insteonSetter():
                 async with aiohttp.ClientSession() as client:
                     html = await self.insteonRestCommand(client, url)
                     root=et.fromstring(html)
-                    #self.log.info('Returned from Using url: %s / %s' % (url, html))
+                    self.log.info('Returned from Using url: %s / %s' % (url, html))
                     return html
         except:
             self.log.error('Insteon setNode error: %s %s' % (node, data), exc_info=True)
@@ -647,11 +647,131 @@ class insteonSetter():
         
 class insteon(sofabase):
 
+    class EndpointHealth(devices.EndpointHealth):
+
+        @property            
+        def connectivity(self):
+            return 'OK'
+
+    class PowerController(devices.PowerController):
+
+        @property            
+        def powerState(self):
+            if self.nativeObject['property']['ST']['value']==' ':
+                return "OFF"
+            return "ON" if int((float(self.nativeObject['property']['ST']['value'])/254)*100)>0 else "OFF"
+
+        async def TurnOn(self, correlationToken='', **kwargs):
+            try:
+                return await self.adapter.setAndUpdate(self.device, {'DON': 100}, "powerState", "ON", correlationToken, self)
+            except:
+                self.adapter.log.error('!! Error during TurnOn', exc_info=True)
+        
+        async def TurnOff(self, correlationToken='', **kwargs):
+            try:
+                return await self.adapter.setAndUpdate(self.device, {'DOF': 0}, "powerState", "OFF", correlationToken, self)
+            except:
+                self.adapter.log.error('!! Error during TurnOff', exc_info=True)
+                
+    class BrightnessController(devices.BrightnessController):
+
+        @property            
+        def brightness(self):
+            # sometimes switches have their ST value set to space instead of a number (shrug)
+            if self.nativeObject['property']['ST']['value']==' ':
+                try:
+                    return int((float(self.nativeObject['property']['OL']['value'])/254)*100)
+                except:
+                    return 0
+                    
+            # Return the on-level brightness if the device is off and it is available, similar to Hue lights
+            if int((float(self.nativeObject['property']['ST']['value'])/254)*100)==0:
+                try:
+                    return int((float(self.nativeObject['property']['OL']['value'])/254)*100)
+                except:
+                    pass
+            
+            return int((float(self.nativeObject['property']['ST']['value'])/254)*100)
+        
+        async def SetBrightness(self, payload, correlationToken='', **kwargs):
+            try:
+                return await self.adapter.setAndUpdate(self.device, {'ST' : self.adapter.percentage(int(payload['brightness']), 255) }, "brightness", payload['brightness'], correlationToken, self)
+            except:
+                self.adapter.log.error('!! Error setting brightness', exc_info=True)
+
+    class SwitchController(devices.SwitchController):
+
+        @property            
+        def pressState(self):
+            # sometimes switches have their ST value set to space instead of a number (shrug)
+            if self.nativeObject['pressState'] in ['DON','DFON']:
+                return "ON"
+            elif self.nativeObject['pressState'] in ['DOF','DFOF']:
+                return "OFF"
+            return "NONE"
+
+        @property            
+        def onLevel(self):
+            if 'OL' not in self.nativeObject['property']:
+                return 100
+            if self.nativeObject['property']['OL']['value']==' ':
+                return {}
+            return  int((float(self.nativeObject['property']['OL']['value'])/254)*100)
+   
+        async def SetOnLevel(self, payload, correlationToken='', **kwargs):
+            try:
+                return await self.adapter.setAndUpdate(self.device, {'ST' : self.adapter.percentage(int(payload['brightness']), 255) }, "brightness", payload['brightness'], correlationToken, self)
+            except:
+                self.adapter.log.error('!! Error setting brightness', exc_info=True)
+
+        async def SetOnLevel(self, payload, correlationToken='', **kwargs):
+            try:
+                return await self.adapter.setAndUpdate(self.device, {'OL' : self.adapter.percentage(int(payload['onLevel']), 255) }, "onLevel", payload['onLevel'], correlationToken, self)
+            except:
+                self.adapter.log.error('!! Error setting onLevel', exc_info=True)
+                return None
+
+    class TemperatureSensor(devices.TemperatureSensor):
+
+        @property            
+        def temperature(self):
+            if self.nativeObject['property']['ST']['value']==' ':
+                return None
+            return int(float(self.nativeObject['property']['ST']['value'])/2)
+            
+    class ThermostatController(devices.ThermostatController):
+
+        @property            
+        def targetSetpoint(self):                
+            if self.nativeObject['property']['CLISPH']['value']==' ':
+                return None
+            return int(float(self.nativeObject['property']['CLISPH']['value'])/2)
+
+        @property            
+        def thermostatMode(self):                
+            if self.nativeObject['property']['CLIMD']['formatted']==' ':
+                return "OFF"
+            return self.nativeObject['property']['CLIMD']['formatted'].upper()
+
+  
+        async def SetTargetTemperature(self, payload, correlationToken='', **kwargs):
+            try:
+                return await self.adapter.setAndUpdate(self.device, { 'CLISPH' : int(payload['targetSetpoint']['value'])*2 }, "targetSetpoint", payload['targetSetpoint']['value'], correlationToken, self)
+            except:
+                self.adapter.log.error('!! Error setting target temperature', exc_info=True)
+
+        async def SetThermostatMode(self, payload, correlationToken='', **kwargs):
+            try:
+                return await self.adapter.setAndUpdate(self.device, { 'CLIMD' : self.adapter.definitions.thermostatModesByName[payload['thermostatMode']['value']] }, "thermostatMode", payload['thermostatMode']['value'], correlationToken, self)
+            except:
+                self.adapter.log.error('!! Error setting thermostat mode', exc_info=True)
+
+
     class adapterProcess(adapterbase):
-    
+
         def __init__(self, log=None, dataset=None, notify=None, request=None, loop=None, **kwargs):
             self.dataset=dataset
-            self.insteonAddress='lights.dayton.home'
+            self.insteonAddress=self.dataset.config['address']
             self.log=log
             self.definitions=definitions.Definitions
             self.notify=notify
@@ -691,200 +811,88 @@ class insteon(sofabase):
             
             deviceid=path.split("/")[2]    
             nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(path))
+
             if nativeObject['name'] not in self.dataset.localDevices:
                 if nativeObject["devicetype"]=="light":
+                    device=devices.alexaDevice('insteon/node/%s' % deviceid, nativeObject['name'], displayCategories=['LIGHT'], adapter=self)
+                    device.PowerController=insteon.PowerController(device=device)
+                    device.EndpointHealth=insteon.EndpointHealth(device=device)
+                    device.StateController=devices.StateController(device=device)
                     if nativeObject["property"]["ST"]["uom"].find("%")>-1:
-                        return self.dataset.addDevice(nativeObject['name'], devices.dimmableLight('insteon/node/%s' % deviceid, nativeObject['name']))
-                    else:
-                        return self.dataset.addDevice(nativeObject['name'], devices.simpleLight('insteon/node/%s' % deviceid, nativeObject['name']))
-                        
+                        device.BrightnessController=insteon.BrightnessController(device=device)
+                    return self.dataset.newaddDevice(device)
+
                 elif nativeObject["devicetype"]=="lightswitch":
+                    device=devices.alexaDevice('insteon/node/%s' % deviceid, nativeObject['name'], displayCategories=['LIGHT'], adapter=self)
+                    device.PowerController=insteon.PowerController(device=device)
+                    device.EndpointHealth=insteon.EndpointHealth(device=device)
+                    device.StateController=devices.StateController(device=device)
+                    device.SwitchController=insteon.SwitchController(device=device)
                     if nativeObject["property"]["ST"]["uom"].find("%")>-1:
-                        return self.dataset.addDevice(nativeObject['name'], devices.dimmableLightWithSwitch('insteon/node/%s' % deviceid, nativeObject['name']))
-                    else:
-                        return self.dataset.addDevice(nativeObject['name'], devices.simpleLightWithSwitch('insteon/node/%s' % deviceid, nativeObject['name']))
+                        device.BrightnessController=insteon.BrightnessController(device=device)
+                    return self.dataset.newaddDevice(device)
 
                 elif nativeObject["devicetype"]=="button":
-                    return self.dataset.addDevice(nativeObject['name'], devices.lightSwitch('insteon/node/%s' % deviceid, nativeObject['name']))
-                        
+                    device=devices.alexaDevice('insteon/node/%s' % deviceid, nativeObject['name'], displayCategories=['SWITCH'], adapter=self)
+                    device.SwitchController=insteon.SwitchController(device=device)
+                    return self.dataset.newaddDevice(device)
+
                 elif nativeObject["devicetype"]=="thermostat":
                     if nativeObject['pnode']==deviceid:
-                        #return self.dataset.addDevice(nativeObject['name'], devices.smartThermostat('insteon/node/%s' % deviceid, nativeObject['name'], supportedModes=["HEAT", "FAN", "OFF"] ))
-                        return self.dataset.addDevice(nativeObject['name'], devices.smartThermostat('insteon/node/%s' % deviceid, nativeObject['name'], supportedModes=["HEAT", "OFF"] ))
+                        device=devices.alexaDevice('insteon/node/%s' % deviceid, nativeObject['name'], displayCategories=['THERMOSTAT'], adapter=self)
+                        device.ThermostatController=insteon.ThermostatController(device=device)
+                        device.TemperatureSensor=insteon.TemperatureSensor(device=device)
+                        return self.dataset.newaddDevice(device)
 
                 elif nativeObject["devicetype"]=="device":
-                    return self.dataset.addDevice(nativeObject['name'], devices.basicDevice('insteon/node/%s' % deviceid, nativeObject['name']))
-
-            
+                    device=devices.alexaDevice('insteon/node/%s' % deviceid, nativeObject['name'], displayCategories=['SWITCH'], adapter=self)
+                    device.PowerController=insteon.PowerController(device=device)
+                    return self.dataset.newaddDevice(device)
+                    
             return False
 
-        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
+        async def setAndUpdate(self, device, command, controllerprop, controllervalue, correlationToken, controller):
+            
+            #  General Set and Update process for insteon. Most direct commands should just set the native command parameters
+            #  and then call this to apply the change
             
             try:
-                device=endpointId.split(":")[2]
-                nativeCommand={}
-                
-                if controller=="PowerController":
-                    if command=='TurnOn':
-                        nativeCommand['DON']=100
-                    elif command=='TurnOff':
-                        nativeCommand['DOF']=0
-                elif controller=="BrightnessController":
-                    if command=="SetBrightness":
-                        nativeCommand['ST']=self.percentage(int(payload['brightness']), 255)
-                elif controller=="SwitchController":
-                    if command=="SetOnLevel":
-                        nativeCommand['OL']=self.percentage(int(payload['onLevel']), 255)
-                        self.log.info('requested OL: %s %s' % (int(payload['onLevel']), nativeCommand['OL']))
-
-                elif controller=="ThermostatController":
-                    if command=="SetTargetTemperature":
-                        nativeCommand['CLISPH']=int(payload['targetSetpoint']['value'])*2
-                    if command=="SetThermostatMode":
-                        self.log.info('requested mode: %s' % payload['thermostatMode']['value'])
-                        nativeCommand['CLIMD']=self.definitions.thermostatModesByName[payload['thermostatMode']['value']]
-                        if payload['thermostatMode']['value']=='OFF':
-                            nativeCommand['CLIFS']='0'
-
-                if nativeCommand:
-                    await self.setInsteon.setNode(device, nativeCommand)
-                    await self.waitPendingChange(device)
-                    updatedProperties=await self.insteonNodes.getNodeProperties(device)
-                    await self.dataset.ingest({'node': { device: {'property':updatedProperties}}})
-                    return await self.dataset.generateResponse(endpointId, correlationToken)
-                else:
-                    self.log.info('Could not find a command for: %s %s %s %s' % (device, controller, command, payload) )
+                if getattr(controller, controllerprop)==controllervalue:
+                    self.log.info('Device already set: %s %s %s=%s' % (controller.controller, controllerprop, getattr(controller, controllerprop), controllervalue))
+                    return device.Response(correlationToken)
                     
+                deviceid=self.dataset.getNativeFromEndpointId(device.endpointId)
+                await self.setInsteon.setNode(deviceid, command)
+                if getattr(controller, controllerprop)!=controllervalue:
+                    await self.waitPendingChange(deviceid)
+                updatedProperties=await self.insteonNodes.getNodeProperties(deviceid)
+                await self.dataset.ingest({'node': { deviceid: {'property':updatedProperties}}})
+                return device.Response(correlationToken)
             except:
-                self.log.error('Error executing state change.', exc_info=True)
+                self.log.error('!! Error during Set and Update: %s %s / %s %s' % (deviceid, command, controllerprop, controllervalue), exc_info=True)
+                return None
 
 
-        async def waitPendingChange(self, device):
+        async def waitPendingChange(self, deviceid, maxcount=60):
         
             count=0
             try:
                 # The ISY will send an update to the properties, but it takes .5-1 second to complete
                 # Waiting up to 2 seconds allows us to send back a change report for the change command
-                if device not in self.subscription.pendingChanges:
-                    self.subscription.pendingChanges.append(device)
-                    self.log.info('Waiting for update... %s %s' % (device, self.subscription.pendingChanges))
+                if deviceid not in self.subscription.pendingChanges:
+                    self.subscription.pendingChanges.append(deviceid)
+                    self.log.info('Waiting for update... %s %s' % (deviceid, self.subscription.pendingChanges))
                 
-                while device in self.subscription.pendingChanges and count<30:
+                while deviceid in self.subscription.pendingChanges and count<maxcount:
                     await asyncio.sleep(.1)
                     count=count+1
+                    if count>=maxcount:
+                        self.log.info('!! Timeout waiting for pending changes on %s' % deviceid)
                 return True
             except:
-                self.log.error('Error during wait for pending change for %s (%s)' % (device, count), exc_info=True)
+                self.log.error('Error during wait for pending change for %s (%s)' % (deviceid, count), exc_info=True)
                 return True
                 
-
-        def virtualControllers(self, itempath):
-            
-            try:
-                itempart=itempath.split("/",3)
-                nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                try:
-                    detail=itempath.split("/",3)[3]
-                except:
-                    detail=""
-                    
-                controllerlist={}
-                #self.log.info('native: %s %s' % (itempath,nativeObject))
-                
-                if nativeObject["devicetype"] in ["light", "lightswitch", "device"]:
-                    if detail=="property/ST/value" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,"PowerController","powerState")
-                        if nativeObject["property"]["ST"]["uom"].find("%")>-1:
-                            controllerlist=self.addControllerProps(controllerlist,"BrightnessController","brightness")
-
-                if nativeObject["devicetype"] in ["lightswitch","button"]:
-                    
-                    if detail=='pressState' or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,"SwitchController","pressState")
-
-                if nativeObject["devicetype"] in ["lightswitch"]:
-                    if detail=='property/OL/value' or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,"SwitchController","onLevel")
-
-                
-                elif nativeObject["devicetype"]=="thermostat":
-                    if detail=="property/ST/value" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,"TemperatureSensor","temperature")
-
-                    if detail=="property/CLISPH/value" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,"ThermostatController","targetSetpoint")
-                    
-                    if detail=="property/CLIMD/value" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,"ThermostatController","thermostatMode")
-                        
-                return controllerlist
-            except KeyError:
-                self.log.info('Key Error: %s' % itempath, exc_info=True)
-
-            except:
-                self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
-
-        
-        def virtualControllerProperty(self, nativeObj, controllerProp):
-            
-            try:
-                if controllerProp=='brightness':
-                    # sometimes switches have their ST value set to space instead of a number (shrug)
-                    if nativeObj['property']['ST']['value']==' ':
-                        try:
-                            return int((float(nativeObj['property']['OL']['value'])/254)*100)
-                        except:
-                            return 0
-                            
-                    # Return the on-level brightness if the device is off and it is available, similar to Hue lights
-                    if int((float(nativeObj['property']['ST']['value'])/254)*100)==0:
-                        try:
-                            return int((float(nativeObj['property']['OL']['value'])/254)*100)
-                        except:
-                            pass
-                    
-                    return int((float(nativeObj['property']['ST']['value'])/254)*100)
-                    
-                elif controllerProp=='powerState':
-                    if nativeObj['property']['ST']['value']==' ':
-                        return "OFF"
-                    return "ON" if int((float(nativeObj['property']['ST']['value'])/254)*100)>0 else "OFF"
-
-                elif controllerProp=='pressState':
-                    if nativeObj['pressState'] in ['DON','DFON']:
-                        return "ON"
-                    elif nativeObj['pressState'] in ['DOF','DFOF']:
-                        return "OFF"
-                    return "NONE"
-
-                elif controllerProp=='onLevel':
-                    if 'OL' not in nativeObj['property']:
-                        return 100
-                    if nativeObj['property']['OL']['value']==' ':
-                        return {}
-                    return  int((float(nativeObj['property']['OL']['value'])/254)*100)
-
-                elif controllerProp=='temperature':
-                    if nativeObj['property']['ST']['value']==' ':
-                        return {}
-                    return int(float(nativeObj['property']['ST']['value'])/2)
-                
-                elif controllerProp=='targetSetpoint':
-                    if nativeObj['property']['CLISPH']['value']==' ':
-                        return {}
-                    return int(float(nativeObj['property']['CLISPH']['value'])/2)
-                
-                elif controllerProp=='thermostatMode':
-                    if nativeObj['property']['CLIMD']['formatted']==' ':
-                        return "OFF"
-                    return nativeObj['property']['CLIMD']['formatted'].upper()
-
-                else:
-                    self.log.info('Unknown controller property mapping: %s' % controllerProp)
-                    return {}
-            except:
-                self.log.error('Error converting virtual controller property: %s %s' % (controllerProp, nativeObj), exc_info=True)
-
 
 if __name__ == '__main__':
     adapter=insteon(name="insteon")

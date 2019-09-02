@@ -139,9 +139,10 @@ class SofaCollector(sofabase):
                 self.log.error('Error scrubbing devices on adapter restart', exc_info=True)
 
 
-        async def handleAddOrUpdateReport(self, devlist):
+        async def handleAddOrUpdateReport(self, message):
 
             try:
+                devlist=message['event']['payload']['endpoints']
                 if devlist:
                     await self.updateDeviceList(devlist)
                     eplist=[]
@@ -152,7 +153,7 @@ class SofaCollector(sofabase):
                         #self.log.info('++ device updated from mqtt: %s' % stateReport)
 
             except:
-                self.log.error('Error handling AddorUpdate: %s' % objlist , exc_info=True)
+                self.log.error('Error handling AddorUpdate: %s' % message , exc_info=True)
 
         async def updateDeviceList(self, objlist):
             
@@ -172,26 +173,7 @@ class SofaCollector(sofabase):
             
             #self.log.info('.. handleStateReport - Is this still needed? %s' % message)
             pass
-        
-        async def oldhandleStateReport(self, message):
-            
-            try:
-                #self.log.info('Received State Report: %s' % message['event']['endpoint']['endpointId'])
-                if self.dataset.getDeviceByEndpointId(message['event']['endpoint']['endpointId']):
-                    self.log.debug('Props: %s' % message['context']['properties'])
-                    for prop in message['context']['properties']:
-                        devname=self.getDeviceByEndpointId(message['event']['endpoint']['endpointId'])['friendlyName']
-                        field="discovery/%s/%s/%s" % (devname, prop['namespace'].split(".")[1], prop['name'])
-                        self.log.debug('Field: %s' % field)
-                        if self.dataset.getObjectFromPath(field, self.dataset.data['cache'])!={}:
-                        #if field in self.dataset.data['cache']:
-                            dpath.util.set(self.dataset.data, "cache/%s" % field, prop['value'])
-                        else:
-                            self.log.debug('%s was not in %s' % (field, self.dataset.data['cache']))
 
-            except:
-                self.log.error('Error updating from state report: %s' % message, exc_info=True)
-        
         async def handleResponse(self, message):
             
             #self.log.info('.. handleChangeReport - Is this still needed? %s' % message)
@@ -202,7 +184,8 @@ class SofaCollector(sofabase):
                 if 'log_change_reports' in self.dataset.config:
                     if self.dataset.config['log_change_reports']==True:
                         self.log.info('Response Prop: %s' % message)
-                if 'properties' in message['context']:     
+                if 'context' in message and 'properties' in message['context']:
+                    # Certain responses like the CameraStream do not include context
                     for prop in message['context']['properties']:
                         if hasattr(self, "virtualChangeHandler"):
                             # This is mostly just for logic but other adapters could hook this eventually
@@ -223,28 +206,6 @@ class SofaCollector(sofabase):
             except:
                 self.log.error('Error handling Alexa Event', exc_info=True)
 
-
-        async def oldhandleResponse(self, message):
-            try:
-                if not message:
-                    return None
-
-                device=self.getDeviceByEndpointId(message['event']['endpoint']['endpointId'])
-                
-                # I'm no longer sure what this was designed to do, maybe create the shor
-                for prop in message['context']['properties']:
-                    field="discovery/%s/%s/%s" % (message['event']['endpoint']['cookie']['name'], prop['namespace'].split(".")[1], prop['name'])
-                    self.log.debug('Field: %s' % field)
-                    if self.dataset.getObjectFromPath(field, self.dataset.data['cache'])!={}:
-                        dpath.util.set(self.dataset.data, "cache/%s" % field, prop['value'])
-                    else:
-                        self.log.debug('%s was not in %s' % (field, self.dataset.data['cache']))
-                        
-                self.log.info('dataset data is now: %s' % self.dataset.data)
-            except:
-                self.log.error('Error updating from state report', exc_info=True)
-
-
         async def handleDeleteReport(self, message):
             
             try:
@@ -255,17 +216,14 @@ class SofaCollector(sofabase):
                     self.log.error('Error: invalid delete report - has no event or event/payload: %s' % message)
                     return {}
                     
-                self.log.info('Delete Report: %s' % message)
+                self.log.info('<< Delete Report: %s' % message)
                         
                 for prop in message['event']['payload']['endpoints']:
                     if prop['endpointId'] in self.dataset.devices:
-                        self.log.info('-- Removing device: %s %s' % (prop['endpointId'], self.dataset.devices[prop['endpointId']]))
+                        #self.log.info('-- Removing device: %s %s' % (prop['endpointId'], self.dataset.devices[prop['endpointId']]))
                         del self.dataset.devices[prop['endpointId']]
-
                     if hasattr(self, "virtualDeleteHandler"):
                         await self.virtualDeleteHandler(prop['endpointId'])
-
-            
             except:
                 self.log.error('Error handing deletereport: %s' % message, exc_info=True)
 
@@ -273,28 +231,9 @@ class SofaCollector(sofabase):
         async def handleChangeReport(self, message):
             
             try:
-                if not message:
-                    return {}
-                    
-                # if 'log_change_reports' in self.dataset.config:
-                #    if self.dataset.config['log_change_reports']==True:
-                #        self.log.info('.. ChangeReport: %s' % message)
-                
-                if 'payload' in message:
-                    self.log.error('Error: adapter generating malformed changereports for %s and should be upgraded.' % message['event']['endpoint']['endpointId'])
-                    return {}
-                    
-                if 'event' not in message or 'payload' not in message['event']:
-                    self.log.error('Error: invalid change report - has no event or event/payload: %s' % message)
-                    return {}
-                    
-                if 'change' not in message['event']['payload']:
-                    self.log.error('Error: invalid change report - %s has no changes' % message['event']['endpoint']['endpointId'])
-                    return {}
-                    
                 if 'log_change_reports' in self.dataset.config:
                     if self.dataset.config['log_change_reports']==True:
-                        self.log.info('Change Report Prop: %s' % self.shortLogChange(message))
+                        self.log.info('.. Change Report Prop: %s' % self.shortLogChange(message))
                         
                 for prop in message['event']['payload']['change']['properties']:
                     if hasattr(self, "virtualChangeHandler"):
@@ -302,44 +241,4 @@ class SofaCollector(sofabase):
                         await self.virtualChangeHandler(message['event']['endpoint']['endpointId'], prop)
             except:
                 self.log.error('Error processing Change Report', exc_info=True)
-
-        async def oldhandleChangeReport(self, message):
-            
-            try:
-                if not message:
-                    return None
-                if 'log_change_reports' in self.dataset.config:
-                    if self.dataset.config['log_change_reports']==True:
-                        self.log.info('Change Report: %s' % self.shortLogChange(message))
-                device=self.getDeviceByEndpointId(message['event']['endpoint']['endpointId'])
-
-                if not device:
-                    self.log.info('Did not find %s in %s' % (message['event']['endpoint']['endpointId'], self.dataset.devices))
-                    return None
-                
-                #self.log.info('Received Change Report: %s %s' % (device['friendlyName'], message))
-                try:
-                    for prop in message['payload']['change']['properties']:
-                        field="discovery/%s/%s/%s" % (device['friendlyName'], prop['namespace'].split(".")[1], prop['name'])
-                        if self.dataset.getObjectFromPath(field, self.dataset.data['cache'])!={}:
-                            dpath.util.set(self.dataset.data, "cache/%s" % field, prop['value'])
-                        else:
-                            self.log.debug('%s was not in %s' % (field, self.dataset.data['cache']))
-                        
-                        if hasattr(self, "virtualChangeHandler"):
-                            await self.virtualChangeHandler(device['friendlyName'], prop)
-                except KeyError:
-                    pass
-                        
-                # these should be unchanged but send em all right now to make sure
-                for prop in message['context']['properties']:
-                    field="discovery/%s/%s/%s" % (device['friendlyName'], prop['namespace'].split(".")[1], prop['name'])
-                    self.log.debug('Field: %s' % field)
-                    if self.dataset.getObjectFromPath(field, self.dataset.data['cache'])!={}:
-                        dpath.util.set(self.dataset.data, "cache/%s" % field, prop['value'])
-                    else:
-                        self.log.debug('%s was not in %s' % (field, self.dataset.data['cache']))
-                        
-                            
-            except:
-                self.log.error('Error updating from state report', exc_info=True)
+                return {}

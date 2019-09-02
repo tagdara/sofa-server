@@ -17,12 +17,160 @@ import asyncio
 import aiohttp
 import base64
 import uuid
+import logging
 
 from libpurecoollink.dyson import DysonAccount
 from libpurecoollink.const import FanSpeed, FanMode, NightMode, Oscillation, FanState, StandbyMonitoring, QualityTarget, ResetFilter, HeatMode, FocusMode, HeatTarget
 from libpurecoollink.dyson_pure_state import DysonPureHotCoolState, DysonPureCoolState, DysonEnvironmentalSensorState
         
 class dyson(sofabase):
+
+    class EndpointHealthInterface(devices.EndpointHealthInterface):
+
+        def __init__(self, device=None):
+            self.device=device
+            self.path=device.path
+            self.adapter=device.adapter
+            self.log=self.adapter.log
+            self.nativeObject=self.device.native
+            self.deviceid=self.device.path.split('/')[2]
+            super().__init__()
+
+        @property            
+        def connectivity(self):
+            return 'OK' if self.adapter.logged_in else "UNREACHABLE"
+
+    class PowerControllerInterface(devices.PowerControllerInterface):
+        
+        def __init__(self, device=None):
+            self.device=device
+            self.path=device.path
+            self.adapter=device.adapter
+            self.log=self.adapter.log
+            self.nativeObject=self.device.native
+            self.deviceid=self.device.path.split('/')[2]
+            super().__init__()
+
+        @property            
+        def powerState(self):
+            return "OFF" if self.nativeObject['state']['fan_mode']=="OFF" else "OFF"
+
+        async def TurnOn(self, device, correlationToken=''):
+            try:
+                return await self.adapter.setAndUpdate(device, { 'fan_mode' : FanMode.FAN}, "PowerController", correlationToken)
+            except:
+                self.log.error('!! Error during TurnOn', exc_info=True)
+                return None
+
+        async def TurnOff(self, device, correlationToken=''):
+            try:
+                return await self.adapter.setAndUpdate(device, { 'fan_mode' : FanMode.OFF}, "PowerController", correlationToken)
+            except:
+                self.log.error('!! Error during TurnOff', exc_info=True)
+                return None
+
+    class PowerLevelControllerInterface(devices.PowerLevelControllerInterface):
+        
+        def __init__(self, device=None):
+            self.device=device
+            self.path=device.path
+            self.adapter=device.adapter
+            self.log=self.adapter.log
+            self.nativeObject=self.device.native
+            self.deviceid=self.device.path.split('/')[2]
+            super().__init__()
+
+        @property            
+        def powerLevel(self):
+            if self.nativeObject['state']['speed']=='AUTO':
+                return 50 # this is such a hack but need to find a way to get actual speed since alexa api powerlevel is an int
+            return int(self.nativeObject['state']['speed'])*10
+
+
+        async def SetPowerLevel(self, device, payload, correlationToken=''):
+            try:
+                # Dyson fans have weird AUTO - there is full AUTO for the fan and then just powerlevel auto.  This helps keep sync.
+                if payload['powerLevel']=='AUTO':
+                    return await self.adapter.setAndUpdate(device, { 'fan_mode' : FanMode.AUTO}, "PowerLevelController", correlationToken)
+                else:
+                    fanspeed=str(int(payload['powerLevel'])//10)
+                    if fanspeed=='0':
+                        fanspeed='1'
+                    return await self.adapter.setAndUpdate(device, { 'fan_mode' : FanMode.FAN, 'fan_speed': getattr(FanSpeed, 'FAN_SPEED_%s' % fanspeed) }, "PowerLevelController", correlationToken)
+ 
+            except:
+                self.log.error('!! Error during SetPowerLevel', exc_info=True)
+                return None
+
+    class TemperatureSensorInterface(devices.TemperatureSensorInterface):
+
+        def __init__(self, device=None):
+            self.device=device
+            self.path=device.path
+            self.adapter=device.adapter
+            self.log=self.adapter.log
+            self.nativeObject=self.device.native
+            self.deviceid=self.device.path.split('/')[2]
+            super().__init__()
+
+        @property            
+        def temperature(self):
+            return int(self.adapter.ktof(int(self.nativeObject['state']['temperature'])))
+               
+    class ThermostatControllerInterface(devices.ThermostatControllerInterface):
+
+        def __init__(self, device=None, supportedModes=None):
+            self.device=device
+            self.path=device.path
+            self.adapter=device.adapter
+            self.log=self.adapter.log
+            self.nativeObject=self.device.native
+            self.deviceid=self.device.path.split('/')[2]
+            if supportedModes:
+                self.supportedModes=supportedModes
+            super().__init__()
+
+        @property            
+        def targetSetpoint(self):                
+            return int(self.adapter.ktof(int(self.nativeObject['state']['heat_target'])/10))
+
+        @property            
+        def thermostatMode(self):                
+            if self.nativeObject['state']['fan_mode']=="AUTO":
+                return "AUTO"
+            if self.nativeObject['state']['fan_mode']=='OFF':
+                return "OFF"
+            if self.nativeObject['state']['heat_mode']=='OFF':
+                return "COOL"
+                
+            #self.log.info('Returning heat where fan mode is %s and heat mode is %s' % (self.nativeObject['state']['fan_mode'],self.nativeObject['state']['heat_mode']))
+            return 'HEAT'
+
+        async def SetThermostatMode(self, device, payload, correlationToken=''):
+            try:
+                # Dyson mappings are weird because of full AUTO vs fan AUTO so this logic helps to sort it out
+                if payload['thermostatMode']['value']=='AUTO':
+                    command={ 'fan_mode': FanMode.AUTO, 'heat_mode': HeatMode.HEAT_OFF }
+                elif payload['thermostatMode']['value']=='HEAT':
+                    command={ 'fan_mode': FanMode.FAN, 'heat_mode': HeatMode.HEAT_ON }
+                elif payload['thermostatMode']['value'] in ['FAN', 'COOL']:
+                    command={ 'fan_mode': FanMode.FAN, 'heat_mode': HeatMode.HEAT_OFF }
+                elif payload['thermostatMode']['value']=='OFF':
+                    command={'fan_mode': FanMode.OFF }
+
+                return await self.adapter.setAndUpdate(device, command, "ThermostatController", correlationToken)
+            except:
+                self.log.error('!! Error during SetThermostatMode', exc_info=True)
+                return None
+
+        async def SetTargetTemperature(self, device, payload, correlationToken=''):
+            try:
+                return await self.adapter.setAndUpdate(device, { 'heat_target' : HeatTarget.fahrenheit(int(payload['targetSetpoint']['value'])) }, "ThermostatController", correlationToken)
+            except:
+                self.log.error('!! Error during SetThermostatMode', exc_info=True)
+                return None
+
+
 
     class adapterProcess(adapterbase):
     
@@ -35,9 +183,13 @@ class dyson(sofabase):
             self.pendingChanges=[]
             self.inUse=False
             self.backlog=[]
-            self.polltime=30
+            self.polltime=5
             self.logged_in=False
             self.connected=False
+            self.running=True
+            self.log.info('Loggers: %s' % logging.root.manager.loggerDict)
+            logging.getLogger('libpurecoollink').setLevel(logging.DEBUG)
+            logging.getLogger('libpurecoollink.dyson_device').setLevel(logging.DEBUG)
             if not loop:
                 self.loop = asyncio.new_event_loop()
             else:
@@ -57,6 +209,7 @@ class dyson(sofabase):
             
             try:
                 self.pendingChanges=[]
+                #self.log.info('-> %s' % msg)
                 newstate={}
                 allprops=['humidity','temperature','dust','sleep_timer',"fan_mode", "fan_state", "night_mode", "speed", "oscillation", "filter_life", "quality_target", "standby_monitoring", "tilt", "focus_mode", "heat_mode", "heat_target", "heat_state"]
                 props=filter(lambda a: not a.startswith('_'), dir(msg))
@@ -71,6 +224,26 @@ class dyson(sofabase):
                 asyncio.ensure_future(self.dataset.ingest({'fan': {self.dyson_devices[0].name+" fan": { "state": newstate} }}), loop=self.loop)
             except:
                 self.log.error('Error handling message: %s' % msg, exc_info=True)
+
+        async def stop(self):
+            
+            try:
+                self.log.info('Stopping Dyson devices')
+                for machine in self.dyson_devices:
+                    machine.disconnect()
+                self.running=False
+            except:
+                self.log.error('Error stopping Dyson connection', exc_info=True)
+
+        def service_stop(self):
+            
+            try:
+                self.log.info('Stopping Dyson devices')
+                for machine in self.dyson_devices:
+                    machine.disconnect()
+                self.running=False
+            except:
+                self.log.error('Error stopping Dyson connection', exc_info=True)
             
         async def start(self):
             
@@ -105,12 +278,14 @@ class dyson(sofabase):
                                 self.dyson_devices[0].add_message_listener(self.on_message)
                                 devconfig['state']=await self.getFanProperties(self.dyson_devices[0])
                                 await self.dataset.ingest({'fan': {device.name+" fan": devconfig}})
+                    else:
+                        self.log.warn('!! Warning - not logged in after connect')
             except:
                 self.log.error('Error', exc_info=True)
 
         async def keep_logged_in(self):
             
-            while True:
+            while self.running:
                 try:
                     if not self.logged_in:
                         await self.connect_dyson()
@@ -155,8 +330,12 @@ class dyson(sofabase):
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(path))
                 if nativeObject['name'] not in self.dataset.localDevices:
                     if nativeObject["product_type"]=="455":
-                        return self.dataset.addDevice(nativeObject['name'], devices.smartThermostatSpeedFan('dyson/fan/%s' % deviceid, nativeObject['name'], supportedModes=["AUTO", "HEAT", "COOL", "OFF"] ))
-            
+                        device=devices.flexDevice('dyson/fan/%s'  % deviceid, nativeObject['name'], displayCategories=['THERMOSTAT'], adapter=self)
+                        device.ThermostatController=dyson.ThermostatControllerInterface(device=device, supportedModes=["AUTO", "HEAT", "COOL", "OFF"])
+                        device.TemperatureSensor=dyson.TemperatureSensorInterface(device=device)
+                        device.PowerLevelController=dyson.PowerLevelControllerInterface(device=device)
+                        return self.dataset.newaddDevice(device)
+
             except:
                 self.log.error('Error adding smart device', exc_info=True)
             
@@ -183,70 +362,34 @@ class dyson(sofabase):
                 self.log.error('Error getting Fan properties', exc_info=True)
                 return {}
                 
+        async def setAndUpdate(self, device, command, controller, correlationToken=''):
+            
+            #  General Set and Update process for dyson. Most direct commands should just set the native command parameters
+            #  and then call this to apply the change
+            
+            try:
+                self.log.info('.. using new update methods')
+                deviceid=self.dataset.getNativeFromEndpointId(device.endpointId)
+                await self.setDyson(deviceid, command)
+                if await self.waitPendingChange(deviceid):
+                    updatedProperties=await self.getFanProperties(deviceid)
+                    await self.dataset.ingest({'fan': { deviceid: {'state':updatedProperties}}})
+                    return await self.dataset.generateResponse(device.endpointId, correlationToken, controller=controller)
+            except:
+                self.log.error('!! Error during Set and Update: %s %s / %s %s' % (deviceid, command, controller), exc_info=True)
+                return None
+                
+
         async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
 
-            try:
-                device=endpointId.split(":")[2]
-                nativeCommand={}
-                
-                if controller=="PowerController":
-                    if command=='TurnOn':
-                        nativeCommand['fan_mode']=FanMode.FAN
-                    elif command=='TurnOff':
-                        nativeCommand['fan_mode']=FanMode.OFF
-
-                elif controller=="PowerLevelController":
-                    if command=="SetPowerLevel":
-                        self.log.info('Fanspeed: %s' % FanSpeed)
-                        if payload['powerLevel']=='AUTO':
-                            fanspeed='AUTO'
-                            nativeCommand['fan_mode']=FanMode.AUTO
-                        else:
-                            fanspeed=str(int(payload['powerLevel'])//10)
-                            if fanspeed=='0':
-                                fanspeed='1'
-                            nativeCommand['fan_mode']=FanMode.FAN
-                            nativeCommand['fan_speed']=getattr(FanSpeed, 'FAN_SPEED_%s' % fanspeed)
- 
-
-                elif controller=="ThermostatController":
-                    if command=="SetThermostatMode":
-                        if payload['thermostatMode']['value']=='AUTO':
-                            nativeCommand['fan_mode']=FanMode.AUTO
-                            nativeCommand['heat_mode']=HeatMode.HEAT_OFF
-                        if payload['thermostatMode']['value']=='HEAT':
-                            nativeCommand['fan_mode']=FanMode.FAN
-                            nativeCommand['heat_mode']=HeatMode.HEAT_ON
-                        elif payload['thermostatMode']['value']=='FAN':
-                            nativeCommand['fan_mode']=FanMode.FAN
-                            nativeCommand['heat_mode']=HeatMode.HEAT_OFF
-                        elif payload['thermostatMode']['value']=='COOL':
-                            nativeCommand['fan_mode']=FanMode.FAN
-                            nativeCommand['heat_mode']=HeatMode.HEAT_OFF
-                        elif payload['thermostatMode']['value']=='OFF':
-                            nativeCommand['fan_mode']=FanMode.OFF
-                    if command=="SetTargetTemperature":
-                        #nativeCommand['heat_mode']=HeatMode.HEAT_ON
-                        nativeCommand['heat_target']=HeatTarget.fahrenheit(int(payload['targetSetpoint']['value']))
-
-                if nativeCommand:
-                    await self.setDyson(device, nativeCommand)
-                    await self.waitPendingChange(device)
-                    updatedProperties=await self.getFanProperties(device)
-                    await self.dataset.ingest({'fan': { device: {'state':updatedProperties}}})
-                    return await self.dataset.generateResponse(endpointId, correlationToken, controller=controller)
-                else:
-                    self.log.info('Could not find a command for: %s %s %s %s' % (device, controller, command, payload) )
-                    return {}
-
-            except:
-                self.log.error('Error executing state change.', exc_info=True)
+            self.log.error('!! Something called legacy processDirective: %s %s %s %s %s %s' % (endpointId, controller, command, payload, correlationToken, cookie))
 
 
         async def waitPendingChange(self, device):
         
             if device not in self.pendingChanges:
                 self.pendingChanges.append(device)
+                self.log.info('Adding device to pending change')
 
             count=0
             while device in self.pendingChanges and count<30:
@@ -254,68 +397,12 @@ class dyson(sofabase):
                 await asyncio.sleep(.1)
                 count=count+1
             self.inUse=False
+            if count>=30:
+                self.log.info('No response from pending change.  Dyson listener may be lost.')
+                self.logged_in=False
+                return False
+
             return True
-
-  
-        def virtualControllers(self, itempath):
-            
-            try:
-                itempart=itempath.split("/",3)
-                nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                try:
-                    detail=itempath.split("/",3)[3]
-                except:
-                    detail=""
-
-                controllerlist={}
-                
-                if nativeObject["product_type"]=="455":
-                    if detail=="state/temperature" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,'TemperatureSensor','temperature')
-                    if detail=="state/heat_mode" or detail=="state/fan_mode" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,"ThermostatController","thermostatMode")
-                    if detail=='state/heat_target' or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,"ThermostatController","targetSetpoint")
-                    if detail=="state/fan_state" or detail=="state/speed" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist,"PowerLevelController","powerLevel")
-                
-                return controllerlist
-            except KeyError:
-                pass
-            except:
-                self.log.error('Error getting virtual controller types for %s' % itempath, exc_info=True)
-
-        
-        def virtualControllerProperty(self, nativeObj, controllerProp):
-            
-            try:
-                if controllerProp=='temperature':
-                    return int(self.ktof(int(nativeObj['state']['temperature'])))
-                
-                elif controllerProp=='targetSetpoint':
-                    return int(self.ktof(int(nativeObj['state']['heat_target'])/10))
-                
-                elif controllerProp=='powerLevel':
-                    if nativeObj['state']['speed']=='AUTO':
-                        return 50 # this is such a hack but need to find a way to get actual speed since alexa api powerlevel is an int
-                    return int(nativeObj['state']['speed'])*10
-                    
-                elif controllerProp=='thermostatMode':
-                    if nativeObj['state']['fan_mode']=="AUTO":
-                        return "AUTO"
-                    if nativeObj['state']['fan_mode']=='OFF':
-                        return "OFF"
-                    if nativeObj['state']['heat_mode']=='OFF':
-                        return "COOL"
-                        
-                    self.log.info('Returning heat where fan mode is %s and heat mode is %s' % (nativeObj['state']['fan_mode'],nativeObj['state']['heat_mode']))
-                    return 'HEAT'
-
-                else:
-                    self.log.info('Unknown controller property mapping: %s' % controllerProp)
-                    return {}
-            except:
-                self.log.error('Error converting virtual controller property: %s %s' % (controllerProp, nativeObj), exc_info=True)
 
 
 if __name__ == '__main__':

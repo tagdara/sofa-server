@@ -363,7 +363,7 @@ class sofaWebUI():
     async def manifestHandler(self, request):
         return web.Response(content_type="text/html", body=await self.manifestUpdate())
 
-    async def imageGetter(self, item, thumbnail=False):
+    async def imageGetter(self, item, width=640, thumbnail=False):
 
         try:
             source=item.split('/',1)[0] 
@@ -399,7 +399,7 @@ class sofaWebUI():
                 result=base64.b64decode(self.imageCache[fullitem][23:])
                 return web.Response(body=result, headers = { "Content-type": "image/jpeg" })
             
-            if request.path.find('thumbnail')>0:
+            if "width=" not in request.query_string or request.path.find('thumbnail')>0:
                 result=await self.imageGetter(fullitem, thumbnail=True)
             else:
                 result=await self.imageGetter(fullitem)
@@ -743,6 +743,7 @@ class sofaWebUI():
             self.log.info('++ SSE started for %s' % request.remote)
             client_sse_date=datetime.datetime.now(datetime.timezone.utc)
             async with sse_response(request) as resp:
+                await self.sseDeviceUpdater(resp, remoteip)
                 await self.sseDataUpdater(resp)
                 while True:
                     if self.sse_last_update>client_sse_date:
@@ -767,6 +768,22 @@ class sofaWebUI():
         except:
             self.log.error('Error in SSE loop', exc_info=True)
             return resp
+
+
+    async def sseDeviceUpdater(self, resp, remoteip):
+
+        try:
+            self.log.info('<- %s devicelist request' % (remoteip))
+            outlist=[]
+            for dev in self.dataset.devices:
+                outlist.append(self.dataset.devices[dev])
+            aou={"event": { "header": { "namespace": "Alexa.Discovery", "name": "AddOrUpdateReport", "payloadVersion": "3", "messageId": str(uuid.uuid1()) }, "payload": {"endpoints": outlist}}}
+
+            await resp.send(json.dumps(aou, default=self.date_handler))
+            #return web.Response(text=json.dumps(outlist, default=self.date_handler))
+        except:
+            self.log.error('!! SSE Error transferring list of devices',exc_info=True)
+
 
     async def sseDataUpdater(self, resp):
 
@@ -846,6 +863,22 @@ class ui(sofabase):
 
             except:
                 self.log.error('Error updating from state report: %s' % message, exc_info=True)
+
+        async def handleAddOrUpdateReport(self, message):
+        
+            try:
+                await super().handleAddOrUpdateReport(message)
+                if message:
+                    try:
+                        #if 'log_change_reports' in self.dataset.config:
+                        self.log.info('-> SSE %s %s' % (message['event']['header']['name'],message))
+                        self.uiServer.add_sse_update(message)
+                    except:
+                        self.log.warn('!. bad or empty AddOrUpdateReport message not sent to SSE: %s' % message, exc_info=True)
+
+            except:
+                self.log.error('Error updating from change report', exc_info=True)
+
 
         async def handleChangeReport(self, message):
         

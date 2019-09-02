@@ -65,12 +65,20 @@ class sofaRest():
             self.serverApp.router.add_get('/{category}/{item:.+}', self.itemLookupHandler)
 
             self.runner=aiohttp.web.AppRunner(self.serverApp)
+
             self.loop.run_until_complete(self.runner.setup())
 
             self.site = web.TCPSite(self.runner, self.serverAddress, self.port)
             self.loop.run_until_complete(self.site.start())
+            return True
+        except OSError as e:
+            if e.errno==98:
+                self.log.error('!! REST port %s is already in use.  Is another copy of the adapter running?' % (self.port))
+            else:
+                self.log.error('!! Error starting REST server', exc_info=True)
         except:
-            self.log.error('Error starting REST server', exc_info=True)
+            self.log.error('!! Error starting REST server', exc_info=True)
+            return False
 
 
 
@@ -215,16 +223,24 @@ class sofaRest():
     async def deviceStateReportHandler(self, request):
         try:
             dev=urllib.parse.unquote(request.match_info['item'])
-            lookup=self.dataset.getDeviceByfriendlyName(dev).StateReport()
-
-            #lookup=self.dataset.localDevices[urllib.parse.unquote(request.match_info['item'])].StateReport
-            return web.Response(text=json.dumps(lookup, default=self.date_handler))
+            try:
+                lookup=self.dataset.getDeviceByEndpointId(dev).StateReport()
+                return web.Response(text=json.dumps(lookup, default=self.date_handler))
+            except AttributeError:
+                pass
+            
+            try:
+                lookup=self.dataset.getDeviceByfriendlyName(dev).StateReport()
+                return web.Response(text=json.dumps(lookup, default=self.date_handler))
+            except AttributeError:
+                pass
+            
         except KeyError:
             self.log.error('Lookup error for %s' % urllib.parse.unquote(request.match_info['item']))
-            return web.Response(text="{}")
         except:
             self.log.error('Error delivering state report for %s' % urllib.parse.unquote(request.match_info['item']), exc_info=True)
-            return web.Response(text="{}")        
+        
+        return web.Response(text="{}")
 
 
     async def categoryLookupHandler(self, request):
@@ -342,6 +358,7 @@ class sofaRest():
         try:
             if hasattr(self.adapter, "virtualImage"):
                 result=await self.adapter.virtualImage(request.match_info['item'])
+                self.log.info('Image request: %s' % request)
                 return web.Response(body=result, headers = { "Content-type": "image/jpeg" })
                         
             return web.Response(text='No image found')
@@ -354,6 +371,7 @@ class sofaRest():
             
         try:
             if hasattr(self.adapter, "virtualThumbnail"):
+                self.log.info('Image request: %s %s' % (request.match_info['item'], request.query_string))
                 #self.log.info('Requesting thumbnail from camera: %s' % request.match_info['item'])
                 result=await self.adapter.virtualThumbnail(request.match_info['item'])
                 return web.Response(body=result, headers = { "Content-type": "image/jpeg" })
@@ -405,7 +423,10 @@ class sofaRest():
                         self.log.info('<< %s %s / %s' % (jsondata['directive']['header']['name'],jsondata['directive']['endpoint']['endpointId'], jsondata))
                         response=await self.dataset.handleDirective(jsondata)
                         if response:
-                            self.log.info('>> %s %s / %s' % (response['event']['header']['name'],response['event']['endpoint']['endpointId'], response))
+                            try:
+                                self.log.info('>> %s %s / %s' % (response['event']['header']['name'],response['event']['endpoint']['endpointId'], response))
+                            except:
+                                self.log.warn('>> %s' % response)
             except KeyError:
                 self.log.error('!! Invalid root request from %s: %s' % (request.remote, body))
             except:

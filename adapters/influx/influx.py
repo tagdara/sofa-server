@@ -177,6 +177,8 @@ class influxServer(sofabase):
                         qry="select endpoint,last(%s) from controller_property where endpoint=%s group by endpoint" % (itempath[1], rgx)
                     else:
                         qry="select endpoint,last(%s) from controller_property where endpoint='%s'" % (itempath[2], itempath[1])
+                        if len(itempath)>3:
+                            qry=qry+" AND %s='%s'" % (itempath[2], itempath[3])
                     self.log.info('Running query: %s' % qry)
                     result=self.influxclient.query(qry,database='beta')
 
@@ -197,7 +199,7 @@ class influxServer(sofabase):
                     else:
                         offset=0
 
-                    qry="select endpoint,%s from controller_property where endpoint='%s' ORDER BY time DESC LIMIT 50 OFFSET %s" % (itempath[2],itempath[1],offset)
+                        qry="select endpoint,%s from controller_property where endpoint='%s' ORDER BY time DESC LIMIT 50 OFFSET %s" % (itempath[2],itempath[1],offset)
                     self.log.info('Running history query: %s' % qry)
                     result=self.influxclient.query(qry,database='beta')
                     response=list(result.get_points())

@@ -152,11 +152,9 @@ class yamahaXML():
         return r
 
         
-    async def sendCommand(self, category, item, data):
+    async def sendCommand(self, command_data):
         try:
-            #data={category: data}
-            data=category
-            data=self.data2xml(data).decode()
+            data=self.data2xml(command_data).decode()
             socket.setdefaulttimeout(1)
 
             url = 'http://%s:%s/YamahaRemoteControl/ctrl' % (self.dataset.config['address'], self.dataset.config['port'])
@@ -199,6 +197,106 @@ class yamahaXML():
 
 
 class yamaha(sofabase):
+
+    class EndpointHealth(devices.EndpointHealth):
+
+        @property            
+        def connectivity(self):
+            return 'OK'
+
+    class PowerController(devices.PowerController):
+
+        @property            
+        def powerState(self):
+            return "ON" if self.nativeObject['Basic_Status']['Power_Control']['Power']=="On" else "OFF"
+
+        async def TurnOn(self, correlationToken=''):
+            try:
+                return await self.adapter.setAndUpdate(self.device, {"System": {"Power_Control": {"Power": "On"}}}, correlationToken)
+            except:
+                self.adapter.log.error('!! Error during TurnOn', exc_info=True)
+                return None
+        
+        async def TurnOff(self, correlationToken=''):
+            try:
+                return await self.adapter.setAndUpdate(self.device, {"System": {"Power_Control": {"Power": "Standby"}}}, correlationToken)
+            except:
+                self.adapter.log.error('!! Error during TurnOff', exc_info=True)
+                return None
+
+    class InputController(devices.InputController):
+
+        @property            
+        def input(self):
+            try:
+                return self.nativeObject['Basic_Status']['Input']['Input_Sel']
+            except:
+                self.adapter.log.error('Error checking input status', exc_info=True)
+                return "Off"
+                    
+        async def SelectInput(self, payload, correlationToken=''):
+            try:
+                return await self.adapter.setAndUpdate(self.device, {"Main_Zone": {"Input": {"Input_Sel":  payload['input'].replace('_','')}}}, correlationToken)
+            except:
+                self.log.error('!! Error during SelectInput', exc_info=True)
+                return None
+
+    class SurroundController(devices.SurroundController):
+
+        @property            
+        def decoder(self):
+            return self.nativeObject['Input']['Decoder_Sel']['Current']
+
+        @property            
+        def surround(self):
+            try:
+                return self.nativeObject['Basic_Status']['Surround']['Program_Sel']['Current']['Sound_Program']
+            except:
+                self.adapter.log.error('Error checking input status', exc_info=True)
+                    
+        async def SetSurround(self, payload, correlationToken=''):
+            try:
+                return await self.adapter.setAndUpdate(self.device, {"Main_Zone": {"Surround": {"Program_Sel": { "Current": {"Sound_Program": payload['surround']}}}}}, correlationToken)
+            except:
+                self.log.error('!! Error during SelectInput', exc_info=True)
+                return None
+
+    class SpeakerController(devices.SpeakerController):
+
+        @property            
+        def volume(self):
+            try:
+                #volrange={'max':15, 'min':-70}
+                volrange={'max':0, 'min':-80}
+                zvolume=float(self.nativeObject['Basic_Status']['Volume']['Lvl']['Val'])/10
+                zpos=int(round(((volrange['max']-volrange['min'])-(volrange['max']-zvolume))*(100/(volrange['max']-volrange['min']))))
+                return zpos
+            except:
+                self.log.error('!! Error during volume', exc_info=True)
+
+        @property            
+        def mute(self):
+            return self.nativeObject['Basic_Status']['Volume']['Mute']!='Off'
+
+        async def SetVolume(self, payload, correlationToken=''):
+            try:
+                volrange={'max':0, 'min':-80}
+                unitconv=(volrange['max']-volrange['min'])/100
+                realvol=str(int(float(unitconv* int(payload['volume'])))+volrange['min'])+"0"
+                return await self.adapter.setAndUpdate(self.device, {"Main_Zone": {"Volume": {"Lvl": { "Val": realvol, "Exp": 1, "Unit": "dB"}}}}  , correlationToken)
+            except:
+                self.log.error('!! Error during SetVolume', exc_info=True)
+                self.adapter.connect_needed=True
+                return None
+
+        async def SetMute(self, payload, correlationToken=''):
+            try:
+                self.log.warn('!! SetMute has not been implemented yet.')
+            except:
+                self.log.error('!! Error during SetMute', exc_info=True)
+                self.adapter.connect_needed=True
+                return None
+
 
     class adapterProcess():
 
@@ -277,17 +375,6 @@ class yamaha(sofabase):
                 self.log.error('error with ssdp',exc_info=True)
 
 
-            
-        async def command(self, category, item, data):
-            
-            try:
-                response=await self.receiver.sendCommand(category, item, data)
-                self.log.info('Command response: %s' % response)
-                return response
-            except:
-                self.log.error('error sending command',exc_info=True)
-
-
         async def addSmartDevice(self, path):
             
             try:
@@ -304,145 +391,37 @@ class yamaha(sofabase):
             nativeObject=self.dataset.nativeDevices['Receiver'][deviceid]
             if name not in self.dataset.devices:
                 if "Input" in nativeObject:
-                    return self.dataset.addDevice(name, devices.receiver('yamaha/Receiver/%s' % deviceid, name))
-            
+                    device=devices.alexaDevice('yamaha/Receiver/%s' % deviceid, name, displayCategories=["RECEIVER"], adapter=self)
+                    device.InputController=yamaha.InputController(device=device)
+                    device.PowerController=yamaha.PowerController(device=device)
+                    device.EndpointHealth=yamaha.EndpointHealth(device=device)
+                    device.SurroundController=yamaha.SurroundController(device=device)
+                    device.SpeakerController=yamaha.SpeakerController(device=device)
+                    return self.dataset.newaddDevice(device)
             return False
 
-
-        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
-    
+        def getNativeFromEndpointId(self, endpointId):
+            
             try:
-                device=endpointId.split(":")[2]
-                nativeCommand={}
-                
-                if controller=="PowerController":
-                    if command=='TurnOn':
-                        nativeCommand={"System": {"Power_Control": {"Power": "On"}}}
-                    elif command=='TurnOff':
-                        nativeCommand={"System": {"Power_Control": {"Power": "Standby"}}}
-                elif controller=="SurroundController":
-                    if command=="SetSurround":
-                        nativeCommand={"Main_Zone": {"Surround": {"Program_Sel": { "Current": {"Sound_Program": payload['surround']}}}}}
-                elif controller=="InputController":
-                    if command=="SelectInput":
-                        nativeCommand={"Main_Zone": {"Input": {"Input_Sel":  payload['input'].replace('_','')}}}
-                elif controller=="SpeakerController":
-                    if command=="SetVolume":
-                        volrange={'max':0, 'min':-80}
-                        unitconv=(volrange['max']-volrange['min'])/100
-                        realvol=str(int(float(unitconv* int(payload['volume'])))+volrange['min'])+"0"
-                        nativeCommand={"Main_Zone": {"Volume": {"Lvl": { "Val": realvol, "Exp": 1, "Unit": "dB"}}}}                 
-                        
-                if nativeCommand:      
-                    response=await self.receiver.sendCommand(nativeCommand, '', payload)
-                    self.log.info('<- %s' % response)
-                    await self.updateEverything()
-                    return await self.dataset.generateResponse(endpointId, correlationToken)
-                  
+                return endpointId.split(":")[2]
             except:
-                self.log.error('Error executing state change.', exc_info=True)
+                return False
 
- 
-        def addControllerProps(self, controllerlist, controller, prop):
-        
+        async def setAndUpdate(self, device, command, correlationToken=''):
+            
+            #  General Set and Update process for insteon. Most direct commands should just set the native command parameters
+            #  and then call this to apply the change
+            
             try:
-                if controller not in controllerlist:
-                    controllerlist[controller]=[]
-                if prop not in controllerlist[controller]:
-                    controllerlist[controller].append(prop)
+                self.log.info('.. using new update methods')
+                response=await self.receiver.sendCommand(command)
+                self.log.info('<- %s' % response)
+                await self.updateEverything()
+                return await self.dataset.generateResponse(device.endpointId, correlationToken)
             except:
-                self.log.error('Error adding controller property', exc_info=True)
+                self.log.error('!! Error during Set and Update: %s %s / %s %s' % (deviceid, command, controllerprop, controllervalue), exc_info=True)
+                return None
                 
-            return controllerlist
-
-        def virtualControllers(self, itempath):
-
-            try:
-                nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                self.log.debug('Checking object for controllers: %s' % nativeObject)
-                
-                try:
-                    detail=itempath.split("/",3)[3]
-                except:
-                    detail=""
-
-                controllerlist={}
-                if "Basic_Status" in nativeObject:
-                    if detail=="Basic_Status/Power_Control/Power" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist, "PowerController", "powerState")
-                    if detail=="Basic_Status/Volume/Lvl/Val" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist, 'SpeakerController', 'volume')
-                    if detail=="Basic_Status/Volume/Mute" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist, 'SpeakerController', 'muted')
-                    if detail=="Basic_Status/Input/Input_Sel" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist, 'InputController', 'input')
-                    if detail=="Basic_Status/Surround/Program_Sel/Current/Sound_Program" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist, "SurroundController", "surround")
-                    if detail=="Basic_Status/Input/Decoder_Sel" or detail=="":
-                        controllerlist=self.addControllerProps(controllerlist, "SurroundController", "decoder")
-                return controllerlist
-            except:
-                self.log.error('Error getting virtual controller types for %s' % nativeObj, exc_info=True)
-                
-                
-        def virtualControllerProperty(self, nativeObj, controllerProp):
-
-            if controllerProp=='powerState':
-                return "ON" if nativeObj['Basic_Status']['Power_Control']['Power']=="On" else "OFF"
-
-            elif controllerProp=='volume':
-                try:
-                    #volrange={'max':15, 'min':-70}
-                    volrange={'max':0, 'min':-80}
-                    zvolume=float(nativeObj['Basic_Status']['Volume']['Lvl']['Val'])/10
-                    zpos=int(round(((volrange['max']-volrange['min'])-(volrange['max']-zvolume))*(100/(volrange['max']-volrange['min']))))
-                    return zpos
-                except:
-                    self.log.error('Error checking volume status', exc_info=True)
-
-            elif controllerProp=='muted':
-                try:
-                    return nativeObj['Basic_Status']['Volume']['Mute']!='Off'
-                except:
-                    self.log.error('Error checking Mute status', exc_info=True)
-
-            elif controllerProp=='input':
-                try:
-                    return nativeObj['Basic_Status']['Input']['Input_Sel']
-                except:
-                    self.log.error('Error checking Mute status', exc_info=True)
-
-            elif controllerProp=='surround':
-                try:
-                    return nativeObj['Basic_Status']['Surround']['Program_Sel']['Current']['Sound_Program']
-                except:
-                    self.log.error('Error checking Surround status', exc_info=True)
-            
-            elif controllerProp=='decoder':
-                try:
-                    return nativeObj['Input']['Decoder_Sel']['Current']
-                except:
-                    self.log.error('Error checking Surround status', exc_info=True)
- 
- 
-                
-            else:
-                self.log.info('Unknown controller property mapping: %s' % controllerProp)
-                return {}
-
-
-        async def virtualCategory(self, category):
-            
-            self.log.info('Virtual Category check: %s' % category)
-            
-            if category=='speaker':
-                subset={ 'Main_Zone': self.dataset.mapProperties(self.dataset.nativeDevices['Main_Zone'],['Speaker']) }
-
-            else:
-                subset={}
-            
-            return subset
-            
         async def virtualList(self, itempath, query={}):
 
             try:

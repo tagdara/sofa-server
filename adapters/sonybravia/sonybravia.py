@@ -186,6 +186,82 @@ class sonyRest():
 
 class sonybravia(sofabase):
 
+    class EndpointHealth(devices.EndpointHealth):
+
+        @property            
+        def connectivity(self):
+            return 'OK'
+
+    class PowerController(devices.PowerController):
+
+        @property            
+        def powerState(self):
+            return "ON" if self.nativeObject['power']['status']=="active" else "OFF"
+
+        async def TurnOn(self, correlationToken=''):
+            try:
+                sysinfo=await self.adapter.tv.getState('system', 'setPowerStatus', params={"status":True})
+                await self.adapter.getUpdate()
+                return await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)
+            except:
+                self.adapter.log.error('!! Error during TurnOn', exc_info=True)
+                return None
+        
+        async def TurnOff(self, correlationToken=''):
+            try:
+                sysinfo=await self.adapter.tv.getState('system', 'setPowerStatus', params={"status":False})
+                await self.adapter.getUpdate()
+                return await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)
+            except:
+                self.adapter.log.error('!! Error during TurnOff', exc_info=True)
+                return None
+
+    class InputController(devices.InputController):
+
+        @property            
+        def input(self):
+            try:
+                return self.adapter.getInputName(self.nativeObject)
+            except KeyError:
+                if self.nativeObject['power']['status']=="active":
+                    return 'Android TV'
+                else:
+                    return "Off"
+            except:
+                self.adapter.log.error('Error checking input status', exc_info=True)
+                return "Off"
+                    
+        async def SelectInput(self,payload, correlationToken=''):
+            try:
+                if payload['input']=='Home':
+                    sysinfo=await self.adapter.tv.remoteControl(self.adapter.findRemoteCode('Home'))
+                else:
+                    inp=payload['input']
+                    for port in self.adapter.dataset.config['hdmi_port_names']:
+                        if payload['input']==self.adapter.dataset.config['hdmi_port_names'][port]:
+                            inp='extInput:hdmi?port=%s' % port
+                            sysinfo=await self.adapter.tv.getState('avContent','setPlayContent',params={"uri":inp})
+                            if inp.startswith('extInput:cec'):
+                                # takes slightly longer for CEC sources to switch than raw AV inputs
+                                await asyncio.sleep(.2)
+                await self.adapter.getUpdate()
+                return await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)
+            except:
+                self.adapter.log.error('Error in SelectInput', exc_info=True)
+                return None
+
+    class RemoteController(devices.RemoteController):
+
+        async def PressRemoteButton(self, payload, correlationToken=''):
+            try:
+                if self.adapter.findRemoteCode(payload['buttonName']):
+                    sysinfo=await self.adapter.tv.remoteControl(self.adapter.findRemoteCode(payload['buttonName']))
+                await self.adapter.getUpdate()
+                return await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)
+            except:
+                self.adapter.log.error('Error in PressRemoteButton', exc_info=True)
+                return None
+
     class adapterProcess(adapterbase):
 
 
@@ -327,13 +403,20 @@ class sonybravia(sofabase):
 
 
         def addSmartTV(self, deviceid, name="Bravia"):
-            
-            nativeObject=self.dataset.nativeDevices['tv'][deviceid]
-            if name not in self.dataset.localDevices:
-                if "systemInformation" in nativeObject and "power" in nativeObject:
-                    return self.dataset.addDevice(name, devices.tv('sonybravia/tv/%s' % deviceid, name, inputs= self.input_list, noSpeaker=True))
-            
-            return False
+            try:
+                nativeObject=self.dataset.nativeDevices['tv'][deviceid]
+                if name not in self.dataset.localDevices:
+                    if "systemInformation" in nativeObject and "power" in nativeObject:
+                        device=devices.alexaDevice('sonybravia/tv/%s' % deviceid, name, displayCategories=['TV'], adapter=self)
+                        device.PowerController=sonybravia.PowerController(device=device)
+                        device.EndpointHealth=sonybravia.EndpointHealth(device=device)
+                        device.InputController=sonybravia.InputController(device=device, inputs=self.input_list)
+                        device.RemoteController=sonybravia.RemoteController(device=device)
+                        # TV is plugged into sound system so skipping speaker here, but could be added
+                        return self.dataset.newaddDevice(device)
+                return False
+            except:
+                self.log.error('!! Error adding smart TV', exc_info=True)
             
         def findRemoteCode(self, codename):
 
@@ -347,79 +430,6 @@ class sonybravia(sofabase):
             except:
                 self.log.error('Error getting remote code', exc_info=True)
                 return ''
-
-        #async def stateChange(self, endpointId, controller, command, payload):
-        async def processDirective(self, endpointId, controller, command, payload, correlationToken='', cookie={}):
-    
-            try:
-                device=endpointId.split(":")[2]
-                sysinfo={}
-                
-                if controller=="PowerController":
-                    if command=='TurnOn':
-                        sysinfo=await self.tv.getState('system', 'setPowerStatus', params={"status":True})
-                    elif command=='TurnOff':
-                        sysinfo=await self.tv.getState('system', 'setPowerStatus', params={"status":False})
-                
-                if controller=="InputController":
-                    if command=='SelectInput':
-                        if payload['input']=='Home':
-                            sysinfo=await self.tv.remoteControl(self.findRemoteCode('Home'))
-                        else:
-                            inp=payload['input']
-                            for port in self.dataset.config['hdmi_port_names']:
-                                if payload['input']==self.dataset.config['hdmi_port_names'][port]:
-                                    inp='extInput:hdmi?port=%s' % port
-                                    break
-                                
-                            sysinfo=await self.tv.getState('avContent','setPlayContent',params={"uri":inp})
-                            if inp.startswith('extInput:cec'):
-                                # takes slightly longer for CEC sources to switch than raw AV inputs
-                                await asyncio.sleep(.2)
-
-                if controller=="RemoteController":
-                    if command=='PressRemoteButton':
-                        if self.findRemoteCode(payload['buttonName']):
-                            sysinfo=await self.tv.remoteControl(self.findRemoteCode(payload['buttonName']))
-
-                await self.getUpdate()
-                    
-                response=await self.dataset.generateResponse(endpointId, correlationToken)
-                return response
-                  
-            except:
-                self.log.error('Error executing state change.', exc_info=True)
-
-
-                
-        def virtualControllers(self, itempath):
-            
-            nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                
-            try:
-                detail=itempath.split("/",3)[3]
-            except:
-                detail=""
-
-            controllerlist={}
-            
-            try:
-                nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(itempath))
-                controllerlist={}
-                
-                if detail=="power/status" or detail=="":
-                    controllerlist=self.addControllerProps(controllerlist,"PowerController","powerState")
-                if detail=="playingContent/uri" or detail=="":
-                    controllerlist=self.addControllerProps(controllerlist,"InputController","input")
-                #if detail=="playingContent/uri" or detail=="":
-                #    controllerlist=self.addControllerProps(controllerlist,"SpeakerController","volume")
-                #if detail==
-                #    controllerlist=self.addControllerProps(controllerlist,"SpeakerController","volume")
-
-                return controllerlist
-            except:
-                self.log.error('Error getting virtual controller types for %s' % nativeObj, exc_info=True)
-
 
         def getDetailsFromURI(self, uri):
             
@@ -444,7 +454,7 @@ class sonybravia(sofabase):
             
             try:
                 if 'playingContent' not in nativeObj:
-                    self.log.warn('No playing content: %s' % nativeObj)
+                    #self.log.warn('No playing content')
                     return 'Android TV'
                 details=self.getDetailsFromURI(nativeObj['playingContent']['uri'])
                 if details['type'] in ['cec','hdmi']:
@@ -456,28 +466,6 @@ class sonybravia(sofabase):
             except:
                 self.log.error('Error getting virtual input name for %s' % nativeObj, exc_info=True)
 
-        def virtualControllerProperty(self, nativeObj, controllerProp):
-            
-            #self.log.info('NativeObj: %s' % nativeObj)
-
-            if controllerProp=='powerState':
-                return "ON" if nativeObj['power']['status']=="active" else "OFF"
-
-            elif controllerProp=='input':
-                try:
-                    return self.getInputName(nativeObj)
-                    #return nativeObj['playingContent']['title']
-                except KeyError:
-                    if nativeObj['power']['status']=="active":
-                        return 'Android TV'
-                    else:
-                        return "Off"
-                except:
-                    self.log.error('Error checking input status', exc_info=True)
-                
-            else:
-                self.log.info('Unknown controller property mapping: %s' % controllerProp)
-                return {}
 
         async def virtualList(self, itempath, query={}):
 

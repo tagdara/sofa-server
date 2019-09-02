@@ -22,16 +22,99 @@ import base64
 from PIL import Image
 import io
 import shutil
+import uuid
 
 import concurrent.futures
 
 class unifivideo(sofabase):
+    
+    class EndpointHealth(devices.EndpointHealth):
 
+        @property            
+        def connectivity(self):
+            return 'OK'
+    
+    class MotionSensor(devices.MotionSensor):
+
+        @property            
+        def detectionState(self):
+            return 'NOT_DETECTED'
+
+    class CameraStreamController(devices.CameraStreamController):
+
+        @property
+        def cameraStreamConfigurations(self):
+            return [
+                    {
+                        "protocols": ["HLS"], 
+                        "resolutions": [{"width":1280, "height":720}], 
+                        "authorizationTypes": ["BASIC"], 
+                        "videoCodecs": ["H264"], 
+                        "audioCodecs": ["AAC"] 
+                    }
+                ]
+
+        @property
+        def cameraStreams(self):
+            return [
+                {
+                    "uri": "https://%s:%s/hls/%s.m3u8" % (self.adapter.dataset.config['nginx_hls_hostname'],self.adapter.dataset.config['nginx_hls_port'], self.deviceid),
+                    "expirationTime": (datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=1)).isoformat()[:-10]+"Z",
+                    "idleTimeoutSeconds": 30,
+                    "protocol": "HLS",
+                    "resolution": {
+                        "width": 1280,
+                        "height": 720
+                    },
+                    "authorizationType": "BASIC",
+                    "videoCodec": "H264",
+                    "audioCodec": "AAC"                
+                }
+                ]
+                
+        def imageUri(self, res='low', width=640):
+            if res=='low':
+                return "https://%s/thumbnail/unifivideo/%s" % (self.adapter.dataset.config['nginx_hls_hostname'], self.deviceid )
+            # This is the real one but we should not use this instead use the brokered image since it may not be reachable by clients
+            #return "https://%s:%s/api/2.0/snapshot/camera/%s?force=true&apiKey=%s" % (self.adapter.dataset.config['nvr'], self.adapter.dataset.config['snapshot_port'], self.deviceid, self.adapter.dataset.config['api_key'])
+            return "https://%s/image/unifivideo/%s?width=%s" % (self.adapter.dataset.config['nginx_hls_hostname'], self.deviceid, width )
+
+        async def InitializeCameraStreams(self, payload, correlationToken=''):
+            try:
+                for config in payload['cameraStreams']:
+                    width=config['resolution']['width']
+                    if config['resolution']['width']<1280:
+                        res='low'
+                    else:
+                        res='high'
+                        
+                return {
+                    "event": {
+                        "header": {
+                            "name":"Response",
+                            "payloadVersion": self.device.payloadVersion,
+                            "messageId":str(uuid.uuid1()),
+                            "namespace":self.device.namespace,
+                            "correlationToken":correlationToken
+                        },
+                        "endpoint": {
+                            "endpointId": self.device.endpointId
+                        }
+                    },
+                    "payload": { "cameraStreams": self.cameraStreams, "imageUri":self.imageUri(res, width) }
+                }
+            except:
+                self.log.error('!! Error during Initialize Camera Streams', exc_info=True)
+                return None
+
+
+                
     class adapterProcess():
 
         def __init__(self, log=None, loop=None, dataset=None, notify=None, request=None, **kwargs):
             self.dataset=dataset
             self.log=log
+            self.dataset.nativeDevices['camera']={}
             self.notify=notify
             if not loop:
                 self.loop = asyncio.new_event_loop()
@@ -63,17 +146,17 @@ class unifivideo(sofabase):
 
             nativeObject=self.dataset.nativeDevices['camera'][deviceid]
             if nativeObject['name'] not in self.dataset.devices:
-                return self.dataset.addDevice(nativeObject['name'], devices.simpleCamera('unifivideo/camera/%s' % deviceid, nativeObject['name']))
-           
+                device=devices.alexaDevice('unifivideo/camera/%s' % nativeObject['id'], nativeObject['name'], displayCategories=['CAMERA'], adapter=self)
+                device.CameraStreamController=unifivideo.CameraStreamController(device=device)
+                device.EndpointHealth=unifivideo.EndpointHealth(device=device)
+                return self.dataset.newaddDevice(device)
             return False
 
 
         async def virtualThumbnail(self, path, client=None):
             
             try:
-                playerObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath("/"+path))
-
-                url="https://%s:%s/api/2.0/snapshot/camera/%s?force=true&width=640&apiKey=%s" % (self.dataset.config['nvr'], self.dataset.config['snapshot_port'], playerObject['id'], self.dataset.config['api_key'])
+                url="https://%s:%s/api/2.0/snapshot/camera/%s?force=true&width=640&apiKey=%s" % (self.dataset.config['nvr'], self.dataset.config['snapshot_port'], path, self.dataset.config['api_key'])
                 #self.log.info('URL: %s' % url)
                 async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as client:
                     try:
@@ -100,14 +183,8 @@ class unifivideo(sofabase):
 
         async def virtualImage(self, path, client=None):
             
-            pass
-            
             try:
-                #self.log.info('Virtual image path: %s' % path)
- 
-                playerObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath("/"+path))
-
-                url="https://%s:%s/api/2.0/snapshot/camera/%s?force=true&apiKey=%s" % (self.dataset.config['nvr'], self.dataset.config['snapshot_port'], playerObject['id'], self.dataset.config['api_key'])
+                url="https://%s:%s/api/2.0/snapshot/camera/%s?force=true&apiKey=%s" % (self.dataset.config['nvr'], self.dataset.config['snapshot_port'], path, self.dataset.config['api_key'])
                 #self.log.info('URL: %s' % url)
                 async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as client:
                     async with client.get(url) as response:

@@ -278,7 +278,8 @@ class sofaMQTT():
                 
                 elif message['event']['header']['name']=='AddOrUpdateReport':
                     if hasattr(self.adapter, "handleAddOrUpdateReport"):
-                        await self.adapter.handleAddOrUpdateReport(message['event']['payload']['endpoints'])
+                        await self.adapter.handleAddOrUpdateReport(message)
+                        #await self.adapter.handleAddOrUpdateReport(message['event']['payload']['endpoints'])
                 
                 else:
                     self.log.info('Message type not processed: %s' % message)

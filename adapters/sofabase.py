@@ -95,6 +95,22 @@ class sofabase():
         def get(self):
             pass
 
+    def __init__(self, name=None, loglevel="INFO"):
+        
+        if name==None:
+            print('Adapter name not provided')
+            sys.exit(1)
+        
+        
+        self.adaptername=name
+        self.configpath=".."
+        self.baseConfig=self.readBaseConfig(self.configpath)
+        self.basepath=self.baseConfig['baseDirectory']
+        self.logsetup(self.baseConfig['logDirectory'], self.adaptername, loglevel, errorOnly=self.baseConfig['error_only_logs'])
+
+        self.loop = asyncio.get_event_loop()
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10,)
+
     def logsetup(self, logbasepath, logname, level="DEBUG", errorOnly=[]):
 
         #log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s %(lineno)4d %(threadName)-.1s: %(message)s','%m/%d %H:%M:%S')
@@ -195,27 +211,24 @@ class sofabase():
         except:
             print('Did not get base config properly')
             sys.exit(1)
-       
-       
-    def __init__(self, name=None, loglevel="INFO"):
-        
-        if name==None:
-            print('Adapter name not provided')
-            sys.exit(1)
-        
-        
-        self.adaptername=name
-        self.configpath=".."
-        self.baseConfig=self.readBaseConfig(self.configpath)
-        self.basepath=self.baseConfig['baseDirectory']
-        self.logsetup(self.baseConfig['logDirectory'], self.adaptername, loglevel, errorOnly=self.baseConfig['error_only_logs'])
-
-        self.loop = asyncio.get_event_loop()
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10,)
     
     def service_stop(self, sig):
         try:
             self.log.info('Terminating loop due to service stop. %s' % sig)
+            try:
+                if self.adapter:
+                    self.adapter.running=False
+                    if hasattr(self.adapter, 'service_stop'):
+                        self.adapter.service_stop()
+                    self.loop.run_until_complete(self.adapter.stop())
+                if self.restServer:
+                    self.restServer.shutdown()
+                if self.executor:
+                    self.log.info('Shutting down executor')
+                    self.executor.shutdown()
+
+            except:
+                self.log.error('!! error in service stop', exc_info=True)
             self.loop.stop()
         except:
             self.log.error('Error stopping loop', exc_info=True)
@@ -251,7 +264,12 @@ class sofabase():
         
         self.log.info('.. starting REST server: http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port']))
         self.restServer = sofarest.sofaRest(port=self.dataset.config['rest_port'], loop=self.loop, log=self.log, dataset=self.dataset)
-        self.restServer.initialize()
+        result=self.restServer.initialize()
+        if not result:
+            self.loop.stop()
+            self.loop.close()
+            sys.exit(1)
+            
 
         self.log.info('.. starting main adapter %s' % self.adaptername)
         self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=self.requester.request, loop=self.loop, executor=self.executor)
@@ -261,10 +279,7 @@ class sofabase():
     
         # wait until the adapter is created to avoid a number of race conditions
         self.loop.run_until_complete(self.mqttServer.connectServer())
-        # These commands have been moved to the on_connect in mqtt
-        #self.loop.run_until_complete(self.mqttServer.topicSubscribe())
-        #self.loop.run_until_complete(self.mqttServer.subscribeAdapterTopics())
-        
+
         self.adapter.running=True
         self.loop.run_until_complete(self.adapter.start())
 
@@ -279,11 +294,7 @@ class sofabase():
         except:
             self.log.error('Loop terminated', exc_info=True)
         finally:
-            self.adapter.running=False
-            self.loop.run_until_complete(self.adapter.stop())
-            self.restServer.shutdown()
-            self.log.info('Shutting down executor')
-            self.executor.shutdown()
+            self.service_stop()
         
         self.log.info('.. stopping adapter %s' % self.adaptername)
         self.loop.close()
