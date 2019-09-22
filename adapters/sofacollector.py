@@ -242,3 +242,17 @@ class SofaCollector(sofabase):
             except:
                 self.log.error('Error processing Change Report', exc_info=True)
                 return {}
+                
+                
+        async def sendAlexaCommand(self, command, controller, endpointId, payload={}, cookie={}, trigger={}):
+            
+            try:
+                header={"name": command, "namespace":"Alexa." + controller, "payloadVersion":"3", "messageId": str(uuid.uuid1()), "correlationToken": str(uuid.uuid1())}
+                endpoint={"endpointId": endpointId, "cookie": cookie, "scope":{ "type":"BearerToken", "token":"access-token-from-skill" }}
+                data={"directive": {"header": header, "endpoint": endpoint, "payload": payload }}
+                report=await self.dataset.sendDirectiveToAdapter(data)
+                return report
+            except:
+                self.log.error('Error executing Alexa Command: %s %s %s %s' % (command, controller, endpointId, payload), exc_info=True)
+                return {}
+

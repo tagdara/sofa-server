@@ -21,6 +21,55 @@ import pyHS100
 
 class tplink(sofabase):
     
+    class EndpointHealth(devices.EndpointHealth):
+
+        @property            
+        def connectivity(self):
+            return 'OK'
+
+    class PowerController(devices.PowerController):
+
+        @property            
+        def powerState(self):
+            try:
+                if 'state' in self.nativeObject:
+                    return "ON" if self.nativeObject['state'] else "OFF"
+                elif 'relay_state' in self.nativeObject:
+                    return "ON" if self.nativeObject['relay_state'] else "OFF"
+            except:
+                self.adapter.log.error('!! Error getting powerstate', exc_info=True)
+                return "OFF"
+
+        async def TurnOn(self, correlationToken='', **kwargs):
+            try:
+                if 'parent' in self.nativeObject:
+                    plug=self.adapter.getParentStripObject(self.nativeObject['parent']).plugs[self.nativeObject['child_index']]
+                else:
+                    plug=plugpyHS100.SmartPlug(self.nativeObject['address'])
+
+                plug.state='ON'
+                await self.adapter.getManual()
+                return self.device.Response(correlationToken)       
+            except:
+                self.adapter.log.error('!! Error during TurnOn', exc_info=True)
+                return {}
+        
+        async def TurnOff(self, correlationToken='', **kwargs):
+
+            try:
+                if 'parent' in self.nativeObject:
+                    plug=self.adapter.getParentStripObject(self.nativeObject['parent']).plugs[self.nativeObject['child_index']]
+                else:
+                    plug=plugpyHS100.SmartPlug(self.nativeObject['address'])
+
+                plug.state='OFF'
+                            
+                await self.adapter.getManual()
+                return self.device.Response(correlationToken)       
+            except:
+                self.adapter.log.error('!! Error during TurnOff', exc_info=True)
+                return {}
+    
     class adapterProcess(adapterbase):
     
         def __init__(self, log=None, loop=None, dataset=None, notify=None, request=None, **kwargs):
@@ -107,14 +156,24 @@ class tplink(sofabase):
         async def addSmartPlug(self, deviceid):
             
             try:
-                #self.log.info('%s %s' % (deviceid, self.dataset.localDevices))
                 nativeObject=self.dataset.nativeDevices['plug'][deviceid]
                 if nativeObject['alias'] not in self.dataset.localDevices:
                     if deviceid in self.dataset.config['other']:
                         displayCategories=['OTHER']
                     else:
                         displayCategories=['SWITCH']
-                    return self.dataset.addDevice(nativeObject['alias'], devices.switch('tplink/plug/%s' % deviceid, nativeObject['alias'], displayCategories=displayCategories, log=self.log))
+                    device=devices.alexaDevice('tplink/plug/%s' % deviceid, nativeObject['alias'], displayCategories=displayCategories, adapter=self)
+                    device.PowerController=tplink.PowerController(device=device)
+                    device.EndpointHealth=tplink.EndpointHealth(device=device)
+                    return self.dataset.newaddDevice(device)
+                #self.log.info('%s %s' % (deviceid, self.dataset.localDevices))
+                #nativeObject=self.dataset.nativeDevices['plug'][deviceid]
+                #if nativeObject['alias'] not in self.dataset.localDevices:
+                #    if deviceid in self.dataset.config['other']:
+                #        displayCategories=['OTHER']
+                #    else:
+                #        displayCategories=['SWITCH']
+                #    return self.dataset.addDevice(nativeObject['alias'], devices.switch('tplink/plug/%s' % deviceid, nativeObject['alias'], displayCategories=displayCategories, log=self.log))
     
                 return False
             except:

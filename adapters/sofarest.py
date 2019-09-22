@@ -358,7 +358,6 @@ class sofaRest():
         try:
             if hasattr(self.adapter, "virtualImage"):
                 result=await self.adapter.virtualImage(request.match_info['item'])
-                self.log.info('Image request: %s' % request)
                 return web.Response(body=result, headers = { "Content-type": "image/jpeg" })
                         
             return web.Response(text='No image found')
@@ -371,8 +370,6 @@ class sofaRest():
             
         try:
             if hasattr(self.adapter, "virtualThumbnail"):
-                self.log.info('Image request: %s %s' % (request.match_info['item'], request.query_string))
-                #self.log.info('Requesting thumbnail from camera: %s' % request.match_info['item'])
                 result=await self.adapter.virtualThumbnail(request.match_info['item'])
                 return web.Response(body=result, headers = { "Content-type": "image/jpeg" })
                         
@@ -452,8 +449,7 @@ class sofaRest():
 
         
     def shutdown(self):
-        self.loop.run_until_complete(self.serverApp.shutdown())
-
+        asyncio.ensure_future(self.serverApp.shutdown())
 
     def __init__(self, port, loop, log=None, dataset={}):
         self.port = port

@@ -220,7 +220,7 @@ class sofabase():
                     self.adapter.running=False
                     if hasattr(self.adapter, 'service_stop'):
                         self.adapter.service_stop()
-                    self.loop.run_until_complete(self.adapter.stop())
+                    asyncio.ensure_future(self.adapter.stop())
                 if self.restServer:
                     self.restServer.shutdown()
                 if self.executor:

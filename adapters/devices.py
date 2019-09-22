@@ -92,15 +92,21 @@ class capabilityInterface(object):
 
         for prop in self.props:
             try:
-                supported.append({
+                data={
                         "name": prop,
                         "value": getattr(self, prop),
                         "namespace":self.interface, 
                         "uncertaintyInMilliseconds": 0, 
                         "timeOfSample":datetime.datetime.now(datetime.timezone.utc).isoformat()[:-10]+"Z"
-                    })
+                    }
+                try:
+                    data['instance']=self.instance
+                except:
+                    pass
+                supported.append(data)
+
             except:
-                print('Error adding property to state report: %s %s' % (prop, sys.exc_info()))
+                self.log.error('Error adding property to state report: %s %s' % (prop, sys.exc_info()))
         
         return supported
 
@@ -324,6 +330,95 @@ class InputController(capabilityInterface):
         basecapability={"interface":self.interface, "version": self.version, "type": self.capabilityType, "properties": self.properties}
         if self.inputs:
             basecapability['inputs']=self.inputs
+        if self.configuration:
+            basecapability['configuration']=self.configuration
+            
+        return basecapability
+
+
+class ModeController(capabilityInterface):
+   
+    def __init__(self, device=None, friendlyNames=[], supportedModes=[], devicetype=None, modename=None):
+        self._friendlyNames=friendlyNames
+        self._devicetype=devicetype
+        self._modename=modename
+        self._supportedModes=supportedModes
+        super().__init__(device=device)
+
+    @property
+    def mode(self):
+        return "Unknown"
+
+    @property
+    def controller(self):
+        return "ModeController"
+    
+    @property
+    def ordered(self):
+        return False
+        
+    @property
+    def locale(self):
+        return "en-US"
+
+    @property
+    def instance(self):
+        if self._devicetype:
+            instancedev=self._devicetype
+        else:
+            instancedev=self.displayCategories[0].capitalize()
+        
+        if self._modename:
+            instancename=self._modename
+        else:
+            instancename=self._friendlyNames[0].capitalize()
+
+        return "%s.%s" % (instancedev, instancename)
+        
+    @property 
+    def friendlyNames(self):
+        fns=[]
+        for fn in self._friendlyNames:
+            fns.append({ "@type": "text", "value": { "text": fn, "locale": self.locale }})
+        return fns 
+
+    @property
+    def capabilityResources(self):
+        return { "friendlyNames": self.friendlyNames }
+
+    @property            
+    def directives(self):
+        return { "SelectInput": { "input": "string" }}
+
+    @property          
+    def props(self):
+        return { "mode" : { "value" : "string" }}
+        
+    @property
+    def configuration(self):
+        return { "ordered": self.ordered, "supportedModes": self.supportedModes }
+
+    @property
+    def supportedModes(self):
+        if self._modename:
+            instancename=self._modename
+        else:
+            instancename=self._friendlyNames[0].capitalize()
+
+        sms=[]
+        for sm in self._supportedModes:
+            sms.append( {   "value": "%s.%s" % (instancename,sm), 
+                            "modeResources": { 
+                                "friendlyNames": [{ "@type": "text", "value": { "text": sm, "locale": self.locale }}],
+                            }
+                        })
+        return sms 
+
+    @property
+    def capability(self):
+        basecapability={"interface":self.interface, "version": self.version, "type": self.capabilityType, "instance": self.instance, "properties": self.properties}
+        if self.capabilityResources:
+            basecapability['capabilityResources']=self.capabilityResources
         if self.configuration:
             basecapability['configuration']=self.configuration
             
@@ -598,6 +693,21 @@ class SpeakerController(capabilityInterface):
 
 
 class SurroundController(capabilityInterface):
+    
+    def __init__(self, device=None, inputs=[]):
+        self.savedState={}
+        self._inputs=inputs
+        super().__init__(device=device)
+        
+    @property
+    def inputs(self):
+        inputlist=[]
+        try:
+            for inp in self._inputs:
+                inputlist.append({'name':inp})
+        except:
+            pass
+        return inputlist
         
     @property
     def controller(self):
@@ -616,6 +726,16 @@ class SurroundController(capabilityInterface):
     @property          
     def props(self):
         return { "surround": { "value" : "string"}, "decoder": { "value" : "string"}}
+
+    @property
+    def capability(self):
+        basecapability={"interface":self.interface, "version": self.version, "type": self.capabilityType, "properties": self.properties}
+        if self.inputs:
+            basecapability['inputs']=self.inputs
+        if self.configuration:
+            basecapability['configuration']=self.configuration
+            
+        return basecapability
 
 
 class AreaController(capabilityInterface):
@@ -770,12 +890,13 @@ class AdapterHealth(capabilityInterface):
 
 class alexaDevice(object):
     
-    def __init__(self, path, name, adapter=None, nativeObject=None, displayCategories=["OTHER"], description="Smart Device", manufacturer="sofa", log=None, native=None):
+    def __init__(self, path, name, adapter=None, nativeObject=None, displayCategories=["OTHER"], description="Smart Device", manufacturerName="Sofa", modelName="", log=None, native=None):
         self._path=path
         self._friendlyName=name
         self._displayCategories=displayCategories
         self._description=description
-        self._manufacturer=manufacturer
+        self._manufacturerName=manufacturerName
+        self._modelName=modelName
         self._interfaces=[]
         self.log=adapter.log
         self.adapter=adapter
@@ -838,9 +959,16 @@ class alexaDevice(object):
         return self.path.replace('/',':')
 
     @property
-    def manufacturer(self):
-        if hasattr(self, '_manufacturer'):
-            return self._manufacturer
+    def manufacturerName(self):
+        if hasattr(self, '_manufacturerName'):
+            return self._manufacturerName
+        else:
+            return ""
+            
+    @property
+    def modelName(self):
+        if hasattr(self, '_modelName'):
+            return self._modelName
         else:
             return ""
 
@@ -908,7 +1036,8 @@ class alexaDevice(object):
             "endpointId": self.endpointId,
             "friendlyName": self.friendlyName,
             "description": self.description,
-            "manufacturerName": self.manufacturer,
+            "manufacturerName": self.manufacturerName,
+            "modelName": self.modelName,
             "cookie": {},
             "capabilities": self.capabilities,
         }

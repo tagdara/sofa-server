@@ -80,17 +80,23 @@ class servicemanager(sofabase):
             else:
                 return 'OFF'
 
-        async def TurnOn(self, device, correlationToken=''):
+        async def TurnOn(self, correlationToken='', **kwargs):
             try:
-                return await self.dataset.generateResponse(device.endpointId, correlationToken)
+                stdoutdata = subprocess.getoutput("/opt/sofa-server/svc %s" % self.nativeObject['name'])
+                #return web.Response(text=stdoutdata)
+                return self.device.Response(correlationToken)
             except:
-                self.adapter.log.error('!! Error during TurnOn', exc_info=True)
-        
-        async def TurnOff(self, device, correlationToken=''):
+                self.log.error('!! Error restarting adapter', exc_info=True)
+                return self.device.Response(correlationToken)
+
+        async def TurnOff(self, correlationToken='', **kwargs):
             try:
-                return await self.dataset.generateResponse(device.endpointId, correlationToken)
+                stdoutdata = subprocess.getoutput("systemctl stop sofa-%s" % self.nativeObject['name'])
+                #return web.Response(text=stdoutdata)
+                return self.device.Response(correlationToken)
             except:
-                self.adapter.log.error('!! Error during TurnOff', exc_info=True)
+                self.log.error('!! Error stopping adapter', exc_info=True)
+                return self.device.Response(correlationToken)  
     
     class adapterProcess(SofaCollector.collectorAdapter):
     
@@ -114,7 +120,7 @@ class servicemanager(sofabase):
                     await self.adapter_checker()
                     await asyncio.sleep(self.polltime)
                 except:
-                    self.log.error('Error polling for data', exc_info=True)
+                    self.log.error('!! Error polling for data', exc_info=True)
                     
         # Utility Functions
         
@@ -125,7 +131,7 @@ class servicemanager(sofabase):
                     newadapter={"name":adapter, "state":{}, "service":{}, "rest": {}}
                     await self.dataset.ingest({'adapters': { adapter : newadapter}})
             except:
-                self.log.error('Error populating adapters', exc_info=True)
+                self.log.error('!! Error populating adapters', exc_info=True)
         
         async def adapter_checker(self):
             
@@ -141,7 +147,7 @@ class servicemanager(sofabase):
                     await self.dataset.ingest({'adapters': { adapter : adapterstate}})
                     
             except:
-                self.log.error('Error listing adapters', exc_info=True)
+                self.log.error('!! Error listing adapters', exc_info=True)
         
         async def virtualAddAdapter(self, adapter, adapterdata):
             
@@ -152,15 +158,15 @@ class servicemanager(sofabase):
                 adapterstate['rest']=self.dataset.adapters[adapter]
                 await self.dataset.ingest({'adapters': { adapter : adapterstate}})
             except:
-                self.log.info('Error getting adapter status after discovery: %s' % adapter, exc_info=True)
+                self.log.info('!! Error getting adapter status after discovery: %s' % adapter, exc_info=True)
 
         async def virtualUpdateAdapter(self, adapter, adapterdata):
             
             try:
-                self.log.info('Getting updated adapter status for %s' % adapter)
+                self.log.info('.. getting updated adapter status for %s' % adapter)
                 await self.get_adapter_status(adapter)
             except:
-                self.log.info('Error updating adapter status after discovery: %s' % adapter, exc_info=True)
+                self.log.info('!. Error updating adapter status after discovery: %s' % adapter, exc_info=True)
 
         # Adapter Overlays that will be called from dataset
         async def addSmartDevice(self, path):
@@ -176,7 +182,7 @@ class servicemanager(sofabase):
                         device.EndpointHealth=servicemanager.EndpointHealth(device=device)
                         return self.dataset.newaddDevice(device) 
             except:
-                self.log.error('Error defining smart device', exc_info=True)
+                self.log.error('!! Error defining smart device', exc_info=True)
                 return False
 
         
@@ -190,14 +196,14 @@ class servicemanager(sofabase):
                         return json.loads(result.decode())
                         
             except aiohttp.client_exceptions.ClientConnectorError:
-                self.log.warn('Connection error trying to get status for adapter %s at %s' % (adaptername, url))
+                self.log.warn('!! Connection error trying to get status for adapter %s at %s' % (adaptername, url))
                 return {}
             except aiohttp.client_exceptions.ClientOSError:
-                self.log.warn('Connection error trying to get status for adapter %s at %s' % (adaptername, url))
+                self.log.warn('!! Connection error trying to get status for adapter %s at %s' % (adaptername, url))
                 return {}
 
             except:
-                self.log.error('Error getting status for adapter %s at %s' % (adaptername, url), exc_info=True)
+                self.log.error('!! Error getting status for adapter %s at %s' % (adaptername, url), exc_info=True)
                 return {}
                 
         async def get_service_status(self, adaptername):
@@ -214,7 +220,7 @@ class servicemanager(sofabase):
                             json_dict[kv[0]] = kv[1]
                 return json_dict        
             except:
-                self.log.error('Error getting adapter service status', exc_info=True)
+                self.log.error('!! Error getting adapter service status', exc_info=True)
                 return {}
                 
             
@@ -224,7 +230,7 @@ class servicemanager(sofabase):
                 stdoutdata = subprocess.getoutput("/opt/sofa-server/svc %s" % adaptername)
     
             except:
-                self.log.error('Error restarting adapter', exc_info=True)
+                self.log.error('!! Error restarting adapter', exc_info=True)
 
 
 

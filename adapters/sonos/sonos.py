@@ -44,22 +44,27 @@ class sonos(sofabase):
 
         @property            
         def input(self):
-            coordinator=self.adapter.getCoordinator(self.nativeObject)
-            return "sonos:player:%s" % coordinator['speaker']['uid']
+            player=self.adapter.getPlayer(self.device)
+            #return "sonos:player:%s" % player.group.coordinator.uid
+            return player.group.coordinator.player_name
 
         async def SelectInput(self, payload, correlationToken=''):
             try:
-                player=await self.adapter.getPlayerOrCoordinator(self.device, direct=True)
-                coordinator=self.adapter.getCoordinator(self.nativeObject)
-                if coordinator['speaker']['uid']!=player.uid:
-                    self.log.info('..Probably need to update coordinator we are leaving: %s' % coordinator['speaker']['uid'] )
+                player=self.adapter.getPlayer(self.device)
+                coordinator=player.group.coordinator
+                if coordinator.uid!=player.uid:
+                    self.log.info('..Probably need to update coordinator we are leaving: %s' % coordinator.uid )
+                #player=await self.adapter.getPlayerOrCoordinator(self.device, direct=True)
+                #coordinator=self.adapter.getCoordinator(self.nativeObject)
+                #if coordinator['speaker']['uid']!=player.uid:
+                #    self.log.info('..Probably need to update coordinator we are leaving: %s' % coordinator['speaker']['uid'] )
 
-                self.log.info('Changing input for %s: %s' % (player.uid, payload['input']))
-                if payload['input']=='':
+                self.log.info('Changing input for %s/%s: %s' % (player.player_name, player.uid, payload['input']))
+                if payload['input']=='' or payload['input']==player.player_name:
                     player.unjoin()
                 else:
                     for otherplayer in self.adapter.players:
-                        if otherplayer.uid==payload['input'].split(':')[2]:
+                        if otherplayer.player_name==payload['input'] and otherplayer.is_visible:
                             player.join(otherplayer)
                             break
 
@@ -81,7 +86,7 @@ class sonos(sofabase):
 
         async def SetVolume(self, payload, correlationToken=''):
             try:
-                player=await self.adapter.getPlayerOrCoordinator(self.device, direct=True)
+                player=self.adapter.getPlayer(self.device)
                 player.volume=int(payload['volume'])
                 return self.device.Response(correlationToken)
             except:
@@ -91,7 +96,7 @@ class sonos(sofabase):
 
         async def SetMute(self, payload, correlationToken=''):
             try:
-                player=await self.adapter.getPlayerOrCoordinator(self.device, direct=True)
+                player=self.adapter.getPlayer(self.device)
                 player.mute=payload['mute']
                 return self.device.Response(correlationToken)
 
@@ -105,15 +110,19 @@ class sonos(sofabase):
         @property            
         def artist(self):
             try:
-                coordinator=self.adapter.getCoordinator(self.nativeObject)
-                return coordinator['AVTransport']['current_track_meta_data']['creator']
+                coordinator=self.adapter.getCoordinator(self.device)
+                if 'creator' in coordinator['AVTransport']['current_track_meta_data']:
+                    return coordinator['AVTransport']['current_track_meta_data']['creator']
+                if 'artist' in coordinator['AVTransport']['current_track_meta_data']:
+                    return coordinator['AVTransport']['current_track_meta_data']['artist']
+
             except:
                 return ""
 
         @property            
         def title(self):
             try:
-                coordinator=self.adapter.getCoordinator(self.nativeObject)
+                coordinator=self.adapter.getCoordinator(self.device)
                 return coordinator['AVTransport']['current_track_meta_data']['title']
             except:
                 return ""
@@ -121,23 +130,28 @@ class sonos(sofabase):
         @property            
         def album(self):
             try:
-                coordinator=self.adapter.getCoordinator(self.nativeObject)
+                coordinator=self.adapter.getCoordinator(self.device)
                 return coordinator['AVTransport']['current_track_meta_data']['album']
             except:
                 return ""
                 
         @property            
         def art(self):
-            coordinator=self.adapter.getCoordinator(self.nativeObject)
+            coordinator=self.adapter.getCoordinator(self.device)
             try:
-                return "/image/sonos/player/%s/AVTransport/current_track_meta_data/album_art_uri?%s" % (coordinator['speaker']['uid'], coordinator['AVTransport']['current_track_meta_data']['album'])
+                if 'album' in coordinator['AVTransport']['current_track_meta_data']:
+                    if 'album_art_ui' in coordinator['AVTransport']['current_track_meta_data']:
+                        return "/image/sonos/player/%s/AVTransport/current_track_meta_data/album_art_uri?%s" % (coordinator['speaker']['uid'], coordinator['AVTransport']['current_track_meta_data']['album'])
+                    if 'album_art' in coordinator['AVTransport']['current_track_meta_data']:
+                        return "/image/sonos/player/%s/AVTransport/current_track_meta_data/album_art" % (coordinator['speaker']['uid'])
+                return "/image/sonos/logo"
             except:
                 return "/image/sonos/logo"
 
         @property            
         def url(self):
             try:
-                coordinator=self.adapter.getCoordinator(self.nativeObject)
+                coordinator=self.adapter.getCoordinator(self.device)
                 return coordinator['AVTransport']['enqueued_transport_uri']
             except:
                 return ""
@@ -145,8 +159,15 @@ class sonos(sofabase):
         @property            
         def linked(self):
             try:
-                return self.adapter.getLinkedPlayers(self.nativeObject)
+                members=[]
+                player=self.adapter.getPlayer(self.device)
+                for member in self.nativeObject['group']['members']:
+                    if member!=player.uid:
+                        members.append("sonos:player:%s" % member)
+                return members
+
             except:
+                self.log.error('Error getting linked players', exc_info=True)
                 return []
 
         @property            
@@ -169,7 +190,7 @@ class sonos(sofabase):
 
             except:
                 self.log.error('!! Error during Play', exc_info=True)
-                self.connect_needed=True
+                self.adapter.connect_needed=True
                 return None
 
         async def PlayFavorite(self, payload, correlationToken=''):
@@ -181,7 +202,7 @@ class sonos(sofabase):
 
             except:
                 self.log.error('!! Error during Play', exc_info=True)
-                self.connect_needed=True
+                self.adapter.connect_needed=True
                 return None
 
 
@@ -194,7 +215,7 @@ class sonos(sofabase):
 
             except:
                 self.log.error('!! Error during Pause', exc_info=True)
-                self.connect_needed=True
+                self.adapter.connect_needed=True
                 return None
                 
         async def Stop(self, correlationToken=''):
@@ -206,7 +227,7 @@ class sonos(sofabase):
 
             except:
                 self.log.error('!! Error during Stop', exc_info=True)
-                self.connect_needed=True
+                self.adapter.connect_needed=True
                 return None
                 
         async def Skip(self, correlationToken=''):
@@ -218,23 +239,23 @@ class sonos(sofabase):
 
             except:
                 self.log.error('!! Error during Skip', exc_info=True)
-                self.connect_needed=True
+                self.adapter.connect_needed=True
                 return None
                 
         async def Previous(self, correlationToken=''):
             try:
-                player=await self.adapter.getPlayerOrCoordinator(self.device)
+                player=self.adapter.getCoordinatorPlayer(self.device)
                 if 'Previous' in await self.adapter.getPlayerActions(player):
                     player.previous()
                 return self.device.Response(correlationToken)
             except:
                 self.log.error('!! Error during Skip', exc_info=True)
-                self.connect_needed=True
+                self.adapter.connect_needed=True
                 return None
 
         async def SelectInput(self, payload, correlationToken=''):
             try:
-                player=await self.adapter.getPlayerOrCoordinator(self.device, direct=True)
+                player=self.adapter.getPlayer(self.device)
                 self.log.info('Changing input for %s: %s' % (player.uid, payload['input']))
                 if payload['input']=='':
                     player.unjoin()
@@ -247,7 +268,7 @@ class sonos(sofabase):
                 return self.device.Response(correlationToken)
             except:
                 self.log.error('!! Error during SelectInput', exc_info=True)
-                self.connect_needed=True
+                self.adapter.connect_needed=True
                 return None
 
 
@@ -264,6 +285,7 @@ class sonos(sofabase):
         
         def __init__(self, log=None, loop=None, dataset=None, notify=None, request=None, **kwargs):
             self.dataset=dataset
+            self.dataset.nativeDevices['player']={}
             self.log=log
             self.setSocoLoggers(logging.DEBUG)
             self.notify=notify
@@ -295,7 +317,7 @@ class sonos(sofabase):
             try:
                 self.log.info('.. Starting Sonos')
                 await self.startSonosConnection()
-                await self.pollFake()
+                await self.pollSubscriptions()
             except:
                 self.log.error('Error starting sonos service',exc_info=True)
                 
@@ -388,12 +410,27 @@ class sonos(sofabase):
                 for player in discoverlist:
                     try:
                         spinfo=player.get_speaker_info()
-                        await self.dataset.ingest({"player": { spinfo["uid"]: { "speaker": spinfo, "name":player.player_name, "ip_address":player.ip_address }}})
+                        ginfo=await self.getGroupInfo(player)
+                        await self.dataset.ingest({"player": { spinfo["uid"]: { "group": ginfo, "speaker": spinfo, "name":player.player_name, "ip_address":player.ip_address }}})
+                        ginfo=player.group
+                        
                     except:
-                        self.log.error('Error getting speaker info: %s' % player)
+                        self.log.error('Error getting speaker info: %s' % player, exc_info=True)
                 return discoverlist
             except:
                 self.log.error('Error discovering Sonos devices', exc_info=True)
+
+        async def getGroupInfo(self, player):
+            
+            try:
+                members=[]
+                pmembers=player.group.members
+                for member in pmembers:
+                    members.append(member.uid)
+                return {"members": members, "coordinator": player.group.coordinator.uid }
+            except:
+                self.log.error('Error getting group info', exc_info=True)
+
 
         async def getGroupUUIDs(self, playerId):
         
@@ -423,9 +460,9 @@ class sonos(sofabase):
                 self.log.error('Error getting group name', exc_info=True)
 
             
-        async def pollFake(self):
+        async def pollSubscriptions(self):
             
-            while True:
+            while self.running:
                 if self.connect_needed:
                     await self.startSonosConnection()
                 try:
@@ -434,43 +471,34 @@ class sonos(sofabase):
                             if not device.events.empty():
                                 x=device.events.get(timeout=0.2)
                                 update=self.unpackEvent(x)
-                                await self.dataset.ingest({'player': { device.service.soco.uid : { device.service.service_id: update }}})
+                                if device.service.service_id=='AVTransport':
+                                    # apparently the AVtransport update does not work for radio station data but get_current_track_info will
+                                    current_info=device.service.soco.get_current_track_info()
+                                    del current_info['metadata']
+                                    self.log.info('UPDATE: %s %s' % (isinstance(update['current_track_meta_data'], str), update))
+                                    if isinstance(update['current_track_meta_data'], str):
+                                        self.log.info('fixing ctmd')
+                                        update['current_track_meta_data']=dict()
+                                        self.log.info('UPDATE: %s %s' % (str(type(update['current_track_meta_data'])), update))
+                                    for item in current_info:
+                                        update['current_track_meta_data'][item]=current_info[item]
+                                    
+                                if device.service.service_id=='ZoneGroupTopology':
+                                    # just do them all and see what's really updated
+                                    for player in self.players:
+                                        ginfo=await self.getGroupInfo(player)
+                                        q=await self.dataset.ingest(list(ginfo['members']), overwriteLevel="/player/%s/group/members" % player.uid )
+                                        #ginfo=await self.getGroupInfo(device.service.soco)
+                                        #q=await self.dataset.ingest(list(ginfo['members']), overwriteLevel="/player/%s/group/members" % device.service.soco.uid )
+                                self.log.info('Update from %s %s %s' % (device.service.soco.uid, device.service.service_id, update) )
+                                q=await self.dataset.ingest({'player': { device.service.soco.uid : { device.service.service_id: update }}})
+
                         else:
                             self.log.info("Subscription ended: %s" % device.__dict__)
                     #time.sleep(self.polltime)
                     await asyncio.sleep(self.polltime)
                 except:
                     self.log.error('Error polling', exc_info=True)
-                    
-        def getLinkedPlayers(self, nativeObj):
-            
-            try:
-                linkedPlayers=[]
-                if 'ZoneGroupTopology' not in nativeObj:
-                    return []
-                if 'zone_group_state' not in nativeObj['ZoneGroupTopology']:
-                    self.log.error('!! Cant get linked players for %s: zone_group_state not in %s' % (nativeObj['name'], nativeObj['ZoneGroupTopology']))
-                    return []
-                    
-                if 'ZoneGroupState' not in nativeObj['ZoneGroupTopology']['zone_group_state']:
-                    self.log.error('!! Cant get 10.1 format ZoneGroupState %s - %s' % (nativeObj['name'], nativeObj['ZoneGroupTopology']))
-                    return []
-                    
-                for group in nativeObj['ZoneGroupTopology']['zone_group_state']['ZoneGroupState']['ZoneGroups']['ZoneGroup']:
-                    if group['@Coordinator']==nativeObj['speaker']['uid']:
-                        if type(group['ZoneGroupMember'])!=list:
-                            group['ZoneGroupMember']=[group['ZoneGroupMember']]
-                        for member in group['ZoneGroupMember']:
-                            if member['@UUID']!=group['@Coordinator'] and '@Invisible' not in member:
-                                linkedPlayers.append('sonos:player:%s' % member['@UUID'])
-                                #linkedPlayers[member['@ZoneName']]=member['@UUID']
-                                
-                return linkedPlayers
-
-            except:
-                self.log.error('Problem getting linked players',exc_info=True)
-                return []
-
 
 
         def subscribeSonos(self,zone,sonosservice):
@@ -491,7 +519,7 @@ class sonos(sofabase):
                 for item in event.variables:
                     eventVars[item]=self.didlunpack(event.variables[item])
                     if isinstance(eventVars[item], soco.exceptions.SoCoFault):
-                        self.log.info('!! SoCoFault decoding item: %s %s %s' % (eventVars[item].exception.__dict__, item, eventVars))
+                        self.log.info('!! SoCoFault decoding item: %s %s %s' % (item, event.variables[item], eventVars[item].cause))
                         eventVars[item]={}
                     elif str(eventVars[item])[:1]=="<":
                         #self.log.info('Possible XML: %s' % str(eventVars[item]) )
@@ -599,9 +627,20 @@ class sonos(sofabase):
                 return didl    
             except:
                 self.log.error('Error unpacking didl: %s' % didl, exc_info=True)
+
+        def getInputList(self):
+            
+            try:
+                inputlist=[]
+                for player in self.players:
+                    if player.is_visible:
+                        inputlist.append(player.player_name)
+                return inputlist
+            except:
+                self.log.error('Error getting input list', exc_info=True)
+                return []
+
                 
-
-
         async def addSmartDevice(self, path):
             
             try:
@@ -614,18 +653,28 @@ class sonos(sofabase):
                         
                     if nativeObject['name'] not in self.dataset.localDevices:
                         if 'RenderingControl' in nativeObject:
-                            if 'ZoneGroupTopology' in nativeObject:
-                                device=devices.alexaDevice('sonos/player/%s' % deviceid, nativeObject['name'], displayCategories=["SPEAKER"], adapter=self)
-                                device.InputController=sonos.InputController(device=device)
-                                device.EndpointHealth=sonos.EndpointHealth(device=device)
-                                device.MusicController=sonos.MusicController(device=device)
-                                device.SpeakerController=sonos.SpeakerController(device=device)
-                                return self.dataset.newaddDevice(device)
+                            #if 'ZoneGroupTopology' in nativeObject:
+                            device=devices.alexaDevice('sonos/player/%s' % deviceid, nativeObject['name'], displayCategories=["SPEAKER"], adapter=self)
+                            device.InputController=sonos.InputController(device=device, inputs=self.getInputList())
+                            device.EndpointHealth=sonos.EndpointHealth(device=device)
+                            device.MusicController=sonos.MusicController(device=device)
+                            device.SpeakerController=sonos.SpeakerController(device=device)
+                            return self.dataset.newaddDevice(device)
                 return None
             except:
                 self.log.error('Error defining smart device', exc_info=True)
                 return None
 
+        def getPlayer(self, device): 
+            try:
+                for player in self.players:
+                    if 'sonos:player:%s' % player.uid==device.endpointId:
+                        return player
+                return None
+            except:
+                self.log.error('Error getting player', exc_info=True)
+                return None
+        
 
         async def getPlayerOrCoordinator(self, device, direct=False):
             
@@ -671,45 +720,22 @@ class sonos(sofabase):
                 self.log.error('Could not get available actions for %s' % player.player_name, exc_info=True)
                 self.connect_needed=True
             return []
-                
-        def getCoordinator(self, nativeObj):
             
+        def getPlayerCoordinator(self, player):
             try:
-                #self.log.info('zonestatus: %s' %  nativeObj['ZoneGroupTopology'])
-                playername=nativeObj['name']
-                # Sonos doesn't always populate the zone_group_name field, even when a player is grouped.  It's probably just a Sonos
-                # thing, but it might be a Soco thing.  Anyway, here's Wonderwall.
-                if 'zone_group_state' not in nativeObj['ZoneGroupTopology']:
-                    self.log.debug('getCoordinator: Player %s/%s has no zone_group_state - returning self' % (nativeObj['name'], nativeObj['speaker']['uid']))
-                    return nativeObj
-                for group in nativeObj['ZoneGroupTopology']['zone_group_state']['ZoneGroupState']['ZoneGroups']['ZoneGroup']:
-                    if group['@Coordinator']==nativeObj['speaker']['uid']:
-                        self.log.debug('getCoordinator: Player %s/%s is a coordinator for %s - returning self' % (nativeObj['name'], nativeObj['speaker']['uid'], group['@ID']))
-                        return nativeObj
-                    #ugh so inconsistent
-                    if type(group['ZoneGroupMember'])!=list:
-                        group['ZoneGroupMember']=[group['ZoneGroupMember']]
-                    found=False
-                    for member in group['ZoneGroupMember']:
-                        try:
-                            if member['@UUID']==nativeObj['speaker']['uid']:
-                                self.log.debug('getCoordinator: Player %s/%s is a member of group %s - returning coordinator %s' % (nativeObj['name'], nativeObj['speaker']['uid'], group['@ID'], self.dataset.nativeDevices['player'][group['@Coordinator']]))
-                                currentbest=self.dataset.nativeDevices['player'][group['@Coordinator']]
-                                found=True
-                        except:
-                            self.log.info('Bad Member: %s %s' % (nativeObj['name'], member))
-                    if found==True:
-                        return currentbest
-                        
-                # If not all of that, then lets just assume it's not grouped.
-                self.log.debug('getCoordinator: Player %s/%s didnt find coordinator for %s: %s - returning self' % (nativeObj['name'], nativeObj['speaker']['uid'], nativeObj['name'],nativeObj['ZoneGroupTopology']))
-                return nativeObj
-
+                coord=player.group.coordinator.uid
+                return self.dataset.nativeDevices['player'][coord]
             except:
                 self.log.error('Error getting coordinator', exc_info=True)
-                return nativeObj
+ 
+        def getCoordinator(self, device):
+            try:
+                player=self.getPlayer(device)
+                return self.dataset.nativeDevices['player'][player.group.coordinator.uid]
+            except:
+                self.log.error('Error getting coordinator', exc_info=True)
+           
             
-
         async def virtualThumbnail(self, path, client=None):
             
             try:
@@ -741,7 +767,7 @@ class sonos(sofabase):
                 elif url.find('/')==0:
                     url='http://'+playerObject['ip_address']+':1400'+url                    
                 else:
-                    url='http://'+playerObject['ip_address']+':1400/'+url
+                    url='http://'+playerObject['ip_address']+':1400/getaa?s=1&u='+url
                 if path in self.artcache:
                     if self.artcache[path]['url']==url:
                         return self.artcache[path]['image']

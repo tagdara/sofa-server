@@ -229,14 +229,34 @@ class yamaha(sofabase):
         @property            
         def input(self):
             try:
+                # Yamaha returns the name of the input instead of it's id, but the name can be overridden on the device and it will still
+                # reply with the original value. For example, an input_sel of "AV4" would typically represent AV_4, even if AV_4's name was
+                # changed to "TV".  
+                # In order to deal with their cheese, stripping the underscore from the id and comparing with the input_sel will almost always work
+                # to get the right id.
+                
+                # look for it properly
+                if self.nativeObject['Basic_Status']['Input']['Input_Sel'] in self.adapter.dataset.nativeDevices['Receiver']['System']['Config']['Name']['Input']:
+                    return self.dataset.nativeDevices['Receiver']['System']['Config']['Name']['Input'][self.nativeObject['Basic_Status']['Input']['Input_Sel']]
+                
+                # if that doesn't work, walk the list, find the right answer and return the user name
+                for inp in self.adapter.dataset.nativeDevices['Receiver']['System']['Config']['Name']['Input']:
+                    if inp.replace('_','')==self.nativeObject['Basic_Status']['Input']['Input_Sel']:
+                        return self.adapter.dataset.nativeDevices['Receiver']['System']['Config']['Name']['Input'][inp]
+                
+                # if nothing else just return the raw value and hope for the best
                 return self.nativeObject['Basic_Status']['Input']['Input_Sel']
             except:
                 self.adapter.log.error('Error checking input status', exc_info=True)
-                return "Off"
+                return ""
                     
         async def SelectInput(self, payload, correlationToken=''):
             try:
-                return await self.adapter.setAndUpdate(self.device, {"Main_Zone": {"Input": {"Input_Sel":  payload['input'].replace('_','')}}}, correlationToken)
+                for inp in self.adapter.dataset.nativeDevices['Receiver']['System']['Config']['Name']['Input']:
+                    if self.adapter.dataset.nativeDevices['Receiver']['System']['Config']['Name']['Input'][inp]==payload['input']:
+                        return await self.adapter.setAndUpdate(self.device, {"Main_Zone": {"Input": {"Input_Sel":  inp.replace('_','')}}}, correlationToken)
+                        
+                return None
             except:
                 self.log.error('!! Error during SelectInput', exc_info=True)
                 return None
@@ -364,6 +384,7 @@ class yamaha(sofabase):
                 self.port=self.dataset.config['port']
                 self.receiver=yamahaXML(log=self.log, dataset=self.dataset)
                 await self.updateEverything()
+                self.inputlist=[]
             except:
                 self.log.error('error with update',exc_info=True)
 
@@ -386,16 +407,51 @@ class yamaha(sofabase):
                 return False
 
 
+        def getInputList(self):
+            
+            try:
+                inputlist=[]
+                rawinp=self.dataset.nativeDevices['Receiver']['System']['Config']['Name']['Input']
+                for inp in rawinp:
+                    if rawinp[inp] in self.dataset.config['inputs']:
+                        inputlist.append(self.dataset.nativeDevices['Receiver']['System']['Config']['Name']['Input'][inp])
+                return inputlist
+            except:
+                self.log.error('Error getting input list', exc_info=True)
+                return []
+                    
+        def getSurroundList(self):
+            
+            # This data does not seem to be available for retrieval from the device, but it is documented in the API with the following options
+            # which may or may not be present on any given device.
+            # Configure which ones are visible in the config file.
+            
+            surroundmodes=["Hall in Munich", "Hall in Vienna", "Hall in Amsterdam", "Church in Freiburg", "Church in Royaumont", "Chamber", 
+                            "Village Vanguard", "Warehouse Loft","Cellar Club","The Roxy Theatre","The Bottom Line","Sports","Action Game", 
+                            "Roleplaying Game", "Music Video", "Recital/Opera", "Standard","Spectacle","Sci-Fi","Adventure","Drama","Mono Movie",
+                            "2ch Stereo","7ch Stereo","9ch Stereo","Straight Enhancer","7ch Enhancer","Surround Decoder"]
+            
+            try:
+                surroundlist=[]
+                for surround in surroundmodes:
+                    if 'surrounds' not in self.dataset.config or surround in self.dataset.config['surrounds']:
+                        surroundlist.append(surround)
+                return surroundlist
+            except:
+                self.log.error('Error getting input list', exc_info=True)
+                return []
+            
+
         def addSmartSpeaker(self, deviceid, name="Receiver"):
             
             nativeObject=self.dataset.nativeDevices['Receiver'][deviceid]
             if name not in self.dataset.devices:
                 if "Input" in nativeObject:
                     device=devices.alexaDevice('yamaha/Receiver/%s' % deviceid, name, displayCategories=["RECEIVER"], adapter=self)
-                    device.InputController=yamaha.InputController(device=device)
+                    device.InputController=yamaha.InputController(device=device, inputs=self.getInputList())
                     device.PowerController=yamaha.PowerController(device=device)
                     device.EndpointHealth=yamaha.EndpointHealth(device=device)
-                    device.SurroundController=yamaha.SurroundController(device=device)
+                    device.SurroundController=yamaha.SurroundController(device=device, inputs=self.getSurroundList())
                     device.SpeakerController=yamaha.SpeakerController(device=device)
                     return self.dataset.newaddDevice(device)
             return False
@@ -413,7 +469,7 @@ class yamaha(sofabase):
             #  and then call this to apply the change
             
             try:
-                self.log.info('.. using new update methods')
+                self.log.info('.. using new update methods: %s (%s)' % (command, device))
                 response=await self.receiver.sendCommand(command)
                 self.log.info('<- %s' % response)
                 await self.updateEverything()

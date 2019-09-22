@@ -873,17 +873,7 @@ class logic(sofabase):
                         conditionMatch=False
                         break
                     
-                    if 'value' in condition['value']:
-                        condval=condition['value']['value']
-                        if 'operator' not in condition:
-                            condition['operator']='=='
-                            self.log.info('No operator in condition for %s %s' % (activityName, conditions))
-                        if not self.compareCondition(condval,condition['operator'],prop['value']):
-                            self.log.info('!. %s did not meet condition: %s vs %s' % (activityName, prop['value'], condval))
-                            conditionMatch=False
-                            break
-                        
-                    elif 'end' in condition['value']:
+                    if 'end' in condition['value']:
 
                         st=datetime.datetime.strptime(condition['value']['start'],"%H:%M").time()
                         et=datetime.datetime.strptime(condition['value']['end'],"%H:%M").time()
@@ -902,6 +892,19 @@ class logic(sofabase):
                             pass
                         else:
                             self.log.info('Failed time check: %s<%s<%s' % (st, ct, et))
+                            conditionMatch=False
+                            break
+                        
+                    else:
+                        condval=condition['value']
+                        if 'value' in condition['value']:
+                            condval=condition['value']['value']
+
+                        if 'operator' not in condition:
+                            condition['operator']='=='
+                            self.log.info('No operator in condition for %s %s' % (activityName, conditions))
+                        if not self.compareCondition(condval,condition['operator'],prop['value']):
+                            self.log.info('!. %s did not meet condition: %s vs %s' % (activityName, prop['value'], condval))
                             conditionMatch=False
                             break
 

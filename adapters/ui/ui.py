@@ -24,6 +24,7 @@ from aiohttp_security import check_permission, \
 from aiohttp_security.abc import AbstractAuthorizationPolicy
 
 from aiohttp_sse import sse_response
+import aiohttp_cors
 
 #import aiohttp_jinja2
 #import jinja2
@@ -87,23 +88,27 @@ class sofaWebUI():
             middleware = session_middleware(SimpleCookieStorage())
             self.serverApp = web.Application(middlewares=[middleware])
 
-            self.serverApp.router.add_get('/', self.root_handler)
+            self.cors = aiohttp_cors.setup(self.serverApp, defaults={
+                "http://home.dayton.home:3000": aiohttp_cors.ResourceOptions(expose_headers="*", allow_headers="*")
+            })
+
+            self.cors.add(self.serverApp.router.add_get('/', self.root_handler))
             self.serverApp.router.add_get('/login', self.login_handler)
             self.serverApp.router.add_get('/logout', self.logout_handler)
             self.serverApp.router.add_post('/login', self.login_post_handler)
             self.serverApp.router.add_get('/loginstatus', self.login_status_handler)
             self.serverApp.router.add_get('/index.html', self.root_handler)
-            self.serverApp.router.add_get('/sofa.appcache', self.manifestHandler)
+            #self.serverApp.router.add_get('/sofa.appcache', self.manifestHandler)
             
-            self.serverApp.router.add_get('/directives', self.directivesHandler)
-            self.serverApp.router.add_get('/properties', self.propertiesHandler)
-            self.serverApp.router.add_get('/events', self.eventsHandler)
-            self.serverApp.router.add_get('/layout', self.layoutHandler)
+            self.cors.add(self.serverApp.router.add_get('/directives', self.directivesHandler))
+            self.cors.add(self.serverApp.router.add_get('/properties', self.propertiesHandler))
+            self.cors.add(self.serverApp.router.add_get('/events', self.eventsHandler))
+            self.cors.add(self.serverApp.router.add_get('/layout', self.layoutHandler))
 
             self.serverApp.router.add_get('/data/{item:.+}', self.dataHandler)
-            self.serverApp.router.add_get('/list/{list:.+}', self.listHandler)
+            self.cors.add(self.serverApp.router.add_get('/list/{list:.+}', self.listHandler))
             self.serverApp.router.add_get('/var/{list:.+}', self.varHandler)
-            self.serverApp.router.add_post('/list/{list:.+}', self.listPostHandler)
+            self.cors.add(self.serverApp.router.add_post('/list/{list:.+}', self.listPostHandler))
             
             self.serverApp.router.add_get('/adapters', self.adapterHandler)   
             self.serverApp.router.add_get('/restartadapter/{adapter:.+}', self.adapterRestartHandler)
@@ -111,24 +116,24 @@ class sofaWebUI():
             self.serverApp.router.add_get('/deviceListWithData', self.deviceListWithDataHandler) # deprecated
 
             self.serverApp.router.add_post('/deviceState', self.deviceStatePostHandler)
-            self.serverApp.router.add_post('/directive', self.directiveHandler) 
+            self.cors.add(self.serverApp.router.add_post('/directive', self.directiveHandler))
             
             self.serverApp.router.add_post('/add/{add:.+}', self.adapterAddHandler)
             self.serverApp.router.add_post('/del/{del:.+}', self.adapterDelHandler)   
             self.serverApp.router.add_post('/save/{save:.+}', self.adapterSaveHandler)
             
             self.serverApp.router.add_get('/displayCategory/{category:.+}', self.displayCategoryHandler)
-            self.serverApp.router.add_get('/image/{item:.+}', self.imageHandler)
-            self.serverApp.router.add_get('/thumbnail/{item:.+}', self.imageHandler)
+            self.cors.add(self.serverApp.router.add_get('/image/{item:.+}', self.imageHandler))
+            self.cors.add(self.serverApp.router.add_get('/thumbnail/{item:.+}', self.imageHandler))
             self.serverApp.router.add_get('/refresh', self.refresh_handler)  
             self.serverApp.router.add_post('/data/{item:.+}', self.dataPostHandler)
             
-            self.serverApp.router.add_get('/sse', self.sse_handler)
+            self.cors.add(self.serverApp.router.add_get('/sse', self.sse_handler))
             self.serverApp.router.add_get('/lastupdate', self.sse_last_update_handler)
             
             self.serverApp.router.add_static('/log/', path=self.dataset.baseConfig['logDirectory'])
-            self.serverApp.router.add_static('/bundle', path=self.config['client_bundle_directory'])
-            self.serverApp.router.add_static('/', path=self.config['client_static_directory'])
+            self.cors.add(self.serverApp.router.add_static('/client', path=self.config['client_build_directory'], append_version=True))
+            self.cors.add(self.serverApp.router.add_static('/fonts', path=self.config['client_build_directory']+"/fonts", append_version=True))
 
             self.policy = SessionIdentityPolicy()
             setup_security(self.serverApp, self.policy, Sofa_AuthorizationPolicy())
@@ -814,7 +819,8 @@ class sofaWebUI():
 
     async def root_handler(self, request):
         try:
-            return web.FileResponse(os.path.join(self.config['client_static_directory'],'index.html'))
+            #return web.FileResponse(os.path.join(self.config['client_static_directory'],'index.html'))
+            return web.FileResponse(os.path.join(self.config['client_build_directory'],'index.html'))
         except:
             return aiohttp.web.HTTPFound('/login')
 

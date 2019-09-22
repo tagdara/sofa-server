@@ -25,60 +25,33 @@ from libpurecoollink.dyson_pure_state import DysonPureHotCoolState, DysonPureCoo
         
 class dyson(sofabase):
 
-    class EndpointHealthInterface(devices.EndpointHealthInterface):
-
-        def __init__(self, device=None):
-            self.device=device
-            self.path=device.path
-            self.adapter=device.adapter
-            self.log=self.adapter.log
-            self.nativeObject=self.device.native
-            self.deviceid=self.device.path.split('/')[2]
-            super().__init__()
+    class EndpointHealth(devices.EndpointHealth):
 
         @property            
         def connectivity(self):
-            return 'OK' if self.adapter.logged_in else "UNREACHABLE"
+            return 'OK' if self.adapter.connected else "UNREACHABLE"
 
-    class PowerControllerInterface(devices.PowerControllerInterface):
-        
-        def __init__(self, device=None):
-            self.device=device
-            self.path=device.path
-            self.adapter=device.adapter
-            self.log=self.adapter.log
-            self.nativeObject=self.device.native
-            self.deviceid=self.device.path.split('/')[2]
-            super().__init__()
+    class PowerController(devices.PowerController):
 
         @property            
         def powerState(self):
             return "OFF" if self.nativeObject['state']['fan_mode']=="OFF" else "OFF"
-
-        async def TurnOn(self, device, correlationToken=''):
+        
+        async def TurnOn(self, correlationToken='', **kwargs):
             try:
-                return await self.adapter.setAndUpdate(device, { 'fan_mode' : FanMode.FAN}, "PowerController", correlationToken)
+                return await self.adapter.setAndUpdate(self.device, { 'fan_mode' : FanMode.FAN}, "PowerController", correlationToken)
             except:
                 self.log.error('!! Error during TurnOn', exc_info=True)
                 return None
 
-        async def TurnOff(self, device, correlationToken=''):
+        async def TurnOff(self, correlationToken='', **kwargs):
             try:
-                return await self.adapter.setAndUpdate(device, { 'fan_mode' : FanMode.OFF}, "PowerController", correlationToken)
+                return await self.adapter.setAndUpdate(self.device, { 'fan_mode' : FanMode.OFF}, "PowerController", correlationToken)
             except:
                 self.log.error('!! Error during TurnOff', exc_info=True)
                 return None
 
-    class PowerLevelControllerInterface(devices.PowerLevelControllerInterface):
-        
-        def __init__(self, device=None):
-            self.device=device
-            self.path=device.path
-            self.adapter=device.adapter
-            self.log=self.adapter.log
-            self.nativeObject=self.device.native
-            self.deviceid=self.device.path.split('/')[2]
-            super().__init__()
+    class PowerLevelController(devices.PowerLevelController):
 
         @property            
         def powerLevel(self):
@@ -87,7 +60,7 @@ class dyson(sofabase):
             return int(self.nativeObject['state']['speed'])*10
 
 
-        async def SetPowerLevel(self, device, payload, correlationToken=''):
+        async def SetPowerLevel(self, payload, correlationToken='', **kwargs):
             try:
                 # Dyson fans have weird AUTO - there is full AUTO for the fan and then just powerlevel auto.  This helps keep sync.
                 if payload['powerLevel']=='AUTO':
@@ -102,33 +75,13 @@ class dyson(sofabase):
                 self.log.error('!! Error during SetPowerLevel', exc_info=True)
                 return None
 
-    class TemperatureSensorInterface(devices.TemperatureSensorInterface):
-
-        def __init__(self, device=None):
-            self.device=device
-            self.path=device.path
-            self.adapter=device.adapter
-            self.log=self.adapter.log
-            self.nativeObject=self.device.native
-            self.deviceid=self.device.path.split('/')[2]
-            super().__init__()
+    class TemperatureSensor(devices.TemperatureSensor):
 
         @property            
         def temperature(self):
             return int(self.adapter.ktof(int(self.nativeObject['state']['temperature'])))
                
-    class ThermostatControllerInterface(devices.ThermostatControllerInterface):
-
-        def __init__(self, device=None, supportedModes=None):
-            self.device=device
-            self.path=device.path
-            self.adapter=device.adapter
-            self.log=self.adapter.log
-            self.nativeObject=self.device.native
-            self.deviceid=self.device.path.split('/')[2]
-            if supportedModes:
-                self.supportedModes=supportedModes
-            super().__init__()
+    class ThermostatController(devices.ThermostatController):
 
         @property            
         def targetSetpoint(self):                
@@ -146,7 +99,7 @@ class dyson(sofabase):
             #self.log.info('Returning heat where fan mode is %s and heat mode is %s' % (self.nativeObject['state']['fan_mode'],self.nativeObject['state']['heat_mode']))
             return 'HEAT'
 
-        async def SetThermostatMode(self, device, payload, correlationToken=''):
+        async def SetThermostatMode(self, payload, correlationToken='', **kwargs):
             try:
                 # Dyson mappings are weird because of full AUTO vs fan AUTO so this logic helps to sort it out
                 if payload['thermostatMode']['value']=='AUTO':
@@ -158,14 +111,14 @@ class dyson(sofabase):
                 elif payload['thermostatMode']['value']=='OFF':
                     command={'fan_mode': FanMode.OFF }
 
-                return await self.adapter.setAndUpdate(device, command, "ThermostatController", correlationToken)
+                return await self.adapter.setAndUpdate(self.device, command, "ThermostatController", correlationToken)
             except:
                 self.log.error('!! Error during SetThermostatMode', exc_info=True)
                 return None
 
-        async def SetTargetTemperature(self, device, payload, correlationToken=''):
+        async def SetTargetTemperature(self, payload, correlationToken='', **kwargs):
             try:
-                return await self.adapter.setAndUpdate(device, { 'heat_target' : HeatTarget.fahrenheit(int(payload['targetSetpoint']['value'])) }, "ThermostatController", correlationToken)
+                return await self.adapter.setAndUpdate(self.device, { 'heat_target' : HeatTarget.fahrenheit(int(payload['targetSetpoint']['value'])) }, "ThermostatController", correlationToken)
             except:
                 self.log.error('!! Error during SetThermostatMode', exc_info=True)
                 return None
@@ -330,10 +283,11 @@ class dyson(sofabase):
                 nativeObject=self.dataset.getObjectFromPath(self.dataset.getObjectPath(path))
                 if nativeObject['name'] not in self.dataset.localDevices:
                     if nativeObject["product_type"]=="455":
-                        device=devices.flexDevice('dyson/fan/%s'  % deviceid, nativeObject['name'], displayCategories=['THERMOSTAT'], adapter=self)
-                        device.ThermostatController=dyson.ThermostatControllerInterface(device=device, supportedModes=["AUTO", "HEAT", "COOL", "OFF"])
-                        device.TemperatureSensor=dyson.TemperatureSensorInterface(device=device)
-                        device.PowerLevelController=dyson.PowerLevelControllerInterface(device=device)
+                        device=devices.alexaDevice('dyson/fan/%s'  % deviceid, nativeObject['name'], displayCategories=['THERMOSTAT'], adapter=self)
+                        device.ThermostatController=dyson.ThermostatController(device=device, supportedModes=["AUTO", "HEAT", "COOL", "OFF"])
+                        device.TemperatureSensor=dyson.TemperatureSensor(device=device)
+                        device.PowerLevelController=dyson.PowerLevelController(device=device)
+                        device.EndpointHealth=dyson.EndpointHealth(device=device)
                         return self.dataset.newaddDevice(device)
 
             except:

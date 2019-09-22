@@ -51,20 +51,37 @@ class unifivideo(sofabase):
                         "authorizationTypes": ["BASIC"], 
                         "videoCodecs": ["H264"], 
                         "audioCodecs": ["AAC"] 
-                    }
+                    },
+                    {
+                        "protocols": ["RTSP"],
+                        "resolutions": [{"width":1920, "height":1080}, {"width":1280, "height":720}],
+                        "authorizationTypes": ["BASIC"],
+                        "videoCodecs": ["H264"],
+                        "audioCodecs": ["AAC"]
+                    },
                 ]
 
-        @property
-        def cameraStreams(self):
+        def cameraStreams(self, protocol='HLS', height=1280, width=720):
+            
+            stream_id=1
+            
+            if protocol=='HLS':
+                uri="https://%s:%s/hls/%s.m3u8" % (self.adapter.dataset.config['nginx_hls_hostname'],self.adapter.dataset.config['nginx_hls_port'], self.deviceid)
+            elif protocol=='RTSP':
+                uri="rtsp://%s:%s/%s_%s?apiKey=%s" % (self.adapter.dataset.config['nvr'], self.adapter.dataset.config['rtsp_port'], self.deviceid, stream_id, self.adapter.dataset.config['api_key'])
+            else:
+                self.log.error('!! unsupported protocol %s' % protocol)
+                return []
+                
             return [
                 {
-                    "uri": "https://%s:%s/hls/%s.m3u8" % (self.adapter.dataset.config['nginx_hls_hostname'],self.adapter.dataset.config['nginx_hls_port'], self.deviceid),
+                    "uri": uri,
                     "expirationTime": (datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=1)).isoformat()[:-10]+"Z",
                     "idleTimeoutSeconds": 30,
-                    "protocol": "HLS",
+                    "protocol": protocol,
                     "resolution": {
-                        "width": 1280,
-                        "height": 720
+                        "width": width,
+                        "height": height
                     },
                     "authorizationType": "BASIC",
                     "videoCodec": "H264",
@@ -87,7 +104,7 @@ class unifivideo(sofabase):
                         res='low'
                     else:
                         res='high'
-                        
+                    protocol=config['protocol']
                 return {
                     "event": {
                         "header": {
@@ -101,7 +118,7 @@ class unifivideo(sofabase):
                             "endpointId": self.device.endpointId
                         }
                     },
-                    "payload": { "cameraStreams": self.cameraStreams, "imageUri":self.imageUri(res, width) }
+                    "payload": { "cameraStreams": self.cameraStreams(protocol), "imageUri":self.imageUri(res, width) }
                 }
             except:
                 self.log.error('!! Error during Initialize Camera Streams', exc_info=True)
@@ -133,7 +150,6 @@ class unifivideo(sofabase):
         async def addSmartDevice(self, path):
             
             try:
-                self.log.info('path: %s' % path)
                 if path.split("/")[1]=="camera":
                     return self.addCamera(path.split("/")[2])
 
@@ -146,7 +162,7 @@ class unifivideo(sofabase):
 
             nativeObject=self.dataset.nativeDevices['camera'][deviceid]
             if nativeObject['name'] not in self.dataset.devices:
-                device=devices.alexaDevice('unifivideo/camera/%s' % nativeObject['id'], nativeObject['name'], displayCategories=['CAMERA'], adapter=self)
+                device=devices.alexaDevice('unifivideo/camera/%s' % nativeObject['id'], nativeObject['name'], displayCategories=['CAMERA'], manufacturerName="Ubiquiti", modelName=nativeObject['model'], adapter=self)
                 device.CameraStreamController=unifivideo.CameraStreamController(device=device)
                 device.EndpointHealth=unifivideo.EndpointHealth(device=device)
                 return self.dataset.newaddDevice(device)

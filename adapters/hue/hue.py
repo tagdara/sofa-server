@@ -315,7 +315,7 @@ class hue(sofabase):
             
             try:
                 nativeObject=self.dataset.nativeDevices['lights'][deviceid]
-                device=devices.alexaDevice('hue/lights/%s' % deviceid, nativeObject['name'], displayCategories=['LIGHT'], adapter=self)
+                device=devices.alexaDevice('hue/lights/%s' % deviceid, nativeObject['name'], displayCategories=['LIGHT'], manufacturerName="Philips Hue", modelName=nativeObject['type'], adapter=self)
                 device.PowerController=hue.PowerController(device=device)
                 device.EndpointHealth=hue.EndpointHealth(device=device)
                 device.StateController=devices.StateController(device=device)

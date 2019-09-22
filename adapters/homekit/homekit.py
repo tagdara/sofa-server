@@ -39,250 +39,222 @@ import uuid
 
 
 class SofaAccessory(Accessory):
-    
-    async def convertAccessoryCommand(self, data):
-            
-        try:
-            #device=self.dataset.data['devices'][data['name']]
+    def __init__(self, driver, device, adapter=None, chars=[], props={}, aid=None, **kwargs):
+        
+        self.driver=driver
+        self.adapter=adapter
+        self.log=self.adapter.log
+        self.loop=self.adapter.loop
+        self.device=device
+        if 'endpointId' in device:
+            self.endpointId=device['endpointId']
+            self.remoteadapter=self.endpointId.split(':')[0]
+            self.props=props
+            super().__init__(self.driver, self.device['friendlyName'], aid=aid)
+            self.add_chars()
+            self.reachable=True
+        else:
+            self.log.info('!! WARNING - Legacy device cant be added: %s' % device)
 
-            command={"directive": {
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+    def prop_connectivity(self, value):
+        try:
+            if value['value']=='UNREACHABLE':
+                self.reachable=False
+                if getattr(self,'char_On'):
+                    self.char_On.set_value(False)
+            else:
+                self.reachable=True
+        except:
+            self.log.error('!! error setting connectivity', exc_info=True)
+            
+    async def createDirective(self, namespace, name, payload={} ):
+    
+        try:
+            return { "directive": {
                             "endpoint": {
                                 "scope": {"type": "BearerToken"}, 
-                                "endpointId": data['endpointId'],
+                                "endpointId": self.endpointId,
                                 "cookie": {}
                             },
                             'header': {
+                                'namespace': namespace,
+                                'name': name,
                                 'messageId': str(uuid.uuid1()),
                                 'correlationToken': str(uuid.uuid1()),
                                 'payloadVersion': '3',
                             }, 
-                            'payload': {}
-                        }
-            }
-
-            if data['characteristic']=='On':
-                command['directive']['header']['namespace']='Alexa.PowerController'
-                if data['value']:
-                    command['directive']['header']['name']="TurnOn"
-                else:
-                    command['directive']['header']['name']="TurnOff"
-
-            elif data['characteristic']=='Active':
-                command['directive']['header']['namespace']='Alexa.PowerController'
-                if data['value']:
-                    command['directive']['header']['name']="TurnOn"
-                else:
-                    command['directive']['header']['name']="TurnOff"
-
-
-            elif data['characteristic']=='Brightness':
-                command['directive']['header']['namespace']='Alexa.BrightnessController'
-                command['directive']['header']['name']="SetBrightness"
-                command['directive']['payload']={'brightness': int(data['value'])}
-
-            elif data['characteristic']=='Hue':
-                command['directive']['header']['namespace']='Alexa.ColorController'
-                command['directive']['header']['name']="SetColor"
-                command['directive']['payload']={'color': data['value'] }
-
-            elif data['characteristic']=='Saturation':
-                command['directive']['header']['namespace']='Alexa.ColorController'
-                command['directive']['header']['name']="SetColor"
-                command['directive']['payload']={'color': data['value'] }
-
-            elif data['characteristic']=='Volume':
-                command['directive']['header']['namespace']='Alexa.SpeakerController'
-                command['directive']['header']['name']="SetVolume"
-                command['directive']['payload']={'volume': int(data['value'])}
-
-            elif data['characteristic']=='TargetHeatingCoolingState':
-                command['directive']['header']['namespace']='Alexa.ThermostatController'
-                command['directive']['header']['name']="SetThermostatMode"
-                vals=['OFF','HEAT']
-                command['directive']['payload']={'thermostatMode': {'value': vals[data['value']]}}
-
-            elif data['characteristic']=='CurrentHeatingCoolingState':
-                command['directive']['header']['namespace']='Alexa.ThermostatController'
-                command['directive']['header']['name']="SetThermostatMode"
-                vals=['OFF','HEAT']
-                command['directive']['payload']={'thermostatMode': {'value': vals[data['value']]}}
-
-
-            elif data['characteristic']=='Temperature':
-                command['directive']['header']['namespace']='Alexa.ThermostatController'
-                command['directive']['header']['name']="SetTargetSetpoint"
-                command['directive']['payload']={'temperature': vals[data['value']]}
-
-            elif data['characteristic']=='RemoteKey':
-                vals={4:'CursorUp', 5:'CursorDown', 6:'CursorLeft', 7:'CursorRight', 8: 'DpadCenter', 9: 'Exit', 15: 'Home'}
-                command['directive']['header']['namespace']='Alexa.RemoteController'
-                command['directive']['header']['name']="PressRemoteButton"
-                command['directive']['payload']={'buttonName': vals[data['value']]}
-
-
-                
-            return command
-                
+                            'payload': payload
+                    }}
         except:
-            self.log.error('Error converting command: %s' % data, exc_info=True)
-
-
-    async def sendCommand(self, data):
+            self.log.error('!! Error creating directive: %s %s %s' % (namespace, name, payload), exc_info=True)
+            return {}
+    
+    async def sendDirective(self, namespace, name, payload={}):
             
         try:
-            command=await self.convertAccessoryCommand(data)
-            self.log.info('<- received command %s' % data)
-            self.log.info('>> sending %s' % command)
+            self.adapterUrl=self.adapter.dataset.adapters[self.remoteadapter]['url']
+            directive=await self.createDirective(namespace, name, payload)
+            self.log.info('>> sending %s.%s.%s=%s' % (self.endpointId, namespace, name, payload))
             headers = { "Content-type": "text/xml" }
             async with aiohttp.ClientSession() as client:
-                response=await client.post(self.adapterUrl, data=json.dumps(command), headers=headers)
+                response=await client.post(self.adapterUrl, data=json.dumps(directive), headers=headers)
                 result=await response.read()
                 self.log.info('<< response %s' % result)
                 return result
         except:
-            self.log.error("send command error",exc_info=True)      
+            self.log.error("!! send command error",exc_info=True)      
             return {}
-
-
-
 
 class LightBulb(SofaAccessory):
 
     category = pyhap.const.CATEGORY_LIGHTBULB
     
-    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, chars=[], **kwargs):
-        
-        self.event_loop=loop
-        self.endpointId=endpointId
-        self.adapterUrl=adapterUrl
-        self.log = logging.getLogger('homekit')
-        super().__init__(*args, **kwargs)
-        if 'Hue' in chars:
-            serv_light = self.add_preload_service('Lightbulb',chars=["Name", "On", "Brightness", "Hue", "Saturation"])
-            self.char_hue=serv_light.configure_char('Hue', setter_callback = self.set_Hue)
-            self.char_sat=serv_light.configure_char('Saturation', setter_callback = self.set_Saturation)
-        else:
-            serv_light = self.add_preload_service('Lightbulb',chars=["Name", "On", "Brightness"])
-        self.char_on = serv_light.configure_char('On', setter_callback=self.set_On)
-        self.char_brightness = serv_light.configure_char("Brightness", setter_callback = self.set_Brightness)
-        self.reachable=True
-
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-
+    def add_chars(self):
+        try:
+            if self.isColor():
+                serv_light = self.add_preload_service('Lightbulb', chars=["Name", "On", "Brightness", "Hue", "Saturation"])
+                self.char_Hue=serv_light.configure_char('Hue', setter_callback = self.set_Hue)
+                self.char_Saturation=serv_light.configure_char('Saturation', setter_callback = self.set_Saturation)
+            else:
+                serv_light = self.add_preload_service('Lightbulb',chars=["Name", "On", "Brightness"])
+            self.char_On = serv_light.configure_char('On', setter_callback=self.set_On)
+            self.char_Brightness = serv_light.configure_char("Brightness", setter_callback = self.set_Brightness)
+        except:
+            self.log.error("!! error adding characteristics", exc_info=True)      
 
     def set_On(self, value):
-        
         try:
-            #self.log.info('Sending OnOff command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"On", "value":value} )
-            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"On", "value":value}), loop=self.event_loop)
-
+            if value:
+                asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.PowerController','TurnOn'), loop=self.loop)
+            else:
+                asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.PowerController','TurnOff'), loop=self.loop)
         except:
-            self.log.error('Error in setbulb', exc_info=True)
-            self.log.error(self.__dict__)
-
+            self.log.error('!! Error in set_On: %s' % self.__dict__, exc_info=True)
 
     def set_Brightness(self, value):
-        
         try:
-            #self.log.info('Sending brightness change: %s' % value )
-            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Brightness", "value":value}), loop=self.event_loop)
-            #asyncio.run_coroutine_threadsafe(self.sendCommand({"id":self.aid, "name":self.display_name, "characteristic":"Brightness", "value":value}), loop=self.event_loop)
+            asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.BrightnessController',"SetBrightness", { 'brightness': int(value) }), loop=self.loop)
         except:
             self.log.error('Error in setbright', exc_info=True)
 
     def set_Hue(self, value):
-        
         try:
-
-            colorval={"hue": self.char_hue.value, "saturation": self.char_sat.value/100, "brightness": self.char_brightness.value/100}
+            pass
             #self.log.info('Not Sending Hue change as saturation follows: %s' % colorval )
-            #asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Hue", "value":colorval}), loop=self.event_loop)
+            #asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.ColorController',"SetColor", {'color': {"hue": self.char_Hue.value, "saturation": self.char_Saturation.value/100, "brightness": self.char_Brightness.value/100 }})
         except:
             self.log.error('Error in set hue', exc_info=True)
 
     def set_Saturation(self, value):
-        
         try:
-            colorval={"hue": self.char_hue.value, "saturation": self.char_sat.value/100, "brightness": self.char_brightness.value/100}
-            #self.log.info('Sending Saturation change: %s' % colorval )
-            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Hue", "value":colorval}), loop=self.event_loop)
+            asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.ColorController',"SetColor", {'color': {"hue": self.char_Hue.value, "saturation": value/100, "brightness": self.char_Brightness.value/100 }}), loop=self.loop)
         except:
             self.log.error('Error in set sat', exc_info=True)
 
+    def isColor(self):
+            
+        try:
+            #self.log.info('Device: %s' % device)
+            for prop in self.device['capabilities']:
+                if prop['interface']=="Alexa.ColorController":
+                    return True
+            return False
+        except:
+            self.log.error('Error determining if light has color capabilities', exc_info=True)
+            return False
+            
+    def prop_brightness(self, value):
+        try:
+            if self.reachable:
+                self.char_Brightness.set_value(value)
+            else:
+                self.char_Brightness.set_value(0)
+        except:
+            self.log.error('!! error setting brightness', exc_info=True)
+                
+    def prop_powerState(self, value):
+        try:
+            if self.reachable and value=='ON':
+                self.char_On.set_value(True)
+            else:
+                self.char_On.set_value(False)
+        except:
+            self.log.error('!! error setting power state', exc_info=True)
 
+    def prop_color(self, value):
+        try:
+            if self.reachable:
+                self.char_Hue.set_value(value['hue'])
+                self.char_Hue.set_value(value['saturation']*100)
+                self.char_Brightness.set_value(value['brightness']*100)
+        except:
+            self.log.error('!! error setting color', exc_info=True)
 
-    async def stop(self):
-        await super(LightBulb, self).stop()
 
 class Switch(SofaAccessory):
 
     category = pyhap.const.CATEGORY_SWITCH
-    
-    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
-        
-        self.event_loop=loop
-        self.endpointId=endpointId
-        self.adapterUrl=adapterUrl
-        self.log = logging.getLogger('homekit')
-        super().__init__(*args, **kwargs)
-        serv_switch = self.add_preload_service('Switch')
-        self.char_on = serv_switch.configure_char('On', setter_callback=self.set_On)
-        self.reachable=True
 
-    def __setstate__(self, state):
-        self.__dict__.update(state)
-
+    def add_chars(self):
+        try:
+            serv_switch = self.add_preload_service('Switch')
+            self.char_On = serv_switch.configure_char('On', setter_callback=self.set_On)
+        except:
+            self.log.error("!! error adding characteristics", exc_info=True)      
 
     def set_On(self, value):
-        
         try:
-            self.log.info('Sending OnOff command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"On", "value":value} )
-            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"On", "value":value}), loop=self.event_loop)
-
+            if value:
+                asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.PowerController','TurnOn'), loop=self.loop)
+            else:
+                asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.PowerController','TurnOff'), loop=self.loop)
         except:
-            self.log.error('Error in set on', exc_info=True)
-            self.log.error(self.__dict__)
+            self.log.error('!! Error in set_On: %s' % self.__dict__, exc_info=True)
 
-
-    async def stop(self):
-        await super(Switch, self).stop()
+    def prop_powerState(self, value):
+        try:
+            if self.reachable and value=='ON':
+                self.char_On.set_value(True)
+            else:
+                self.char_On.set_value(False)
+        except:
+            self.log.error('!! error setting power state', exc_info=True)
+            
 
 class TemperatureSensor(SofaAccessory):
 
     category = pyhap.const.CATEGORY_SENSOR
 
-    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
-        
-        self.event_loop=loop
-        self.endpointId=endpointId
-        self.adapterUrl=adapterUrl
-        self.log = logging.getLogger('homekit')     
-        super().__init__(*args, **kwargs)
-        serv_temp = self.add_preload_service('TemperatureSensor')
-        #self.char_temp = serv_temp.configure_char('CurrentTemperature', setter_callback = self.set_Temperature)
-        self.char_temp = serv_temp.configure_char('CurrentTemperature')
+    def add_chars(self):
+        try:
+            serv_temp = self.add_preload_service('TemperatureSensor')
+            self.char_temp = serv_temp.configure_char('CurrentTemperature')
+        except:
+            self.log.error("!! error adding characteristics", exc_info=True)      
 
-    def run(self):
-        pass
+    def prop_temperature(self, value):
+        try:
+            if value['scale']=='FAHRENHEIT':
+                self.char_temp.set_value((int(value['value'])-32) * 5.0 / 9.0)
+            else:
+                self.char_temp.set_value(value['value'])
+        except:
+            self.log.error('!! error setting temperature', exc_info=True)
 
+  
 
 class Television(SofaAccessory):
 
     category = pyhap.const.CATEGORY_TELEVISION
     
-    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
-        
+    def add_chars(self):
         try:
-            self.event_loop=loop
-            self.endpointId=endpointId
-            self.adapterUrl=adapterUrl
-            self.log = logging.getLogger('homekit')   
-            super().__init__(*args, **kwargs)
             serv_tv = self.add_preload_service('Television', chars=['Active', 'ActiveIdentifier', 'ConfiguredName', 'SleepDiscoveryMode', 'RemoteKey'])
             serv_tvspeaker = self.add_preload_service('TelevisionSpeaker', chars=['Mute', 'Volume', 'VolumeSelector'])
-            self.char_active = serv_tv.configure_char('Active', setter_callback=self.set_active)
+            self.char_Active = serv_tv.configure_char('Active', setter_callback=self.set_active)
             self.activeidentifier = serv_tv.configure_char('ActiveIdentifier', setter_callback=self.set_activeidentifier)
             self.configuredname = serv_tv.configure_char('ConfiguredName')
             self.sleepdiscoverymode = serv_tv.configure_char('SleepDiscoveryMode', setter_callback=self.set_sleepdiscoverymode)
@@ -296,23 +268,29 @@ class Television(SofaAccessory):
             self.sleepdiscoverymode.set_value(1)
             self.set_primary_service(serv_tv)
         except:
-            self.log.error('Error initializing TV', exc_info=True)
+            self.log.error("!! error adding characteristics", exc_info=True)  
 
     def set_activeidentifier(self, value):
         self.log.info("TV Active Identifier: %s", value)
 
     def set_active(self, value):
-        cmd={"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Active", "value":value}
-        self.log.info('Sending TV Active OnOff command: %s' % cmd )
-        asyncio.run_coroutine_threadsafe(self.sendCommand(cmd), loop=self.event_loop)
+        try:
+            if value:
+                asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.PowerController','TurnOn'), loop=self.loop)
+            else:
+                asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.PowerController','TurnOff'), loop=self.loop)
+        except:
+            self.log.error('Error in set TV Active OnOff', exc_info=True)
 
     def set_sleepdiscoverymode(self, value):
         self.log.info("TV sleep discovery mode : %s", value)
 
     def set_remotekey(self, value):
-        cmd={"endpointId":self.endpointId, "name":self.display_name, "characteristic":"RemoteKey", "value":value}
-        self.log.info('Sending TV remotekey command: %s' % cmd )
-        asyncio.run_coroutine_threadsafe(self.sendCommand(cmd), loop=self.event_loop)
+        try:
+            vals={4:'CursorUp', 5:'CursorDown', 6:'CursorLeft', 7:'CursorRight', 8: 'DpadCenter', 9: 'Exit', 15: 'Home'}
+            asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.RemoteController', 'PressRemoteButton', { 'buttonName': vals[value] }))
+        except:
+            self.log.error('Error in set TV Active OnOff', exc_info=True)
 
     def set_mute(self, value):
         self.log.info("TV set_mute : %s", value)
@@ -323,153 +301,159 @@ class Television(SofaAccessory):
     def set_volumeselector(self, value):
         self.log.info("TV set_volumeselector : %s", value)
 
-
-    def run(self):
-        pass
+    def prop_powerState(self, value):
+        try:
+            if self.reachable and value=='ON':
+                self.char_Active.set_value(True)
+            else:
+                self.char_Active.set_value(False)
+        except:
+            self.log.error('!! error setting power state', exc_info=True)
+            
+    def prop_volume(self, value):
+        try:
+            if self.reachable:
+                self.char_volume.set_value(value)
+        except:
+            self.log.error('!! error setting volume', exc_info=True)
 
         
 class Thermostat(SofaAccessory):
 
     category = pyhap.const.CATEGORY_THERMOSTAT
 
-    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, props={}, **kwargs):
-        
-        self.event_loop=loop
-        self.endpointId=endpointId
-        self.adapterUrl=adapterUrl
-        self.log = logging.getLogger('homekit')     
-        super().__init__(*args, **kwargs)
-        serv_temp = self.add_preload_service('Thermostat')
-        #chars=['Name', 'CurrentTemperature', 'TargetTemperature', 'TargetHeatingCoolingState', 'CurrentHeatingCoolingState'])
-
-        #self.char_temp = serv_temp.configure_char('CurrentTemperature', setter_callback = self.set_Temperature)
-        self.char_temp = serv_temp.configure_char('CurrentTemperature')
-
-        self.char_TargetHeatingCoolingState = serv_temp.configure_char('TargetHeatingCoolingState',setter_callback=self.set_TargetHeatingCoolingState)
-        self.char_CurrentHeatingCoolingState = serv_temp.configure_char('CurrentHeatingCoolingState',setter_callback=self.set_CurrentHeatingCoolingState)
-
+    def add_chars(self):
         try:
+            serv_temp = self.add_preload_service('Thermostat')
+            self.char_temp = serv_temp.configure_char('CurrentTemperature')
+            self.char_TargetHeatingCoolingState = serv_temp.configure_char('TargetHeatingCoolingState',setter_callback=self.set_TargetHeatingCoolingState)
+            self.char_CurrentHeatingCoolingState = serv_temp.configure_char('CurrentHeatingCoolingState',setter_callback=self.set_CurrentHeatingCoolingState)
             ttprops={}
-            if 'TargetTemperature' in props:
-                ttprops=props['TargetTemperature']
+            if 'TargetTemperature' in self.props:
+                ttprops=self.props['TargetTemperature']
             self.char_TargetTemperature = serv_temp.configure_char('TargetTemperature', setter_callback=self.set_TargetTemperature, properties=ttprops)
         except:
-            self.log.error('Error setting up thermostat', exc_info=True)
-            self.char_TargetTemperature = serv_temp.configure_char('TargetTemperature', setter_callback=self.set_TargetTemperature)
-
-    def __setstate__(self, state):
-        self.__dict__.update(state)
+            self.log.error("!! error adding characteristics", exc_info=True)  
 
     def set_TargetTemperature(self, value):
-        
         try:
-            self.log.info('Sending thermostat temperature command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"TargetTemperature", "value":value} )
-            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"TargetTemperature", "value":value}), loop=self.event_loop)
-
+            asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.ThermostatController', "SetTargetSetpoint", {'temperature': value }), loop=self.loop)
         except:
-            self.log.error('Error in set target temp', exc_info=True)
-            self.log.error(self.__dict__)
+            self.log.error('!! Error in set target temp', exc_info=True)
 
     def set_TargetHeatingCoolingState(self, value):
-        
         try:
-            self.log.info('Sending thermostat mode command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"TargetHeatingCoolingState", "value":value} )
-            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"TargetHeatingCoolingState", "value":value}), loop=self.event_loop)
-
+            vals=['OFF','HEAT']
+            asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.ThermostatController',"SetThermostatMode", {'thermostatMode': {'value': vals[value] } }), loop=self.loop)
         except:
-            self.log.error('Error in set thermostate mode', exc_info=True)
-            self.log.error(self.__dict__)
+            self.log.error('!! Error in set thermostate mode', exc_info=True)
 
     def set_CurrentHeatingCoolingState(self, value):
-        
         try:
-            self.log.info('Sending thermostat mode command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"CurrentHeatingCoolingState", "value":value} )
-            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"CurrentHeatingCoolingState", "value":value}), loop=self.event_loop)
+            vals=['OFF','HEAT']
+            asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.ThermostatController',"SetThermostatMode", {'thermostatMode': {'value': vals[value] } }), loop=self.loop)
 
         except:
-            self.log.error('Error in set thermostate mode', exc_info=True)
-            self.log.error(self.__dict__)
+            self.log.error('!! Error in set thermostate current mode', exc_info=True)
 
-    def run(self):
-        pass
+    def prop_temperature(self, value):
+        try:
+            if value['scale']=='FAHRENHEIT':
+                self.char_temp.set_value((int(value['value'])-32) * 5.0 / 9.0)
+            else:
+                self.char_temp.set_value(value['value'])
+        except:
+            self.log.error('!! error setting temperature', exc_info=True)
 
+    def prop_targetSetpoint(self, value):
+        try:
+            if value['scale']=='FAHRENHEIT':
+                self.char_TargetTemperature.set_value((int(value['value'])-32) * 5.0 / 9.0)
+            else:
+                self.char_TargetTemperature.set_value(value['value'])
+        except:
+            self.log.error('!! error setting targetSetpoint', exc_info=True)
+
+    def prop_upperSetpoint(self, value):
+        try:
+            if value['scale']=='FAHRENHEIT':
+                self.char_TargetTemperature.set_value((int(value['value'])-32) * 5.0 / 9.0)
+            else:
+                self.char_TargetTemperature.set_value(value['value'])
+        except:
+            self.log.error('!! error setting upperSetpoint', exc_info=True)
+
+    def prop_thermostatMode(self, value):
+        try:
+            modes={"AUTO": 3, "COOL": 2, "HEAT": 1, "OFF": 0 }
+            self.char_TargetHeatingCoolingState.set_value(modes[value])
+            if value=='AUTO': 
+                self.char_CurrentHeatingCoolingState.set_value(2)
+            else:
+                self.char_CurrentHeatingCoolingState.set_value(modes[value])
+        except:
+            self.log.error('!! error setting thermostatMode', exc_info=True)
+
+
+            
 class ContactSensor(SofaAccessory):
 
     category = pyhap.const.CATEGORY_SENSOR
 
-    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
-        
-        self.event_loop=loop
-        self.endpointId=endpointId
-        self.adapterUrl=adapterUrl
-        self.log = logging.getLogger('homekit')     
-        super().__init__(*args, **kwargs)
-        serv_temp = self.add_preload_service('ContactSensor')
-        self.char_state = serv_temp.configure_char('ContactSensorState')
+    def add_chars(self):
+        try:
+            serv_temp = self.add_preload_service('ContactSensor')
+            self.char_state = serv_temp.configure_char('ContactSensorState')
+        except:
+            self.log.error("!! error adding characteristics", exc_info=True)  
 
-    def run(self):
-        pass
+    def prop_detectionState(self, value):
+        try:
+            if value=='DETECTED':
+                self.char_state.set_value(1)
+            else:
+                self.char_state.set_value(0)
+        except:
+            self.log.error('!! error setting detectionState', exc_info=True)
+
+
 
 class Doorbell(SofaAccessory):
 
     category = pyhap.const.CATEGORY_OTHER
 
-    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
-        
-        self.event_loop=loop
-        self.endpointId=endpointId
-        self.adapterUrl=adapterUrl
-        self.log = logging.getLogger('homekit')     
-        super().__init__(*args, **kwargs)
-        serv_temp = self.add_preload_service('Doorbell')
-        self.pse_state = serv_temp.configure_char('ProgrammableSwitchEvent')
-
-    def run(self):
-        pass
+    def add_chars(self):
+        try:
+            serv_Doorbell = self.add_preload_service('Doorbell')
+            self.pse_state = serv_Doorbell.configure_char('ProgrammableSwitchEvent')
+        except:
+            self.log.error("!! error adding characteristics", exc_info=True)  
 
   
 class Speaker(SofaAccessory):
 
     #category = pyhap.const.CATEGORY_SPEAKER
 
-    def __init__(self, *args, endpointId=None, adapterUrl='', loop=None, **kwargs):
-
-        self.event_loop=loop
-        self.endpointId=endpointId
-        self.adapterUrl=adapterUrl
-        self.log = logging.getLogger('homekit')     
-        super().__init__(*args, **kwargs)
-        serv_speaker = self.add_preload_service('Speaker', chars=["Name", "Volume", "Mute"])
-        #self.char_temp = serv_temp.configure_char('CurrentTemperature', setter_callback = self.set_Temperature)
-        self.char_mute = serv_speaker.configure_char('Mute', setter_callback=self.set_Mute)
-        self.char_volume = serv_speaker.configure_char("Volume", setter_callback = self.set_Volume)
-
-    def __getstate__(self):
-
-        state = dict(super(Speaker, self).__getstate__())
-        return state
-
-    def run(self):
-        pass
+    def add_chars(self):
+        try:
+            serv_speaker = self.add_preload_service('Speaker', chars=["Name", "Volume", "Mute"])
+            self.char_mute = serv_speaker.configure_char('Mute', setter_callback=self.set_Mute)
+            self.char_volume = serv_speaker.configure_char("Volume", setter_callback = self.set_Volume)
+        except:
+            self.log.error("!! error adding characteristics", exc_info=True)  
 
     def set_Volume(self, value):
         
         try:
-            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Volume", "value":value}), loop=self.event_loop)
-            #asyncio.run_coroutine_threadsafe(self.sendCommand({"id":self.aid, "name":self.display_name, "characteristic":"Brightness", "value":value}), loop=self.event_loop)
+            asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.SpeakerController', "SetVolume", {'volume': int(value)}), loop=self.loop)
         except:
-            self.log.error('Error in setvol', exc_info=True)
+            self.log.error('!! Error in set_volume', exc_info=True)
 
     def set_Mute(self, value):
-        
         try:
-            self.log.info('Sending Mute command: %s' % {"id":self.aid, "name":self.display_name, "characteristic":"Mute", "value":value} )
-            asyncio.run_coroutine_threadsafe(self.sendCommand({"endpointId":self.endpointId, "name":self.display_name, "characteristic":"Mute", "value":value}), loop=self.event_loop)
-
+            asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.SpeakerController', "SetMute", {'mute': value }), loop=self.loop)
         except:
-            self.log.error('Error in setmute', exc_info=True)
-            self.log.error(self.__dict__)
-
+            self.log.error('!! Error in set_mute', exc_info=True)
 
 
 class homekit(sofabase):
@@ -485,6 +469,7 @@ class homekit(sofabase):
             self.persistfile=self.dataset.config['pickle_file']
             self.accessorymap=self.dataset.config['accessory_map']
             self.executor=executor
+            self.skip=['savedState', 'colorTemperatureInKelvin', 'pressState', 'onLevel', 'powerLevel', 'input']
             
             if not loop:
                 self.loop = asyncio.new_event_loop()
@@ -520,6 +505,14 @@ class homekit(sofabase):
                 self.driver.stop()
             except:
                 self.log.error('Error stopping Accessory Bridge Driver', exc_info=True)
+        
+        def service_stop(self):
+            
+            try:
+                self.log.info('!. Stopping Accessory Bridge Driver')
+                self.driver.stop()
+            except:
+                self.log.error('!! Error stopping Accessory Bridge Driver', exc_info=True)
 
  
         def buildBridge(self):
@@ -528,44 +521,43 @@ class homekit(sofabase):
                 self.bridge = Bridge(self.driver, 'Bridge')
                 for devname in self.dataset.nativeDevices['accessorymap']:
                     newdev=None
-                    dev=self.dataset.nativeDevices['accessorymap'][devname]
-                    if 'props' in dev:
-                        props=dev['props']
-                    else:
-                        props={}
-                    if dev['services'][0]=='Lightbulb':
-                        newdev=LightBulb(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, chars=dev['chars'], aid=dev['id'])
-                        self.bridge.add_accessory(newdev)
-                    elif dev['services'][0]=='TemperatureSensor':
-                        newdev=TemperatureSensor(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
-                        self.bridge.add_accessory(newdev)
-                    elif dev['services'][0]=='Thermostat':
-                        newdev=Thermostat(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, props=props, aid=dev['id'])
-                        self.bridge.add_accessory(newdev)
+                    device=None
+                    accitem=self.dataset.nativeDevices['accessorymap'][devname]
+                    if 'device' in accitem:
+                        device=accitem['device']
+                    
+                    props={}
+                    chars={}
+                    if 'props' in accitem:
+                        props=accitem['props']
 
-                    elif dev['services'][0]=='ContactSensor':
-                        newdev=ContactSensor(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
-                        self.bridge.add_accessory(newdev)
-                    elif dev['services'][0]=='Doorbell':
-                        newdev=Doorbell(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
-                        self.bridge.add_accessory(newdev)
-                    elif dev['services'][0]=='Switch':
-                        newdev=Switch(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
-                        self.bridge.add_accessory(newdev)
-                    elif dev['services'][0]=='Television':
-                        newdev=Television(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
+                    if 'chars' in device:
+                        chars=accitem['chars']
 
-                        
-                    # Speakers are not really supported at this point
-                    #elif dev['services'][0]=='Speaker':
-                    #    newdev=Speaker(self.driver, devname, endpointId=dev['endpointId'], adapterUrl=dev['adapterUrl'], loop=self.loop, aid=dev['id'])
-                    #    self.bridge.add_accessory(newdev)
-
-                    else:
-                        self.log.info('XXXXX Did not add %s' % dev)
+                    if accitem['services'][0]=='Lightbulb':
+                        newdev=LightBulb(self.driver, device, adapter=self, aid=accitem['id'], props=props, chars=chars)
+                    elif accitem['services'][0]=='TemperatureSensor':
+                        newdev=TemperatureSensor(self.driver, device, adapter=self, aid=accitem['id'], props=props, chars=chars)
+                    elif accitem['services'][0]=='Thermostat':
+                        newdev=Thermostat(self.driver, device, adapter=self, aid=accitem['id'], props=props, chars=chars)
+                    elif accitem['services'][0]=='ContactSensor':
+                        newdev=ContactSensor(self.driver, device, adapter=self, aid=accitem['id'], props=props, chars=chars)
+                    elif accitem['services'][0]=='Doorbell':
+                        newdev=Doorbell(self.driver, device, adapter=self, aid=accitem['id'], props=props, chars=chars)
+                    elif accitem['services'][0]=='Switch':
+                        newdev=Switch(self.driver, device, adapter=self, aid=accitem['id'], props=props, chars=chars)
+                    elif accitem['services'][0]=='Television':
+                        newdev=Television(self.driver, device, adapter=self, aid=accitem['id'], props=props, chars=chars)
+                    elif accitem['services'][0]=='Speaker':
+                        pass
+                        # Speakers are not really supported at this point
+                        #newdev=Speaker(self.driver, device, adapter=self, aid=device['id'], props=props, chars=chars)
                         
                     if newdev:
-                        self.log.info('Added accessory: %s %s' % (dev['services'][0], newdev))
+                        self.bridge.add_accessory(newdev)
+                        self.log.info('Added accessory: %s %s' % (accitem['services'][0], newdev))
+                    else:
+                        self.log.info('.! Did not add bridge device %s' % accitem)
             except:
                 self.log.error('Error during bridge building', exc_info=True)
 
@@ -620,28 +612,15 @@ class homekit(sofabase):
                                 chars.append(char.display_name)
                                 props[char.display_name]=char.properties
                     try:    
-                        accmap[self.bridge.accessories[acc].display_name]={'id': acc, 'services': svcs, 'chars': chars, 'props':props, 'adapterUrl': self.bridge.accessories[acc].adapterUrl, 'endpointId':self.bridge.accessories[acc].endpointId }
+                        accmap[self.bridge.accessories[acc].display_name]={'id': acc, 'services': svcs, 'chars': chars, 'props':props, 'device':self.bridge.accessories[acc].device }
                     except:
-                        self.log.info('TS')
+                        self.log.info('TS', exc_info=True)
                 #self.log.info('am: %s' % accmap)
                 await self.dataset.ingest({"accessorymap": accmap})
                 self.saveJSON(self.dataset.config['accessory_map'], accmap)
             except:
                 self.log.error('Error in virt aid', exc_info=True)
                 
-
-        def isColor(self, device):
-            
-            try:
-                #self.log.info('Device: %s' % device)
-                for prop in device['capabilities']:
-                    if prop['interface']=="Alexa.ColorController":
-                        return True
-                return False
-            except:
-                self.log.error('Error determining if light has color capabilities', exc_info=True)
-                return False
-
         async def virtualAddDevice(self, devname, device):
         
             try:
@@ -649,9 +628,9 @@ class homekit(sofabase):
                     return False
                     
                 if device['friendlyName'] in self.dataset.nativeDevices['accessorymap']:
-                    if self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['endpointId']!=device['endpointId']:
+                    if self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['device']['endpointId']!=device['endpointId']:
                         self.log.info('Fixing changed endpointId for %s from %s to %s' % (device['friendlyName'], self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['endpointId'], device['endpointId']))
-                        self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['endpointId']=device['endpointId']                        
+                        self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['device']=device                 
                         self.saveJSON(self.dataset.config['accessory_map'], self.dataset.nativeDevices['accessorymap'])
                     response=await self.dataset.requestReportState(device['endpointId'])
                     #self.log.info('Already know about: %s' % device['friendlyName'])
@@ -661,19 +640,14 @@ class homekit(sofabase):
                     
                 newdev=None
                 aid=None
-                devicename=device['friendlyName']
-                endpointId=device['endpointId']
-                adapter=endpointId.split(':')[0]
-                adapterUrl=self.dataset.adapters[adapter]['url']
-                
                 aid=self.getNewAid()
                     
                 if aid==None:
                     self.log.error('Error - could not get aid for device')
                     return False
-
+                
+                props={}
                 if device['displayCategories'][0]=='THERMOSTAT':
-                    props={}
                     try:
                         for cap in device['Capabilities']:
                             if cap['interface']=='Alexa.ThermostatController':
@@ -681,40 +655,37 @@ class homekit(sofabase):
                                     if 'supportedRange' in cap['configuration']:
                                         props['minValue']=(int(cap['configuration']['supportedRange'][0])-32) * 5.0 / 9.0
                                         props['maxValue']=(int(cap['configuration']['supportedRange'][1])-32) * 5.0 / 9.0
+                    except KeyError:
+                        self.log.warn('!. %s does not have Capabilities: %s' % (device['friendlyName'], device))
                     except:
                         self.log.error('Error getting props', exc_info=True)
-                    newdev=Thermostat(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
-
+                    newdev=Thermostat(self.driver, device, adapter=self, aid=aid, props=props)
                 elif device['displayCategories'][0]=='TEMPERATURE_SENSOR':
-                    newdev=TemperatureSensor(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
-
+                    newdev=TemperatureSensor(self.driver, device, adapter=self, aid=aid, props=props)
                 elif device['displayCategories'][0]=='LIGHT':
-                    if self.isColor(device):
-                        newdev=LightBulb(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid, chars=['On', 'Name', 'Brightness', 'Hue', 'Saturation'])
-                    else:
-                        newdev=LightBulb(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid, chars=['On', 'Name', 'Brightness'])
+                    newdev=LightBulb(self.driver, device, adapter=self, aid=aid)
 
                 elif device['displayCategories'][0]=='CONTACT_SENSOR':
-                    newdev=ContactSensor(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+                    newdev=ContactSensor(self.driver, device, adapter=self, aid=aid, props=props)
 
                 elif device['displayCategories'][0]=='RECEIVER':
                     # not supported at this time in the Home app
-                    #newdev=Speaker(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+                    #newdev=Speaker(self.driver, device, adapter=self, aid=aid, props=props)
                     pass
 
                 elif device['displayCategories'][0]=='DOORBELL':
-                    newdev=Doorbell(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+                    newdev=Doorbell(self.driver, device, adapter=self, aid=aid, props=props)
 
                 elif device['displayCategories'][0]=='DEVICE':
-                    newdev=Switch(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+                    newdev=Switch(self.driver, device, adapter=self, aid=aid, props=props)
 
                 elif device['displayCategories'][0]=='TV':
-                    newdev=Television(self.driver, devicename, endpointId=endpointId, adapterUrl=adapterUrl, loop=self.loop, aid=aid)
+                    newdev=Television(self.driver, device, adapter=self, aid=aid, props=props)
 
                 if newdev:
-                    self.log.info('++ New Homekit Device: %s - %s %s' % (aid, devicename, device))
+                    self.log.info('++ New Homekit Device: %s - %s %s' % (aid, device['friendlyName'], device))
                     self.bridge.add_accessory(newdev)
-                    response=await self.dataset.requestReportState(endpointId)
+                    response=await self.dataset.requestReportState(device['endpointId'])
                     await self.saveAidMap()
                     #self.driver.config_changed()
             except:
@@ -780,155 +751,38 @@ class homekit(sofabase):
             
             try:
                 acc=self.getAccessoryFromEndpointId(deviceId)
-                if not acc:
+                if not acc or prop['name'] in self.skip:
                     return None
-
-                #self.log.info('.. Changed %s/%s %s = %s' % (deviceId, prop['namespace'], prop['name'], prop['value']))
-                if prop['name']=='brightness':
-                    if acc.reachable:
-                    #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
-                        acc.char_brightness.set_value(prop['value'])
-                    else:
-                        acc.char_brightness.set_value(0)
-                    #acc.char_temp.set_value(prop['value']['value'])
-
-                elif prop['name']=='color':
-                    if acc.reachable:
-                        acc.char_hue.set_value(prop['value']['hue'])
-                        acc.char_hue.set_value(prop['value']['saturation']*100)
-                        acc.char_brightness.set_value(prop['value']['brightness']*100)
-
-                elif prop['name']=='volume':
-                    #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
-                    acc.char_volume.set_value(prop['value'])
-                    #acc.char_temp.set_value(prop['value']['value'])
-
-                elif prop['name']=='detectionState':
-                    #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
-                    if prop['value']=='DETECTED':
-                        acc.char_state.set_value(1)
-                    else:
-                        acc.char_state.set_value(0)
-                        
-                elif prop['name']=='connectivity':
-                    if prop['value']['value']=='UNREACHABLE':
-                        acc.reachable=False
-                        acc.char_on.set_value(False)
-                    else:
-                        acc.reachable=True
-
-                elif prop['name']=='powerState':
-                    if getattr(acc, "char_on", None):
-                        if prop['value']=='ON':
-                            if acc.reachable:
-                                acc.char_on.set_value(True)
-                            else:
-                                acc.char_on.set_value(False)
-                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', True)
-                        elif prop['value']=='OFF':
-                            acc.char_on.set_value(False)
-                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', False)
-                    elif getattr(acc, "char_active", None):
-                        if prop['value']=='ON':
-                            acc.char_active.set_value(True)
-                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', True)
-                        elif prop['value']=='OFF':
-                            acc.char_active.set_value(False)
-                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', False)
-
-
-                elif prop['name']=='temperature':
-                    #self.setCharacteristic(thisaid, 'TemperatureSensor', 'CurrentTemperature', prop['value'])
-                    if prop['value']['scale']=='FAHRENHEIT':
-                        acc.char_temp.set_value((int(prop['value']['value'])-32) * 5.0 / 9.0)
-                    else:
-                        acc.char_temp.set_value(prop['value']['value'])
-                        
-                elif prop['name']=='targetSetpoint' or prop['name']=='upperSetpoint':
-                    #self.setCharacteristic(thisaid, 'TemperatureSensor', 'CurrentTemperature', prop['value'])
-                    if prop['value']['scale']=='FAHRENHEIT':
-                        acc.char_temp.set_value((int(prop['value']['value'])-32) * 5.0 / 9.0)
-                    else:
-                        acc.char_temp.set_value(prop['value']['value'])
-
-                elif prop['name']=='thermostatMode':
-                    modes={"AUTO": 3, "COOL": 2, "HEAT": 1, "OFF": 0 }
-                    acc.char_TargetHeatingCoolingState.set_value(modes[prop['value']])
-                    if prop['value']=='AUTO': 
-                        acc.char_CurrentHeatingCoolingState.set_value(2)
-                    else:
-                        acc.char_CurrentHeatingCoolingState.set_value(modes[prop['value']])
                 
+                try:
+                    getattr(acc, 'prop_%s' % prop['name'])(prop['value'])
+                except AttributeError:
+                    self.log.info('.. No property setter for %s on %s' % (prop['name'], deviceId))
+                except:
+                    self.log.error('Error getting property setter: %s %s' % (prop['name'], deviceId), exc_info=True)
+
             except:
                 self.log.error('Error in virtual change handler: %s %s' % (deviceId, change), exc_info=True)
 
 
         async def handleStateReport(self, message):
-            #thisaid=self.getAccessoryFromEndpointId(message['event']['endpoint']['endpointId'])
-            deviceId=message['event']['endpoint']['endpointId']
-            acc=self.getAccessoryFromEndpointId(deviceId)
             
-            if not acc:
-                return None
-                
-            for prop in message['context']['properties']:
-                #self.log.info('Property: %s %s = %s' % (prop['namespace'], prop['name'], prop['value']))
-                if prop['name']=='brightness':
-                    #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
-                    acc.char_brightness.set_value(prop['value'])
-                    #acc.char_temp.set_value(prop['value']['value'])
-                elif prop['name']=='volume':
-                    #self.setCharacteristic(thisaid, 'Lightbulb', 'Brightness', prop['value'])
-                    acc.char_volume.set_value(prop['value'])
-                    #acc.char_temp.set_value(prop['value']['value'])
-
-                elif prop['name']=='connectivity':
-                    #self.log.info('%s is %s' % (deviceId,prop['value']))
-                    if prop['value']['value']=='UNREACHABLE':
-                        #self.log.info('%s is unreachable' % deviceId)
-                        acc.reachable=False
-                        acc.char_on.set_value(False)
-                    else:
-                        acc.reachable=True
-
-                elif prop['name']=='powerState':
-                    if getattr(acc, "char_on", None):
-                        if prop['value']=='ON':
-                            acc.char_on.set_value(True)
-                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', True)
-                        elif prop['value']=='OFF':
-                            acc.char_on.set_value(False)
-                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', False)
-                    elif getattr(acc, "char_active", None):
-                        if prop['value']=='ON':
-                            acc.char_active.set_value(True)
-                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', True)
-                        elif prop['value']=='OFF':
-                            acc.char_active.set_value(False)
-                            #self.setCharacteristic(thisaid, 'Lightbulb', 'On', False)
-
-                elif prop['name']=='temperature':
-                    #self.setCharacteristic(thisaid, 'TemperatureSensor', 'CurrentTemperature', prop['value'])
-                    if prop['value']['scale']=='FAHRENHEIT':
-                        acc.char_temp.set_value((int(prop['value']['value'])-32) * 5.0 / 9.0)
-                    else:
-                        acc.char_temp.set_value(prop['value']['value'])
-                        
-                elif prop['name']=='targetSetpoint' or prop['name']=='upperSetpoint':
-                    if prop['value']['scale']=='FAHRENHEIT':
-                        acc.char_TargetTemperature.set_value((int(prop['value']['value'])-32) * 5.0 / 9.0)
-                    else:
-                        acc.char_TargetTemperature.set_value(prop['value']['value'])
-
-                elif prop['name']=='thermostatMode':
-                    modes={"AUTO": 3, "COOL": 2, "HEAT": 1, "OFF": 0 }
-                    acc.char_TargetHeatingCoolingState.set_value(modes[prop['value']])
-                    if prop['value']=='AUTO': 
-                        acc.char_CurrentHeatingCoolingState.set_value(2)
-                    else:
-                        acc.char_CurrentHeatingCoolingState.set_value(modes[prop['value']])
-                    
-
+            try:
+                deviceId=message['event']['endpoint']['endpointId']
+                acc=self.getAccessoryFromEndpointId(deviceId)
+                if not acc:
+                    return None
+                for prop in message['context']['properties']:
+                    if prop['name'] in self.skip:
+                        continue
+                    try:
+                        getattr(acc, 'prop_%s' % prop['name'])(prop['value'])
+                    except AttributeError:
+                        self.log.info('.. No property setter for %s on %s' % (prop['name'], deviceId))
+                    except:
+                        self.log.error('Error getting property setter: %s %s' % (prop['name'], deviceId), exc_info=True)
+            except:
+                self.log.error('Error in virtual state report handler: %s %s ' % (message, acc), exc_info=True)
 
         def getAccessoryFromEndpointId(self, endpointId):
             try:
@@ -971,6 +825,7 @@ class homekit(sofabase):
             
             try:
                 if char=='CurrentTemperature':
+                    # has to be in celsius
                     self.log.info('Newval: %s' % newval)
                     newval=int((newval['value'] - 32) / 1.8)
                 #targetChar.set_value(newval, should_callback=False)
@@ -981,8 +836,6 @@ class homekit(sofabase):
             except:
                 self.log.error('Error setting value %s on characteristic %s on service %s on homekit device: %s' % (newval, char, service, aid), exc_info=True)
                 return False
-
-
 
 if __name__ == '__main__':
     adapter=homekit(name='homekit')

@@ -196,7 +196,7 @@ class sonybravia(sofabase):
 
         @property            
         def powerState(self):
-            return "ON" if self.nativeObject['power']['status']=="active" else "OFF"
+            return "ON" if self.nativeObject['PowerStatus']['status']=="active" else "OFF"
 
         async def TurnOn(self, correlationToken=''):
             try:
@@ -216,6 +216,52 @@ class sonybravia(sofabase):
                 self.adapter.log.error('!! Error during TurnOff', exc_info=True)
                 return None
 
+    class AudioModeController(devices.ModeController):
+
+        @property            
+        def mode(self):
+            
+            maps={'audioSystem': 'Receiver', "speaker": 'TV', "speaker_hdmi":'Both', "hdmi":'HDMI'}
+            
+            try:
+                for item in self.nativeObject['SoundSettings']:
+                    if item['target']=='outputTerminal':
+                        rawmode=item['currentValue']
+                        if self._modename:
+                            instancename=self._modename
+                        else:
+                            instancename=self._friendlyNames[0].capitalize()
+                        return "%s.%s" % (instancename, maps[rawmode])
+                return ""
+            except KeyError:
+                return ""
+                #self.adapter.log.error('Error checking mode status - no value present: %s' % self.nativeObject)
+            except:
+                self.adapter.log.error('Error checking mode status', exc_info=True)
+            return ""
+
+        async def SetMode(self,payload, correlationToken=''):
+            maps={'audioSystem': 'Receiver', "speaker": 'TV', "speaker_hdmi":'Both', "hdmi":'HDMI'}
+            try:
+                if 'mode' in payload:
+                    if self._modename:
+                        instancename=self._modename
+                    else:
+                        instancename=self._friendlyNames[0].capitalize()
+
+                    for modemap in maps:
+                        if "%s.%s" % (instancename, maps[modemap])==payload['mode']:
+                            if self.nativeObject['PowerStatus']['status']!="active":
+                                self.log.warn('!! Warning: cant change audio mode while tv is off')
+                            sysinfo=await self.adapter.tv.getState('audio','setSoundSettings',version="1.1",params={"settings": [{ "value": modemap, "target": "outputTerminal"} ] })
+                            await self.adapter.getUpdate()
+                            return await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)     
+                self.log.error('!! error - did not find mode %s' % payload)
+            except:
+                self.adapter.log.error('Error setting mode status %s' % payload, exc_info=True)
+            return {}
+                    
+
     class InputController(devices.InputController):
 
         @property            
@@ -223,7 +269,7 @@ class sonybravia(sofabase):
             try:
                 return self.adapter.getInputName(self.nativeObject)
             except KeyError:
-                if self.nativeObject['power']['status']=="active":
+                if self.nativeObject['PowerStatus']['status']=="active":
                     return 'Android TV'
                 else:
                     return "Off"
@@ -297,17 +343,22 @@ class sonybravia(sofabase):
 
         async def getInitialData(self):
 
-            systemdata={    'system':       {   'systemInformation': { 'command':'getSystemInformation', 'listitem':0 },
-                                                'remoteCommands': { 'command':'getRemoteControllerInfo', 'listitem':1 }},
-                            'appControl':   {   'applications': {'command':'getApplicationList'}}}
+            systemdata={    'system':       [ { 'interface': 'systemInformation', 'command':'getSystemInformation', 'listitem':0 },
+                                              { 'interface': 'remoteCommands', 'command':'getRemoteControllerInfo', 'listitem':1 }],
+                            'appControl':   [ { 'interface': 'applications', 'command':'getApplicationList'}]
+                        }
             return await self.getStates(systemdata)
 
         async def getUpdate(self):
-            
-            systemdata={    'system':       {   'power': { 'command':'getPowerStatus', 'listitem':0 }},
-                            'audio':        {   'audio': { 'command':'getVolumeInformation', 'listitem':0}},
-                            'avContent':    {   'playingContent': {'command':'getPlayingContentInfo', 'listitem':0 },
-                                                'inputStatus': {'command':'getCurrentExternalInputsStatus', 'listitem':0 }}}
+
+            systemdata={    'system':       [ { 'interface': 'power', 'command':'getPowerStatus', 'listitem':0 }],
+                            'audio':        [ { 'interface':'audio', 'command':'getVolumeInformation', 'listitem':0},
+                                                { 'interface':'audio', 'command':'getSoundSettings', 'version':'1.1', 'listitem':0, 'params':{"target": ""}}
+                                            ],
+                            'avContent':    [ { 'interface':'playingContent', 'command':'getPlayingContentInfo', 'listitem':0 },
+                                              { 'interface':'inputStatus', 'command':'getCurrentExternalInputsStatus', 'listitem':0 }]
+                        }
+                                              
             return await self.getStates(systemdata)
 
 
@@ -317,20 +368,22 @@ class sonybravia(sofabase):
             
             try:
                 for category in systemdata:
-                    for interface in systemdata[category]:
-                        if 'params' in systemdata[category][interface]:
-                            sysinfo=await self.tv.getState(category, systemdata[category][interface]['command'], params=systemdata[category]['params'])
-                        else:
-                            sysinfo=await self.tv.getState(category, systemdata[category][interface]['command'])
-                            
-                        if sysinfo:
-                            if 'listitem' in systemdata[category][interface]:
-                                await self.dataset.ingest({'tv': { self.tvName: { interface: sysinfo[systemdata[category][interface]['listitem']] }}})
-                            else:
-                                await self.dataset.ingest({'tv': { self.tvName: { interface: sysinfo }}})
+                    results={}
+                    for action in systemdata[category]:
+                        cmdver="1.0"
+                        if 'version' in action:
+                            cmdver=action['version']
+                        params=[]
+                        if 'params' in action:
+                            params=action['params']
+                        sysinfo=await self.tv.getState(category, action['command'], version=cmdver, params=params)
+                        if sysinfo and 'listitem' in action:
+                            sysinfo=sysinfo[action['listitem']]
+                            results[action['command'][3:]]=sysinfo
                         if category not in alldata:
                             alldata[category]={}
-                        alldata[category][interface]=sysinfo
+                        alldata[action['command'][3:]]=sysinfo
+                    await self.dataset.ingest({'tv': { self.tvName: results }})
                 return alldata
                 
             except:
@@ -374,7 +427,7 @@ class sonybravia(sofabase):
                     #self.log.info("Polling TV")
                     sysinfo=await self.tv.getState('system','getPowerStatus')
                     if sysinfo:
-                        await self.dataset.ingest({'tv':  { self.tvName: {'power': sysinfo[0]}}})
+                        await self.dataset.ingest({'tv':  { self.tvName: {'PowerStatus': sysinfo[0]}}})
                     await asyncio.sleep(self.polltime)
                 except:
                     self.log.error('Error fetching TV Data', exc_info=True)
@@ -406,12 +459,13 @@ class sonybravia(sofabase):
             try:
                 nativeObject=self.dataset.nativeDevices['tv'][deviceid]
                 if name not in self.dataset.localDevices:
-                    if "systemInformation" in nativeObject and "power" in nativeObject:
+                    if "SystemInformation" in nativeObject and "PowerStatus" in nativeObject:
                         device=devices.alexaDevice('sonybravia/tv/%s' % deviceid, name, displayCategories=['TV'], adapter=self)
                         device.PowerController=sonybravia.PowerController(device=device)
                         device.EndpointHealth=sonybravia.EndpointHealth(device=device)
                         device.InputController=sonybravia.InputController(device=device, inputs=self.input_list)
                         device.RemoteController=sonybravia.RemoteController(device=device)
+                        device.AudioModeController=sonybravia.AudioModeController(device=device, friendlyNames=['Audio'], supportedModes=['Receiver', 'TV'], devicetype="TV", modename="Audio")
                         # TV is plugged into sound system so skipping speaker here, but could be added
                         return self.dataset.newaddDevice(device)
                 return False
@@ -453,18 +507,23 @@ class sonybravia(sofabase):
         def getInputName(self,nativeObj):
             
             try:
-                if 'playingContent' not in nativeObj:
+                if 'PlayingContentInfo' not in nativeObj:
                     #self.log.warn('No playing content')
                     return 'Android TV'
-                details=self.getDetailsFromURI(nativeObj['playingContent']['uri'])
-                if details['type'] in ['cec','hdmi']:
-                    if details['port'] in self.dataset.config['hdmi_port_names']:
-                        return self.dataset.config['hdmi_port_names'][details['port']]
-
-                return nativeObj['playingContent']['title']
+                self.log.info('pci',nativeObj['PlayingContentInfo'])
+                
+                if 'uri' in nativeObj['PlayingContentInfo']:
+                    details=self.getDetailsFromURI(nativeObj['PlayingContentInfo']['uri'])
+                    if details['type'] in ['cec','hdmi']:
+                        if details['port'] in self.dataset.config['hdmi_port_names']:
+                            return self.dataset.config['hdmi_port_names'][details['port']]
+                if 'title' in nativeObj['PlayingContentInfo']:
+                    return nativeObj['PlayingContentInfo']['title']
+                else:
+                    return 'Android TV'
                     
             except:
-                self.log.error('Error getting virtual input name for %s' % nativeObj, exc_info=True)
+                self.log.error('Error getting virtual input name for %s' % nativeObj['PlayingContentInfo'], exc_info=True)
 
 
         async def virtualList(self, itempath, query={}):

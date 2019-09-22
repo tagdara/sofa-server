@@ -333,9 +333,17 @@ class sofaDataset():
              
             
     def nested_set(self, dic, keys, value):
-        for key in keys[:-1]:
-            dic = dic.setdefault(key, {})
-        dic[keys[-1]] = value     
+        try:
+            x=""
+            for key in keys[:-1]:
+                if key:
+                    dic = dic.setdefault(key, {})
+                    x=x+key+"."
+            dic[keys[-1]] = value
+            x=x+"%s=%s" % (keys[-1],value)
+            #self.log.info('nested set: %s' % x)
+        except:
+            self.log.error('Error in nested_set', exc_info=True)
         
         
     async def updateObjectProperties(self, nativeObject, updateprops):
@@ -387,7 +395,7 @@ class sofaDataset():
                                 if newdev[prop]['namespace'] not in controllers:
                                     controllers[newdev[prop]['namespace']]=[]
                                 controllers[newdev[prop]['namespace']].append(newdev[prop]['name'])
-    
+
                         if controllers:
                             changeReport=smartDevice.changeReport(controllers)
                             if changeReport:
@@ -410,28 +418,22 @@ class sofaDataset():
             self.oldNativeDevices = copy.deepcopy(self.nativeDevices)
             oldDevices={}
             for dev in self.localDevices:
-                oldDevices[dev]=copy.deepcopy(self.localDevices[dev].propertyStates)
+                oldDevices[dev]=[]
+                for prop in self.localDevices[dev].propertyStates:
+                    oldDevices[dev].append(copy.deepcopy(prop))
             
             if overwriteLevel:
-                self.nested_set(self.nativeDevices, overwriteLevel.split('/'), data )
-                patch=[{"op":"change", "value":data, "path":overwriteLevel}]
-                self.log.info('.. patch from ingest with overwrite: %s' % patch)
+                # overwriteLevel should start with a leading '/' because that's what the patch expects
+                self.nested_set(self.nativeDevices, overwriteLevel.split('/'), list(data) )
+                patch=[{"op":"change", "value":list(data), "path":overwriteLevel}]
             else:
                 dpath.util.merge(self.nativeDevices, data, flags=dpath.util.MERGE_REPLACE)
                 patch = jsonpatch.JsonPatch.from_diff(self.oldNativeDevices, self.nativeDevices)
             
             if patch:
-                # The new model uses checkdevicesforchanges to discover the differences between devices
-                # This should be faster and follows the new object model.
-                # UpdateDevicesFromPatch is still needed for legacy adapters until they are converted.
-                # UpdateDevicesfromPatch also handles new device adds, which needs to be figured out as well.
                 await self.checkDevicesForChanges(patch, oldDevices)
-                #return await self.updateDevicesFromPatch(patch)
-            else:
-                pass
-                #self.log.info('No patch: old %s' % (self.oldNativeDevices))
-                #self.log.info('No patch: new %s' % (self.nativeDevices))
-                
+                return patch
+
             return {}
                 
         except:
@@ -736,9 +738,20 @@ class sofaDataset():
             correlationToken=data['directive']['header']['correlationToken']
             cookie=data['directive']['endpoint']['cookie']
             try:
+                device_controller=None
                 device=self.getDeviceByEndpointId(endpointId)
-                if hasattr(device, controller):
+                if 'instance' in data['directive']['header']:
+                    self.log.info('.. Looking for %s in %s' % (data['directive']['header']['instance'],device.interfaces ))
+                    for cont in device.interfaces:
+                        self.log.info('-- Looking for %s in %s' % (data['directive']['header']['instance'],cont ))
+                        if hasattr(cont, 'instance') and cont.instance==data['directive']['header']['instance']:
+                            self.log.info('.. instanced controller: %s %s' % (data['directive']['header']['instance'], cont))
+                            device_controller=cont
+                            break
+                elif hasattr(device, controller):
                     device_controller=getattr(device, controller)
+                
+                if device_controller:
                     if hasattr(device_controller, directive):
                         if getattr(device_controller, directive)!=None:
                             args=[]
