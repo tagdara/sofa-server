@@ -338,11 +338,19 @@ class InputController(capabilityInterface):
 
 class ModeController(capabilityInterface):
    
-    def __init__(self, device=None, friendlyNames=[], supportedModes=[], devicetype=None, modename=None):
-        self._friendlyNames=friendlyNames
-        self._devicetype=devicetype
-        self._modename=modename
+    def __init__(self, name, device=None, friendlyNames=[], supportedModes=[], devicetype=None):
+        self.name=name
+        self.device=device
         self._supportedModes=supportedModes
+        
+        self._friendlyNames=friendlyNames
+        if not self._friendlyNames:
+            self._friendlyNames=[self.name]
+            
+        self._devicetype=devicetype
+        if not self._devicetype:
+            self._devicetype=self.device._displayCategories[0].capitalize()
+        
         super().__init__(device=device)
 
     @property
@@ -363,17 +371,7 @@ class ModeController(capabilityInterface):
 
     @property
     def instance(self):
-        if self._devicetype:
-            instancedev=self._devicetype
-        else:
-            instancedev=self.displayCategories[0].capitalize()
-        
-        if self._modename:
-            instancename=self._modename
-        else:
-            instancename=self._friendlyNames[0].capitalize()
-
-        return "%s.%s" % (instancedev, instancename)
+        return "%s.%s" % (self._devicetype, self.name)
         
     @property 
     def friendlyNames(self):
@@ -400,16 +398,11 @@ class ModeController(capabilityInterface):
 
     @property
     def supportedModes(self):
-        if self._modename:
-            instancename=self._modename
-        else:
-            instancename=self._friendlyNames[0].capitalize()
-
         sms=[]
         for sm in self._supportedModes:
-            sms.append( {   "value": "%s.%s" % (instancename,sm), 
+            sms.append( {   "value": "%s.%s" % (self.name,sm), 
                             "modeResources": { 
-                                "friendlyNames": [{ "@type": "text", "value": { "text": sm, "locale": self.locale }}],
+                                "friendlyNames": [{ "@type": "text", "value": { "text": self._supportedModes[sm], "locale": self.locale }}],
                             }
                         })
         return sms 

@@ -220,18 +220,15 @@ class sonybravia(sofabase):
 
         @property            
         def mode(self):
-            
-            maps={'audioSystem': 'Receiver', "speaker": 'TV', "speaker_hdmi":'Both', "hdmi":'HDMI'}
-            
             try:
                 for item in self.nativeObject['SoundSettings']:
                     if item['target']=='outputTerminal':
-                        rawmode=item['currentValue']
-                        if self._modename:
-                            instancename=self._modename
-                        else:
-                            instancename=self._friendlyNames[0].capitalize()
-                        return "%s.%s" % (instancename, maps[rawmode])
+                        otmode="%s.%s" % (self.name,item['currentValue'])
+                        return otmode
+                        self.log.info('## %s vs %s' % (otmode, self._supportedModes))
+                        for mode in self._supportedModes:
+                            if otmode==[mode]:
+                                return otmode
                 return ""
             except KeyError:
                 return ""
@@ -240,20 +237,14 @@ class sonybravia(sofabase):
                 self.adapter.log.error('Error checking mode status', exc_info=True)
             return ""
 
-        async def SetMode(self,payload, correlationToken=''):
-            maps={'audioSystem': 'Receiver', "speaker": 'TV', "speaker_hdmi":'Both', "hdmi":'HDMI'}
+        async def SetMode(self, payload, correlationToken=''):
             try:
                 if 'mode' in payload:
-                    if self._modename:
-                        instancename=self._modename
-                    else:
-                        instancename=self._friendlyNames[0].capitalize()
-
-                    for modemap in maps:
-                        if "%s.%s" % (instancename, maps[modemap])==payload['mode']:
+                    for mode in self._supportedModes:
+                        if "%s.%s" % (self.name, self._supportedModes[mode])==payload['mode']:
                             if self.nativeObject['PowerStatus']['status']!="active":
-                                self.log.warn('!! Warning: cant change audio mode while tv is off')
-                            sysinfo=await self.adapter.tv.getState('audio','setSoundSettings',version="1.1",params={"settings": [{ "value": modemap, "target": "outputTerminal"} ] })
+                                self.log.warn('!! Warning: wont try to change audio mode while tv is off')
+                                sysinfo=await self.adapter.tv.getState('audio','setSoundSettings',version="1.1",params={"settings": [{ "value": mode, "target": "outputTerminal"} ] })
                             await self.adapter.getUpdate()
                             return await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)     
                 self.log.error('!! error - did not find mode %s' % payload)
@@ -356,7 +347,7 @@ class sonybravia(sofabase):
                                                 { 'interface':'audio', 'command':'getSoundSettings', 'version':'1.1', 'listitem':0, 'params':{"target": ""}}
                                             ],
                             'avContent':    [ { 'interface':'playingContent', 'command':'getPlayingContentInfo', 'listitem':0 },
-                                              { 'interface':'inputStatus', 'command':'getCurrentExternalInputsStatus', 'listitem':0 }]
+                                              { 'interface':'inputStatus', 'command':'getCurrentExternalInputsStatus', 'version':'1.1', 'listitem':0 }]
                         }
                                               
             return await self.getStates(systemdata)
@@ -465,7 +456,8 @@ class sonybravia(sofabase):
                         device.EndpointHealth=sonybravia.EndpointHealth(device=device)
                         device.InputController=sonybravia.InputController(device=device, inputs=self.input_list)
                         device.RemoteController=sonybravia.RemoteController(device=device)
-                        device.AudioModeController=sonybravia.AudioModeController(device=device, friendlyNames=['Audio'], supportedModes=['Receiver', 'TV'], devicetype="TV", modename="Audio")
+                        device.AudioModeController=sonybravia.AudioModeController('Audio', device=device, 
+                            supportedModes={'audioSystem': 'Receiver', "speaker": 'TV', "speaker_hdmi":'Both', "hdmi":'HDMI'})
                         # TV is plugged into sound system so skipping speaker here, but could be added
                         return self.dataset.newaddDevice(device)
                 return False
@@ -510,8 +502,7 @@ class sonybravia(sofabase):
                 if 'PlayingContentInfo' not in nativeObj:
                     #self.log.warn('No playing content')
                     return 'Android TV'
-                self.log.info('pci',nativeObj['PlayingContentInfo'])
-                
+
                 if 'uri' in nativeObj['PlayingContentInfo']:
                     details=self.getDetailsFromURI(nativeObj['PlayingContentInfo']['uri'])
                     if details['type'] in ['cec','hdmi']:
