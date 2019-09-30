@@ -17,11 +17,6 @@ import json
 import asyncio
 import aiohttp
 from aiohttp import web
-from aiohttp_session import SimpleCookieStorage, session_middleware
-from aiohttp_security import check_permission, \
-    is_anonymous, remember, forget, \
-    setup as setup_security, SessionIdentityPolicy
-from aiohttp_security.abc import AbstractAuthorizationPolicy
 
 from aiohttp_sse import sse_response
 import aiohttp_cors
@@ -39,24 +34,10 @@ import base64
 import ssl
 #import inspect
 
+import jwt
+from aiohttp_jwt import JWTMiddleware, login_required
+
 import uuid
-
-class Sofa_AuthorizationPolicy(AbstractAuthorizationPolicy):
-    
-    async def authorized_userid(self, identity):
-        """Retrieve authorized user id.
-        Return the user_id of the user identified by the identity
-        or 'None' if no user exists related to the identity.
-        """
-        if identity == 'sofa':
-            return identity
-
-    async def permits(self, identity, permission, context=None):
-        """Check user permissions.
-        Return True if the identity is allowed the permission
-        in the current context, else return False.
-        """
-        return identity == 'sofa' and permission in ('api','main')
 
 class sofaWebUI():
     
@@ -80,25 +61,42 @@ class sofaWebUI():
         self.adapterTimeout=2
         self.sse_updates=[]
         self.sse_last_update=datetime.datetime.now(datetime.timezone.utc)
+        self.active_sessions={}
+        self.sharable_secret = 'secret'
+        self.middleware=JWTMiddleware(
+            secret_or_pub_key=self.sharable_secret, token_getter=self.get_token, request_property='user', credentials_required=True, whitelist=[r'/plogin*', r'/client*'])
+        # change credentials_required to true to start enforcement
+        # todo - build the login process
 
     async def initialize(self):
 
         try:
             self.serverAddress=self.config['web_address']
-            middleware = session_middleware(SimpleCookieStorage())
-            self.serverApp = web.Application(middlewares=[middleware])
-
+            #middleware = session_middleware(SimpleCookieStorage())
+            #self.serverApp = web.Application(middlewares=[middleware])
+            #self.middleware=JWTMiddleware(
+            #   secret_or_pub_key=self.sharable_secret, token_getter=self.get_token, request_property='user', credentials_required=False)
+            self.serverApp = web.Application(middlewares=[self.middleware])
+            #)
+            #self.serverApp = web.Application(middlewares=[ self.middleware ])
+            #'Access_Control_Allow_Credentials'
             self.cors = aiohttp_cors.setup(self.serverApp, defaults={
-                "http://home.dayton.home:3000": aiohttp_cors.ResourceOptions(expose_headers="*", allow_headers="*")
+                "http://home.dayton.home:3000": aiohttp_cors.ResourceOptions(allow_credentials=True, expose_headers="*", allow_headers="*")
             })
 
             self.cors.add(self.serverApp.router.add_get('/', self.root_handler))
+
+            #self.serverApp.router.add_get('/public', self.public_handler)             # JWT Test
+            self.cors.add(self.serverApp.router.add_get('/loggedin', self.loggedin_handler))              # JWT Test
+            self.cors.add(self.serverApp.router.add_get('/plogin', self.protected_login_handler))             # JWT Test
+            self.cors.add(self.serverApp.router.add_get('/plogout', self.protected_logout_handler))              # JWT Test
+            
             self.serverApp.router.add_get('/login', self.login_handler)
             self.serverApp.router.add_get('/logout', self.logout_handler)
             self.serverApp.router.add_post('/login', self.login_post_handler)
             self.serverApp.router.add_get('/loginstatus', self.login_status_handler)
             self.serverApp.router.add_get('/index.html', self.root_handler)
-            #self.serverApp.router.add_get('/sofa.appcache', self.manifestHandler)
+            self.serverApp.router.add_get('/status', self.status_handler)
             
             self.cors.add(self.serverApp.router.add_get('/directives', self.directivesHandler))
             self.cors.add(self.serverApp.router.add_get('/properties', self.propertiesHandler))
@@ -135,9 +133,6 @@ class sofaWebUI():
             self.cors.add(self.serverApp.router.add_static('/client', path=self.config['client_build_directory'], append_version=True))
             self.cors.add(self.serverApp.router.add_static('/fonts', path=self.config['client_build_directory']+"/fonts", append_version=True))
 
-            self.policy = SessionIdentityPolicy()
-            setup_security(self.serverApp, self.policy, Sofa_AuthorizationPolicy())
-
             self.runner=aiohttp.web.AppRunner(self.serverApp)
             await self.runner.setup()
 
@@ -149,7 +144,64 @@ class sofaWebUI():
 
         except:
             self.log.error('Error with ui server', exc_info=True)
+    
+    
+    # Start - This is the JWT testing code
+
+    async def get_token(self, request):
+        try:
+            if 'user' in request.cookies and request.cookies['user']!='':
+                self.log.info('.. user has the cookie: %s' % (request.cookies))
+                newtoken=jwt.encode({
+                    'username': request.cookies['user'],
+                }, self.sharable_secret)
+                return newtoken
+            else:
+                self.log.warn('!! user does not have the cookie: %s' % (request.cookies))
+                return ''
+        except:
+            self.log.error('Error getting token', exc_info=True)
+
+    async def get_tokenx(self, request):
+        if 'user' in request.cookies and request.cookies['user']:
+            newtoken=jwt.encode({
+                'username': 'user',
+            }, self.sharable_secret)
+            return newtoken
+        else:
+            return ''
             
+    async def loggedin_handler(self, request):
+        if 'user' in request.cookies and request.cookies['user']:
+            return web.json_response({'username': request.cookies['user']})
+        else:
+            return web.json_response({'username': 'anonymous'})
+
+    async def protected_login_handler(self, request):
+        try:
+            user='test'
+            response=web.json_response({'username': user})
+            response.set_cookie('user', user)
+            #response.cookies['user'] = user
+            self.log.info('.. login assigning cookie: %s' % response.cookies)
+            return response
+        except:
+            self.log.error('Error logging in', exc_info=True)
+            return web.json_response({"error":"error"})
+
+    async def protected_logout_handler(self, request):
+        response=web.json_response({'username': ''})
+        response.cookies['user'] = ''
+        return response
+        
+    @login_required
+    async def protected_handler(self, request):
+        return web.json_response({
+            'username': request['user'].get('username', 'anonymous'),
+        })
+    
+    # End - This is the JWT testing code       
+    
     async def loadData(self, jsonfilename):
         
         try:
@@ -742,9 +794,19 @@ class sofaWebUI():
       
         return web.Response(text=json.dumps({"lastupdate":self.sse_last_update},default=self.date_handler))
 
+    async def status_handler(self, request):
+      
+        return web.Response(text=json.dumps({"sessions":self.active_sessions},default=self.date_handler))
+
+    @login_required
     async def sse_handler(self, request):
         try:
+            self.log.info('SSE started: %s' % request['user'].get('username', 'anonymous'))
             remoteip=request.remote
+            sessionid=str(uuid.uuid1())
+            if remoteip not in self.active_sessions:
+                self.active_sessions[sessionid]=remoteip
+
             self.log.info('++ SSE started for %s' % request.remote)
             client_sse_date=datetime.datetime.now(datetime.timezone.utc)
             async with sse_response(request) as resp:
@@ -766,12 +828,15 @@ class sofaWebUI():
                         await resp.send(json.dumps({"event": {"header": {"name": "Heartbeat"}}, "heartbeat":self.sse_last_update, "lastupdate":self.sse_last_update },default=self.date_handler))
                         client_sse_date=datetime.datetime.now(datetime.timezone.utc)
                     await asyncio.sleep(.1)
+                del self.active_sessions[sessionid]
             return resp
         except concurrent.futures._base.CancelledError:
             self.log.info('-- SSE closed for %s' % remoteip)
+            del self.active_sessions[sessionid]
             return resp
         except:
             self.log.error('Error in SSE loop', exc_info=True)
+            del self.active_sessions[sessionid]
             return resp
 
 

@@ -246,12 +246,13 @@ class TemperatureSensor(SofaAccessory):
 
   
 
-class Television(SofaAccessory):
+class OldTelevision(SofaAccessory):
 
     category = pyhap.const.CATEGORY_TELEVISION
     
     def add_chars(self):
         try:
+            tv_service = self.add_preload_service('Television', ['Name','ConfiguredName','Active','ActiveIdentifier','RemoteKey', 'SleepDiscoveryMode'])
             serv_tv = self.add_preload_service('Television', chars=['Active', 'ActiveIdentifier', 'ConfiguredName', 'SleepDiscoveryMode', 'RemoteKey'])
             serv_tvspeaker = self.add_preload_service('TelevisionSpeaker', chars=['Mute', 'Volume', 'VolumeSelector'])
             self.char_Active = serv_tv.configure_char('Active', setter_callback=self.set_active)
@@ -316,6 +317,90 @@ class Television(SofaAccessory):
                 self.char_volume.set_value(value)
         except:
             self.log.error('!! error setting volume', exc_info=True)
+
+class Television(SofaAccessory):
+
+    category = pyhap.const.CATEGORY_TELEVISION
+    
+    def add_chars(self):
+        try:
+            self.tv_service = self.add_preload_service('Television', ['Name','ConfiguredName','Active','ActiveIdentifier','RemoteKey', 'SleepDiscoveryMode'])
+            self.Active = self.tv_service.configure_char('Active', value=0, setter_callback=self.set_active)
+            self.ActiveIdentifier = self.tv_service.configure_char('ActiveIdentifier', value=1, setter_callback=self.set_activeidentifier)
+            self.RemoteKey = self.tv_service.configure_char('RemoteKey', setter_callback=self.set_remotekey)
+            self.Name = self.tv_service.configure_char('Name', value=self.device['friendlyName'])
+            self.ConfiguredName = self.tv_service.configure_char('ConfiguredName', value=self.device['friendlyName'])
+            self.SleepDiscoveryMode = self.tv_service.configure_char('SleepDiscoveryMode', value=1, setter_callback=self.set_sleepdiscoverymode)
+
+            for prop in self.device['capabilities']:
+                if prop['interface']=="Alexa.InputController":
+                    for idx, tvinput in enumerate(prop['inputs']):
+                        input_source = self.add_preload_service('InputSource', ['Name', 'Identifier'])
+                        input_source.configure_char('Name', value=tvinput['name'])
+                        input_source.configure_char('Identifier', value=idx + 1)
+                        # TODO: implement persistence for ConfiguredName
+                        input_source.configure_char('ConfiguredName', value=tvinput['name'])
+                        input_source.configure_char('InputSourceType', value=3) # why 3? Figure out the types
+                        input_source.configure_char('IsConfigured', value=1)
+                        input_source.configure_char('CurrentVisibilityState', value=0)
+                        self.tv_service.add_linked_service(input_source)
+
+            self.tv_speaker_service = self.add_preload_service('TelevisionSpeaker', chars=['Active', 'Mute', 'VolumeControlType', 'VolumeSelector'])
+            self.tv_speaker_service.configure_char('Active', value=1)
+
+            self.tv_speaker_service.configure_char('VolumeControlType', value=1)
+            self.tv_speaker_service.configure_char('Mute', setter_callback=self.set_mute)
+            self.VolumeSelector=self.tv_speaker_service.configure_char('VolumeSelector', setter_callback=self.set_VolumeSelector)
+        except:
+            self.log.error("!! error adding characteristics", exc_info=True)  
+
+    def set_activeidentifier(self, value):
+        self.log.info("TV Active Identifier: %s", value)
+
+    def set_active(self, value):
+        try:
+            if value:
+                asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.PowerController','TurnOn'), loop=self.loop)
+            else:
+                asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.PowerController','TurnOff'), loop=self.loop)
+        except:
+            self.log.error('Error in set TV Active OnOff', exc_info=True)
+
+    def set_sleepdiscoverymode(self, value):
+        self.log.info("TV sleep discovery mode : %s", value)
+
+    def set_remotekey(self, value):
+        try:
+            vals={4:'CursorUp', 5:'CursorDown', 6:'CursorLeft', 7:'CursorRight', 8: 'DpadCenter', 9: 'Exit', 15: 'Home'}
+            asyncio.run_coroutine_threadsafe(self.sendDirective('Alexa.RemoteController', 'PressRemoteButton', { 'buttonName': vals[value] }))
+        except:
+            self.log.error('Error in set TV Active OnOff', exc_info=True)
+
+    def set_mute(self, value):
+        self.log.info("TV set_mute : %s", value)
+
+    def set_volume(self, value):
+        self.log.info("TV set_volume : %s", value)
+
+    def set_VolumeSelector(self, value):
+        self.log.info("TV set_volumeselector : %s", value)
+
+    def prop_powerState(self, value):
+        try:
+            if self.reachable and value=='ON':
+                self.Active.set_value(True)
+            else:
+                self.Active.set_value(False)
+        except:
+            self.log.error('!! error setting power state', exc_info=True)
+            
+    def prop_volume(self, value):
+        try:
+            if self.reachable:
+                self.VolumeSelector.set_value(value)
+        except:
+            self.log.error('!! error setting volume', exc_info=True)
+
 
         
 class Thermostat(SofaAccessory):

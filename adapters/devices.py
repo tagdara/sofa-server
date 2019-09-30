@@ -338,7 +338,7 @@ class InputController(capabilityInterface):
 
 class ModeController(capabilityInterface):
    
-    def __init__(self, name, device=None, friendlyNames=[], supportedModes=[], devicetype=None):
+    def __init__(self, name='ModeController', device=None, friendlyNames=[], supportedModes=[], devicetype=None):
         self.name=name
         self.device=device
         self._supportedModes=supportedModes
@@ -349,7 +349,10 @@ class ModeController(capabilityInterface):
             
         self._devicetype=devicetype
         if not self._devicetype:
-            self._devicetype=self.device._displayCategories[0].capitalize()
+            try:
+                self._devicetype=self.device._displayCategories[0].capitalize()
+            except:
+                self._devicetype="Mode"
         
         super().__init__(device=device)
 

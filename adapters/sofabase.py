@@ -212,7 +212,7 @@ class sofabase():
             print('Did not get base config properly')
             sys.exit(1)
     
-    def service_stop(self, sig):
+    def service_stop(self, sig=None):
         try:
             self.log.info('Terminating loop due to service stop. %s' % sig)
             try:
