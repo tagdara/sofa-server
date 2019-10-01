@@ -35,10 +35,68 @@ import ssl
 #import inspect
 
 import jwt
-from aiohttp_jwt import JWTMiddleware, login_required
+#from aiohttp_jwt import JWTMiddleware, login_required
 
 import uuid
 
+class User:
+
+    def __init__(self, id, email, password, is_admin):
+        self.id = id
+        self.email = email
+        self.password = password
+        self.is_admin = is_admin
+
+    def __repr__(self):
+        template = 'User id={s.id}: <{s.email}, is_admin={s.is_admin}>'
+        return template.format(s=self)
+
+    def __str__(self):
+        return self.__repr__()
+
+    def match_password(self, password):
+        if password != self.password:
+            raise User.PasswordDoesNotMatch
+
+    class DoesNotExist(BaseException):
+        pass
+
+    class TooManyObjects(BaseException):
+        pass
+
+    class PasswordDoesNotMatch(BaseException):
+        pass
+
+    class objects:
+        _storage = []
+        _max_id = 0
+
+        @classmethod
+        def create(cls, email, password, is_admin=False):
+            cls._max_id += 1
+            cls._storage.append(User(cls._max_id, email, password, is_admin))
+
+        @classmethod
+        def all(cls):
+            return cls._storage
+
+        @classmethod
+        def filter(cls, **kwargs):
+            users = cls._storage
+            for k, v in kwargs.items():
+                if v:
+                    users = [u for u in users if getattr(u, k, None) == v]
+            return users
+
+        @classmethod
+        def get(cls, id=None, email=None):
+            users = cls.filter(id=id, email=email)
+            if len(users) > 1:
+                raise User.TooManyObjects
+            if len(users) == 0:
+                raise User.DoesNotExist
+            return users[0]
+            
 class sofaWebUI():
     
     def __init__(self, config=None, loop=None, log=None, request=None, dataset=None, notify=None, discover=None, adapter=None):
@@ -62,23 +120,30 @@ class sofaWebUI():
         self.sse_updates=[]
         self.sse_last_update=datetime.datetime.now(datetime.timezone.utc)
         self.active_sessions={}
-        self.sharable_secret = 'secret'
-        self.middleware=JWTMiddleware(
-            secret_or_pub_key=self.sharable_secret, token_getter=self.get_token, request_property='user', credentials_required=True, whitelist=[r'/plogin*', r'/client*'])
+        #self.sharable_secret = 'secret'
+        self.middleware=None
+        #self.middleware=JWTMiddleware(
+        #    secret_or_pub_key=self.sharable_secret, request_property='user', credentials_required=False)
         # change credentials_required to true to start enforcement
         # todo - build the login process
+
+        self.JWT_SECRET = self.dataset.config['secret']
+        self.JWT_ALGORITHM = 'HS256'
+        self.JWT_EXP_DELTA_SECONDS = 604800
 
     async def initialize(self):
 
         try:
+            for user in self.dataset.config['users']:
+                User.objects.create(email=user, password=self.dataset.config['users'][user])
+            
             self.serverAddress=self.config['web_address']
             #middleware = session_middleware(SimpleCookieStorage())
             #self.serverApp = web.Application(middlewares=[middleware])
             #self.middleware=JWTMiddleware(
             #   secret_or_pub_key=self.sharable_secret, token_getter=self.get_token, request_property='user', credentials_required=False)
-            self.serverApp = web.Application(middlewares=[self.middleware])
-            #)
-            #self.serverApp = web.Application(middlewares=[ self.middleware ])
+            self.serverApp = web.Application(middlewares=[self.auth_middleware])
+            #self.serverApp = web.Application()
             #'Access_Control_Allow_Credentials'
             self.cors = aiohttp_cors.setup(self.serverApp, defaults={
                 "http://home.dayton.home:3000": aiohttp_cors.ResourceOptions(allow_credentials=True, expose_headers="*", allow_headers="*")
@@ -86,14 +151,10 @@ class sofaWebUI():
 
             self.cors.add(self.serverApp.router.add_get('/', self.root_handler))
 
-            #self.serverApp.router.add_get('/public', self.public_handler)             # JWT Test
-            self.cors.add(self.serverApp.router.add_get('/loggedin', self.loggedin_handler))              # JWT Test
-            self.cors.add(self.serverApp.router.add_get('/plogin', self.protected_login_handler))             # JWT Test
-            self.cors.add(self.serverApp.router.add_get('/plogout', self.protected_logout_handler))              # JWT Test
-            
-            self.serverApp.router.add_get('/login', self.login_handler)
-            self.serverApp.router.add_get('/logout', self.logout_handler)
-            self.serverApp.router.add_post('/login', self.login_post_handler)
+            #self.serverApp.router.add_get('/login', self.login)
+            self.cors.add(self.serverApp.router.add_get('/logout', self.logout_handler))
+            self.cors.add(self.serverApp.router.add_post('/login', self.login_post))
+            self.cors.add(self.serverApp.router.add_get('/get-user', self.get_user))
             self.serverApp.router.add_get('/loginstatus', self.login_status_handler)
             self.serverApp.router.add_get('/index.html', self.root_handler)
             self.serverApp.router.add_get('/status', self.status_handler)
@@ -144,62 +205,61 @@ class sofaWebUI():
 
         except:
             self.log.error('Error with ui server', exc_info=True)
-    
-    
-    # Start - This is the JWT testing code
-
-    async def get_token(self, request):
-        try:
-            if 'user' in request.cookies and request.cookies['user']!='':
-                self.log.info('.. user has the cookie: %s' % (request.cookies))
-                newtoken=jwt.encode({
-                    'username': request.cookies['user'],
-                }, self.sharable_secret)
-                return newtoken
-            else:
-                self.log.warn('!! user does not have the cookie: %s' % (request.cookies))
-                return ''
-        except:
-            self.log.error('Error getting token', exc_info=True)
-
-    async def get_tokenx(self, request):
-        if 'user' in request.cookies and request.cookies['user']:
-            newtoken=jwt.encode({
-                'username': 'user',
-            }, self.sharable_secret)
-            return newtoken
-        else:
-            return ''
             
-    async def loggedin_handler(self, request):
-        if 'user' in request.cookies and request.cookies['user']:
-            return web.json_response({'username': request.cookies['user']})
-        else:
-            return web.json_response({'username': 'anonymous'})
-
-    async def protected_login_handler(self, request):
-        try:
-            user='test'
-            response=web.json_response({'username': user})
-            response.set_cookie('user', user)
-            #response.cookies['user'] = user
-            self.log.info('.. login assigning cookie: %s' % response.cookies)
-            return response
-        except:
-            self.log.error('Error logging in', exc_info=True)
-            return web.json_response({"error":"error"})
-
-    async def protected_logout_handler(self, request):
-        response=web.json_response({'username': ''})
-        response.cookies['user'] = ''
-        return response
-        
-    @login_required
-    async def protected_handler(self, request):
-        return web.json_response({
-            'username': request['user'].get('username', 'anonymous'),
-        })
+    # Start - This is the JWT testing code
+    async def auth_middleware(self, app, handler):
+        async def middleware(request):
+            request.user = None
+            jwt_token = request.headers.get('authorization', None)
+            if not jwt_token:
+                if 'token' in request.cookies:
+                    jwt_token=request.cookies['token']
+            if jwt_token:
+                try:
+                    payload = jwt.decode(jwt_token, self.JWT_SECRET,
+                                         algorithms=[self.JWT_ALGORITHM])
+                except (jwt.DecodeError, jwt.ExpiredSignatureError):
+                    return self.json_response({'message': 'Token is invalid'}, status=400)
     
+                request.user = User.objects.get(id=payload['user_id'])
+            return await handler(request)
+        return middleware
+    
+    def login_required(func):
+        def wrapper(self, request):
+            if not request.user:
+                return self.json_response({'message': 'Auth required'}, status=401)
+            return func(self, request)
+        return wrapper
+
+    def json_response(self, body='', **kwargs):
+        try:
+            kwargs['body'] = json.dumps(body or kwargs['body']).encode('utf-8')
+            kwargs['content_type'] = 'text/json'
+            return web.Response(**kwargs)
+        except:
+            self.log.error('!! error with json response', exc_info=True)
+            return web.Response({'body':''})
+
+    async def get_user(self, request):
+        return self.json_response({'user': str(request.user)})
+    
+    async def login_post(self, request):
+        post_data = await request.post()
+        #self.log.info('Login request for %s' % data)
+        try:
+            user = User.objects.get(email=post_data['user'])
+            user.match_password(post_data['password'])
+        except (User.DoesNotExist, User.PasswordDoesNotMatch):
+            return self.json_response({'message': 'Wrong credentials'}, status=400)
+    
+        payload = {
+            'user_id': user.id,
+            'exp': datetime.datetime.utcnow() + datetime.timedelta(seconds=self.JWT_EXP_DELTA_SECONDS)
+        }
+        jwt_token = jwt.encode(payload, self.JWT_SECRET, self.JWT_ALGORITHM)
+        return self.json_response({'token': jwt_token.decode('utf-8')})
+
     # End - This is the JWT testing code       
     
     async def loadData(self, jsonfilename):
@@ -291,7 +351,6 @@ class sofaWebUI():
             self.layout=await self.layoutUpdate()
             
         return web.Response(content_type="text/html", body=json.dumps(json.loads(self.layout)))
-
 
     async def directivesHandler(self, request):
         try:
@@ -800,8 +859,8 @@ class sofaWebUI():
 
     @login_required
     async def sse_handler(self, request):
+        
         try:
-            self.log.info('SSE started: %s' % request['user'].get('username', 'anonymous'))
             remoteip=request.remote
             sessionid=str(uuid.uuid1())
             if remoteip not in self.active_sessions:
