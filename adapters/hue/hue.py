@@ -3,7 +3,7 @@
 import sys, os
 # Add relative paths for the directory where the adapter is located as well as the parent
 sys.path.append(os.path.dirname(__file__))
-sys.path.append(os.path.join(os.path.dirname(__file__),'..'))
+sys.path.append(os.path.join(os.path.dirname(__file__),'../../base'))
 
 from sofabase import sofabase
 from sofabase import adapterbase
@@ -152,13 +152,13 @@ class hue(sofabase):
                 if category=="all":
                     alldata=await self.getHueAll()
                     if alldata:
-                        changes=await self.dataset.ingest({'lights':alldata['lights'], 'sensors':alldata['sensors'], 'groups':alldata['groups']})
+                        changes=await self.dataset.ingest({'lights':alldata['lights'], 'sensors':alldata['sensors'], 'groups':alldata['groups']}, mergeReplace=True)
                 elif category=="lights":
-                    changes=await self.dataset.ingest({'lights': await self.getHueLights(device)})
+                    changes=await self.dataset.ingest({'lights': await self.getHueLights(device)}, mergeReplace=True)
                 elif category=="groups":
-                    await self.dataset.ingest({'groups': await self.getHueGroups()})
+                    await self.dataset.ingest({'groups': await self.getHueGroups()}, mergeReplace=True)
                 elif category=="sensors":
-                    await self.dataset.ingest({'sensors':await self.getHueSensors()})
+                    await self.dataset.ingest({'sensors':await self.getHueSensors()}, mergeReplace=True)
                     
                 return changes
 

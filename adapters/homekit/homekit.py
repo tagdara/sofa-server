@@ -3,7 +3,7 @@
 import sys, os
 # Add relative paths for the directory where the adapter is located as well as the parent
 sys.path.append(os.path.dirname(__file__))
-sys.path.append(os.path.join(os.path.dirname(__file__),'..'))
+sys.path.append(os.path.join(os.path.dirname(__file__),'../../base'))
 from sofacollector import SofaCollector
 
 from sofabase import sofabase
