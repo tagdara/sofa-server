@@ -468,10 +468,11 @@ class insteonSubscription(asyncio.Protocol):
                         self.log.error('Error comparing previous state', exc_info=True)
                     #self.log.info('Property event: %s %s' % (event['node'],event))
                     #self.log.info('Existing data: %s %s' % (event['node'], self.dataset.nativeDevices['node'][event['node']]))
+                    self.log.info('pending %s' % self.pendingChanges)
                     if event['node'] not in self.pendingChanges:
                         # testing allowing the _1 update to provide the update when the change was requested by the UI
                         updatedProperties=await self.getNodeProperties(event['node'])
-                        self.log.info('event UpdatedProperties: %s %s' % (event['node'], updatedProperties))
+                        self.log.info('event UpdatedProperties: %s not in pending %s - %s' % (event['node'], self.pendingChanges, updatedProperties))
                         changeReport=await self.dataset.ingest({'node': { event['node']: {'property':updatedProperties}}})
                         if changeReport:
                             self.log.info('event changereport: %s' % changeReport)
@@ -609,8 +610,13 @@ class insteonSetter():
                 async with aiohttp.ClientSession() as client:
                     html = await self.insteonRestCommand(client, url)
                     root=et.fromstring(html)
-                    self.log.info('Returned from Using url: %s / %s' % (url, html))
-                    return html
+                    self.log.info('Returned from Using url: %s / %s %s' % (url, html, root))
+                    try:
+                        if root.attrib['succeeded']=='true':
+                            return True
+                    except:
+                        self.log.error('!! error in html response: %s' % html, exc_info=True)
+                    return False
         except:
             self.log.error('Insteon setNode error: %s %s' % (node, data), exc_info=True)
 
@@ -641,7 +647,7 @@ class insteonSetter():
                     root=et.fromstring(html)
                     return root
         except:
-            self.log.error('Insteon setNode error: %s %s' % (group, data), exc_info=True)
+            self.log.error('Insteon setGroup error: %s %s' % (group, data), exc_info=True)
 
 
         
@@ -862,7 +868,13 @@ class insteon(sofabase):
                     return device.Response(correlationToken)
                     
                 deviceid=self.dataset.getNativeFromEndpointId(device.endpointId)
-                await self.setInsteon.setNode(deviceid, command)
+                self.subscription.pendingChanges.append(deviceid)
+                result=await self.setInsteon.setNode(deviceid, command)
+                if result:
+                    self.log.info('Assuming success on response. pre-setting %s to %s' % (controllerprop, controllervalue) )
+                    #await self.dataset.ingest({'node': { deviceid: {'property':updatedProperties}}})
+                    #return device.Response(correlationToken)  
+                self.log.info('Comparing %s vs %s' % (getattr(controller, controllerprop),controllervalue))
                 if getattr(controller, controllerprop)!=controllervalue:
                     await self.waitPendingChange(deviceid)
                 updatedProperties=await self.insteonNodes.getNodeProperties(deviceid)

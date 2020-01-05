@@ -171,14 +171,20 @@ class influxServer(sofabase):
                     return result.raw
 
                 if itempath[0]=="last":
+                    self.log.info('getting last info for %s - query: %s' % (itempath, query))
                     if query:
                         elist=json.loads(query)
                         rgx="~ /%s/" % "|".join(elist)
                         qry="select endpoint,last(%s) from controller_property where endpoint=%s group by endpoint" % (itempath[1], rgx)
                     else:
-                        qry="select endpoint,last(%s) from controller_property where endpoint='%s'" % (itempath[2], itempath[1])
-                        if len(itempath)>3:
-                            qry=qry+" AND %s='%s'" % (itempath[2], itempath[3])
+                        self.log.info('getting last info for %s' % itempath)
+                        if len(itempath)>2:
+                            qry="select endpoint,last(%s) from controller_property where endpoint='%s'" % (itempath[2], itempath[1])
+                            if len(itempath)>3:
+                                qry=qry+" AND %s='%s'" % (itempath[2], itempath[3])
+                        else:
+                            qry="select endpoint,last(%s) from controller_property" % itempath[1]
+
                     self.log.info('Running query: %s' % qry)
                     result=self.influxclient.query(qry,database='beta')
 

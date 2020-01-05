@@ -240,14 +240,16 @@ class sonybravia(sofabase):
         async def SetMode(self, payload, correlationToken=''):
             try:
                 if 'mode' in payload:
-                    for mode in self._supportedModes:
-                        if "%s.%s" % (self.name, self._supportedModes[mode])==payload['mode']:
-                            if self.nativeObject['PowerStatus']['status']!="active":
-                                self.log.warn('!! Warning: wont try to change audio mode while tv is off')
-                                sysinfo=await self.adapter.tv.getState('audio','setSoundSettings',version="1.1",params={"settings": [{ "value": mode, "target": "outputTerminal"} ] })
+                    mode=payload['mode'].split('.')[1]
+                    if mode in self._supportedModes:
+                        if self.nativeObject['PowerStatus']['status']!="active":
+                            self.log.warn('!! Warning: wont try to change audio mode while tv is off')
+                        else:
+                            self.log.info('.. setting tv setSoundSettings to %s' % mode)
+                            sysinfo=await self.adapter.tv.getState('audio','setSoundSettings',version="1.1",params={"settings": [{ "value": mode, "target": "outputTerminal"} ] })
                             await self.adapter.getUpdate()
-                            return await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)     
-                self.log.error('!! error - did not find mode %s' % payload)
+                        return await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)     
+                    self.log.error('!! error - did not find mode %s in %s/%s' % (payload, self.name, self._supportedModes))
             except:
                 self.adapter.log.error('Error setting mode status %s' % payload, exc_info=True)
             return {}
@@ -285,6 +287,57 @@ class sonybravia(sofabase):
                 return await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)
             except:
                 self.adapter.log.error('Error in SelectInput', exc_info=True)
+                return None
+
+    class SpeakerController(devices.SpeakerController):
+
+        @property            
+        def volume(self):
+            try:
+                for item in self.nativeObject['VolumeInformation']:
+                    if item['target']=='speaker':
+                        return item['volume']
+            except KeyError:
+                return ""
+                #self.adapter.log.error('Error checking mode status - no value present: %s' % self.nativeObject)
+            except:
+                self.log.error('!! Error during volume check', exc_info=True)
+            return 50
+
+        @property            
+        def mute(self):
+            try:
+                for item in self.nativeObject['VolumeInformation']:
+                    if item['target']=='speaker':
+                        return item['mute']
+            except KeyError:
+                return ""
+                #self.adapter.log.error('Error checking mode status - no value present: %s' % self.nativeObject)
+
+            except:
+                self.log.error('!! Error during volume mute check', exc_info=True)
+            return False
+
+        async def SetVolume(self, payload, correlationToken=''):
+            try:
+                for item in self.nativeObject['VolumeInformation']:
+                    if item['target']=='speaker':
+                        volrange={ 'max':item['maxVolume'], 'min':item['minVolume'] }
+                unitconv=(volrange['max']-volrange['min'])/100
+                realvol=str(int(float(unitconv* int(payload['volume'])))+volrange['min'])
+                # { "method": "setAudioVolume", "id": 601,"params": [{ "volume": "18","target": "speaker"}],"version": "1.0"}
+                sysinfo=await self.adapter.tv.getState('audio','setAudioVolume',params={"volume":realvol, "target":"speaker"})
+                await self.adapter.getUpdate()
+                return await self.adapter.dataset.generateResponse(self.device.endpointId, correlationToken)
+            except:
+                self.log.error('!! Error during SetVolume', exc_info=True)
+                return None
+
+        async def SetMute(self, payload, correlationToken=''):
+            try:
+                self.log.warn('!! SetMute has not been implemented yet.')
+            except:
+                self.log.error('!! Error during SetMute', exc_info=True)
                 return None
 
     class RemoteController(devices.RemoteController):
@@ -456,8 +509,14 @@ class sonybravia(sofabase):
                         device.EndpointHealth=sonybravia.EndpointHealth(device=device)
                         device.InputController=sonybravia.InputController(device=device, inputs=self.input_list)
                         device.RemoteController=sonybravia.RemoteController(device=device)
+                        device.SpeakerController=sonybravia.SpeakerController(device=device)
+                        # On the XBR-75X850C that this was built for, there are only two actual supported modes: audioSystem and speaker
+                        # and they are reversed!!  speaker will send audio to the receiver and audioSystem is the in-TV speaker
+                        #device.AudioModeController=sonybravia.AudioModeController('Audio', device=device, 
+                        #    supportedModes={'audioSystem': 'Receiver', "speaker": 'TV', "speaker_hdmi":'Both', "hdmi":'HDMI'})
                         device.AudioModeController=sonybravia.AudioModeController('Audio', device=device, 
-                            supportedModes={'audioSystem': 'Receiver', "speaker": 'TV', "speaker_hdmi":'Both', "hdmi":'HDMI'})
+                            supportedModes={'speaker': 'Receiver', "audioSystem": 'TV'})
+
                         # TV is plugged into sound system so skipping speaker here, but could be added
                         return self.dataset.newaddDevice(device)
                 return False

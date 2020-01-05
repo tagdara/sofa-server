@@ -409,7 +409,7 @@ class sofaDataset():
         except:
             self.log.error('Error checking devices', exc_info=True)
 
-    async def ingest(self, data, notify=True, overwriteLevel=None, returnChangeReport=True):
+    async def ingest(self, data, notify=True, overwriteLevel=None,  mergeReplace=False, returnChangeReport=True):
         
         try:
             # Take a copy of the existing data dictionary, use dpath to merge the updated content with the old, 
@@ -427,7 +427,11 @@ class sofaDataset():
                 self.nested_set(self.nativeDevices, overwriteLevel.split('/'), list(data) )
                 patch=[{"op":"change", "value":list(data), "path":overwriteLevel}]
             else:
-                dpath.util.merge(self.nativeDevices, data, flags=dpath.util.MERGE_REPLACE)
+                if mergeReplace:
+                    dpath.util.merge(self.nativeDevices, data, flags=dpath.util.MERGE_REPLACE)
+                else:
+                    dpath.util.merge(self.nativeDevices, data)
+
                 patch = jsonpatch.JsonPatch.from_diff(self.oldNativeDevices, self.nativeDevices)
             
             if patch:
@@ -741,11 +745,11 @@ class sofaDataset():
                 device_controller=None
                 device=self.getDeviceByEndpointId(endpointId)
                 if 'instance' in data['directive']['header']:
-                    self.log.info('.. Looking for %s in %s' % (data['directive']['header']['instance'],device.interfaces ))
+                    #self.log.info('.. Looking for %s in %s' % (data['directive']['header']['instance'],device.interfaces ))
                     for cont in device.interfaces:
-                        self.log.info('-- Looking for %s in %s' % (data['directive']['header']['instance'],cont ))
+                        #self.log.info('-- Looking for %s in %s' % (data['directive']['header']['instance'],cont ))
                         if hasattr(cont, 'instance') and cont.instance==data['directive']['header']['instance']:
-                            self.log.info('.. instanced controller: %s %s' % (data['directive']['header']['instance'], cont))
+                            #self.log.info('.. instanced controller: %s %s' % (data['directive']['header']['instance'], cont))
                             device_controller=cont
                             break
                 elif hasattr(device, controller):

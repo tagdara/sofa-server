@@ -84,6 +84,7 @@ class homekit_camera(camera.Camera):
 
     def get_snapshot(self, image_size):  # pylint: disable=unused-argument, no-self-use
         try:   
+            self.log.info('.. get snapshot: %s %s %s' % (image_size, self.imageuri, self.device))
             future=asyncio.run_coroutine_threadsafe(self.get_snap(image_size['image-width']), loop=self.loop)
             return future.result() 
         except:
@@ -93,8 +94,10 @@ class homekit_camera(camera.Camera):
 
         try:
             async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as client:
+                # need to have token security implemented for pulling thumbnails
                 async with client.get(self.imageuri) as response:
                     result=await response.read()
+                    self.log.info('Got snap: %s...' % result[:16])
                     return result  
         except:
             self.log.error('!! Error getting snap', exc_info=True)

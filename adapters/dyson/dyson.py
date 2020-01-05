@@ -64,12 +64,12 @@ class dyson(sofabase):
             try:
                 # Dyson fans have weird AUTO - there is full AUTO for the fan and then just powerlevel auto.  This helps keep sync.
                 if payload['powerLevel']=='AUTO':
-                    return await self.adapter.setAndUpdate(device, { 'fan_mode' : FanMode.AUTO}, "PowerLevelController", correlationToken)
+                    return await self.adapter.setAndUpdate(self.device, { 'fan_mode' : FanMode.AUTO}, "PowerLevelController", correlationToken)
                 else:
                     fanspeed=str(int(payload['powerLevel'])//10)
                     if fanspeed=='0':
                         fanspeed='1'
-                    return await self.adapter.setAndUpdate(device, { 'fan_mode' : FanMode.FAN, 'fan_speed': getattr(FanSpeed, 'FAN_SPEED_%s' % fanspeed) }, "PowerLevelController", correlationToken)
+                    return await self.adapter.setAndUpdate(self.device, { 'fan_mode' : FanMode.FAN, 'fan_speed': getattr(FanSpeed, 'FAN_SPEED_%s' % fanspeed) }, "PowerLevelController", correlationToken)
  
             except:
                 self.log.error('!! Error during SetPowerLevel', exc_info=True)

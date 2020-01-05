@@ -321,6 +321,7 @@ class hue(sofabase):
                 device.StateController=devices.StateController(device=device)
                 if nativeObject["type"] in ["Color temperature light", "Extended color light", "Color light"]:
                     device.BrightnessController=hue.BrightnessController(device=device)
+                if nativeObject["type"] in ["Color temperature light", "Extended color light"]:
                     device.ColorTemperatureController=hue.ColorTemperatureController(device=device)
                 if nativeObject["type"] in ["Extended color light", "Color light"]:
                     device.ColorController=hue.ColorController(device=device)

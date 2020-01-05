@@ -490,13 +490,15 @@ class sonos(sofabase):
                                 if device.service.service_id=='AVTransport':
                                     # apparently the AVtransport update does not work for radio station data but get_current_track_info will
                                     current_info=device.service.soco.get_current_track_info()
+                                    self.log.info('update: %s' % update)
                                     self.log.info('gcti: %s' % current_info)
                                     del current_info['metadata']
                                     #self.log.info('UPDATE: %s %s' % (isinstance(update['current_track_meta_data'], str), update))
-                                    if isinstance(update['current_track_meta_data'], str):
-                                        update['current_track_meta_data']=dict()
-                                    for item in current_info:
-                                        update['current_track_meta_data'][item]=current_info[item]
+                                    if update:
+                                        if isinstance(update['current_track_meta_data'], str):
+                                            update['current_track_meta_data']=dict()
+                                        for item in current_info:
+                                            update['current_track_meta_data'][item]=current_info[item]
                                     
                                 if device.service.service_id=='ZoneGroupTopology':
                                     # just do them all and see what's really updated
@@ -797,8 +799,8 @@ class sonos(sofabase):
                             return self.sonoslogo
 
             except concurrent.futures._base.CancelledError:
-                self.log.error('Attempt to get art cancelled for %s %s' % (path,url) , exc_info=True)
-                self.connect_needed=True
+                self.log.error('Attempt to get art cancelled for %s %s' % (path,url))
+                #self.connect_needed=True
                 
             except AttributeError:
                 self.log.error('Couldnt get art for %s' % playerObject, exc_info=True)

@@ -345,12 +345,15 @@ class Television(SofaAccessory):
                         input_source.configure_char('CurrentVisibilityState', value=0)
                         self.tv_service.add_linked_service(input_source)
 
-            self.tv_speaker_service = self.add_preload_service('TelevisionSpeaker', chars=['Active', 'Mute', 'VolumeControlType', 'VolumeSelector'])
+            #self.tv_speaker_service = self.add_preload_service('TelevisionSpeaker', chars=['Active', 'Mute', 'VolumeControlType', 'VolumeSelector'])
+            self.tv_speaker_service = self.add_preload_service('TelevisionSpeaker', chars=['Active', 'Mute', 'VolumeControlType', 'Volume'])
             self.tv_speaker_service.configure_char('Active', value=1)
 
-            self.tv_speaker_service.configure_char('VolumeControlType', value=1)
+            #self.tv_speaker_service.configure_char('VolumeControlType', value=3) relative volume
+            self.tv_speaker_service.configure_char('VolumeControlType', value=3)
             self.tv_speaker_service.configure_char('Mute', setter_callback=self.set_mute)
-            self.VolumeSelector=self.tv_speaker_service.configure_char('VolumeSelector', setter_callback=self.set_VolumeSelector)
+            #self.VolumeSelector=self.tv_speaker_service.configure_char('VolumeSelector', setter_callback=self.set_VolumeSelector)
+            self.Volume=self.tv_speaker_service.configure_char('Volume', setter_callback=self.set_Volume)
         except:
             self.log.error("!! error adding characteristics", exc_info=True)  
 
@@ -379,8 +382,9 @@ class Television(SofaAccessory):
     def set_mute(self, value):
         self.log.info("TV set_mute : %s", value)
 
-    def set_volume(self, value):
+    def set_Volume(self, value):
         self.log.info("TV set_volume : %s", value)
+        self.Volume.set_value(value)
 
     def set_VolumeSelector(self, value):
         self.log.info("TV set_volumeselector : %s", value)
@@ -397,7 +401,7 @@ class Television(SofaAccessory):
     def prop_volume(self, value):
         try:
             if self.reachable:
-                self.VolumeSelector.set_value(value)
+                self.Volume.set_value(value)
         except:
             self.log.error('!! error setting volume', exc_info=True)
 
@@ -448,7 +452,7 @@ class Thermostat(SofaAccessory):
             else:
                 self.char_temp.set_value(value['value'])
         except:
-            self.log.error('!! error setting temperature', exc_info=True)
+            self.log.error('!! error setting temperature: %s' % value, exc_info=True)
 
     def prop_targetSetpoint(self, value):
         try:
@@ -861,6 +865,7 @@ class homekit(sofabase):
                     if prop['name'] in self.skip:
                         continue
                     try:
+                        #self.log.info('.. message: %s' % message)
                         getattr(acc, 'prop_%s' % prop['name'])(prop['value'])
                     except AttributeError:
                         self.log.info('.. No property setter for %s on %s' % (prop['name'], deviceId))

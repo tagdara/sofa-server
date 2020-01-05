@@ -138,20 +138,16 @@ class sofaWebUI():
                 User.objects.create(email=user, password=self.dataset.config['users'][user])
             
             self.serverAddress=self.config['web_address']
-            #middleware = session_middleware(SimpleCookieStorage())
-            #self.serverApp = web.Application(middlewares=[middleware])
-            #self.middleware=JWTMiddleware(
-            #   secret_or_pub_key=self.sharable_secret, token_getter=self.get_token, request_property='user', credentials_required=False)
             self.serverApp = web.Application(middlewares=[self.auth_middleware])
-            #self.serverApp = web.Application()
-            #'Access_Control_Allow_Credentials'
             self.cors = aiohttp_cors.setup(self.serverApp, defaults={
-                "http://home.dayton.home:3000": aiohttp_cors.ResourceOptions(allow_credentials=True, expose_headers="*", allow_headers="*")
+                "*": aiohttp_cors.ResourceOptions(allow_credentials=True, expose_headers="*", allow_methods='*', allow_headers="*")
             })
+            
+            #Access-Control-Allow-Origin
+            
 
             self.cors.add(self.serverApp.router.add_get('/', self.root_handler))
 
-            #self.serverApp.router.add_get('/login', self.login)
             self.cors.add(self.serverApp.router.add_get('/logout', self.logout_handler))
             self.cors.add(self.serverApp.router.add_post('/login', self.login_post))
             self.cors.add(self.serverApp.router.add_get('/get-user', self.get_user))
@@ -159,6 +155,7 @@ class sofaWebUI():
             self.serverApp.router.add_get('/index.html', self.root_handler)
             self.serverApp.router.add_get('/status', self.status_handler)
             
+            #self.cors.add(self.serverApp.router.add_route('*', '/directives', self.directivesHandler))
             self.cors.add(self.serverApp.router.add_get('/directives', self.directivesHandler))
             self.cors.add(self.serverApp.router.add_get('/properties', self.propertiesHandler))
             self.cors.add(self.serverApp.router.add_get('/events', self.eventsHandler))
@@ -209,20 +206,54 @@ class sofaWebUI():
     # Start - This is the JWT testing code
     async def auth_middleware(self, app, handler):
         async def middleware(request):
-            request.user = None
-            jwt_token = request.headers.get('authorization', None)
-            if not jwt_token:
-                if 'token' in request.cookies:
-                    jwt_token=request.cookies['token']
-            if jwt_token:
-                try:
-                    payload = jwt.decode(jwt_token, self.JWT_SECRET,
-                                         algorithms=[self.JWT_ALGORITHM])
-                except (jwt.DecodeError, jwt.ExpiredSignatureError):
-                    return self.json_response({'message': 'Token is invalid'}, status=400)
-    
-                request.user = User.objects.get(id=payload['user_id'])
-            return await handler(request)
+            try:
+                whitelist=['/','/client','/favicon.ico','/login']
+                if not request.method=='OPTIONS' and not str(request.rel_url) in whitelist and not str(request.rel_url).startswith('/client') and not str(request.rel_url).startswith('/thumbnail'):
+                    request.user = None
+                    try:
+                        jwt_token = request.headers.get('authorization', None)
+                    except:
+                        self.log.error('.! could not get jwt token from authorization header', exc_info=True)
+                    if not jwt_token:
+                        try:
+                            if 'token' in request.cookies:
+                                #self.log.info('.. token from cookie: %s' % request.cookies['token'])
+                                jwt_token=request.cookies['token']
+                        except:
+                            self.log.error('.! could not get jwt token from cookies', exc_info=True)
+            
+                    if not jwt_token:                        
+                        # CHEESE: There is probably a better way to get this information, but this is a shim for EventSource not being able
+                        # to send an Authorization header from the client side.  It also does not appear send cookies in the normal way
+                        # but you can farm them out of the headers
+                        try:
+                            if 'Cookie' in request.headers:
+                                cookies=request.headers['Cookie'].split('; ')
+                                for hcookie in cookies:
+                                    if hcookie.split('=')[0]=='token':
+                                        jwt_token=hcookie.split('=')[1]
+                        except:
+                            self.log.error('Could not decipher token from header cookies', exc_info=True)
+                 
+                    if jwt_token:
+                        try:
+                            payload = jwt.decode(jwt_token, self.JWT_SECRET,
+                                                 algorithms=[self.JWT_ALGORITHM])
+                        except (jwt.DecodeError, jwt.ExpiredSignatureError):
+                            self.log.warn('.- Token is invalid for user. Path: %s' % request.rel_url)
+                            return self.json_response({'message': 'Token is invalid'}, status=400)
+                        request.user = User.objects.get(id=payload['user_id'])
+                    else:
+                        self.log.warn('.- No token available for user. Path: %s' % request.rel_url)
+                        self.log.warn('-- Headers: %s' % request.headers)
+                        return self.json_response({'message': 'Token is missing'}, status=400)
+                return await handler(request)
+            except aiohttp.web_exceptions.HTTPNotFound:
+                # 404's
+                pass
+            except:
+                self.log.error('!! error with jwt middleware handler', exc_info=True)
+
         return middleware
     
     def login_required(func):
@@ -245,20 +276,24 @@ class sofaWebUI():
         return self.json_response({'user': str(request.user)})
     
     async def login_post(self, request):
-        post_data = await request.post()
-        #self.log.info('Login request for %s' % data)
         try:
-            user = User.objects.get(email=post_data['user'])
-            user.match_password(post_data['password'])
-        except (User.DoesNotExist, User.PasswordDoesNotMatch):
-            return self.json_response({'message': 'Wrong credentials'}, status=400)
-    
-        payload = {
-            'user_id': user.id,
-            'exp': datetime.datetime.utcnow() + datetime.timedelta(seconds=self.JWT_EXP_DELTA_SECONDS)
-        }
-        jwt_token = jwt.encode(payload, self.JWT_SECRET, self.JWT_ALGORITHM)
-        return self.json_response({'token': jwt_token.decode('utf-8')})
+            post_data = await request.post()
+            #self.log.info('Login request for %s' % data)
+            try:
+                postuser=str(post_data['user']).lower()
+                user = User.objects.get(email=postuser)
+                user.match_password(post_data['password'])
+            except (User.DoesNotExist, User.PasswordDoesNotMatch):
+                return self.json_response({'message': 'Wrong credentials'}, status=400)
+        
+            payload = {
+                'user_id': user.id,
+                'exp': datetime.datetime.utcnow() + datetime.timedelta(seconds=self.JWT_EXP_DELTA_SECONDS)
+            }
+            jwt_token = jwt.encode(payload, self.JWT_SECRET, self.JWT_ALGORITHM)
+            return self.json_response({'token': jwt_token.decode('utf-8')})
+        except:
+            self.log.error('!! error with login post', exc_info=True)
 
     # End - This is the JWT testing code       
     
@@ -333,7 +368,7 @@ class sofaWebUI():
     async def logout_handler(self, request):
         try:
             redirect_response = web.HTTPFound('/')
-            await forget(request, redirect_response)
+            #await forget(request, redirect_response)
             raise redirect_response
         except:
             self.log.error('Error in login process', exc_info=True)
@@ -917,6 +952,7 @@ class sofaWebUI():
     async def sseDataUpdater(self, resp):
 
         try:
+            devoutput={}
             devices=list(self.dataset.devices.values())
 
             getByAdapter={} 
@@ -935,6 +971,9 @@ class sofaWebUI():
                 devstate = await f  # Await for next result.
                 devoutput={"event": { "header": { "name": "Multistate" }}, "state": devstate}
                 await resp.send(json.dumps(devoutput))
+
+        except concurrent.futures._base.CancelledError:
+            self.log.warn('.. sse update cancelled. %s' % devoutput)
                     
         except:
             self.log.error('Error sse list of devices', exc_info=True)

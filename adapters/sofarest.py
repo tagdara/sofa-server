@@ -273,23 +273,28 @@ class sofaRest():
             return web.Response(body=subset)
         except:
             self.log.info('error handling list', exc_info=True)
-
+            return web.Response(text="{}")
 
     async def listPostHandler(self, request):
         
-        subset={}
-        if request.body_exists:
-            try:
-                body=await request.read()
-                #item="%s?%s" % (request.match_info['list'], request.query_string)
-                item=request.match_info['list']
-                body=body.decode()
-                subset=await self.dataset.getList(request.match_info['list'], query=body)
-                self.log.info('List Query request for %s: %s' % (request.match_info['list'], body))
-            except:
-                self.log.info('error handling list query request', exc_info=True)
-                
-        return web.Response(text=json.dumps(subset, default=self.date_handler))
+        try:
+            subset={}
+            if request.body_exists:
+                try:
+                    body=await request.read()
+                    #item="%s?%s" % (request.match_info['list'], request.query_string)
+                    item=request.match_info['list']
+                    body=body.decode()
+                    subset=await self.dataset.getList(request.match_info['list'], query=body)
+                    self.log.info('List Query request for %s: %s' % (request.match_info['list'], body))
+                except:
+                    self.log.info('error handling list query request', exc_info=True)
+                    
+            return web.Response(text=json.dumps(subset, default=self.date_handler))
+        except:
+            self.log.info('error handling list post', exc_info=True)
+            return web.Response(text="{}")
+            
 
             
     async def saveHandler(self, request):

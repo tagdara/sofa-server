@@ -1159,7 +1159,7 @@ class alexaDevice(object):
         }
 
 
-    def Response(self, correlationToken='', controller='', payload={}):
+    def Response(self, correlationToken='', controller='', payload={}, override={}):
 
         return {
             "event": {
@@ -1179,6 +1179,7 @@ class alexaDevice(object):
             },
             "payload": payload
         }
+        
 
 class remoteAlexaDevice(object):
     # This is a representation of a device that is hosted on another adapter.  It should be used by
