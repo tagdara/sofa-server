@@ -1,6 +1,7 @@
 
 node_modules
 config
+cache
 log
 __pycache__
 *.pickle
@@ -8,3 +9,4 @@ gitpush
 test
 backup
 data
+adapters
