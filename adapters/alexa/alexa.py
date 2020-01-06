@@ -82,9 +82,15 @@ class alexaBridge(sofabase):
             self.polltime=1
             self.newGrant=False
             self.tokenRefresh=False
-            self.grant=self.loadJSON('alexagrant')
+            try:
+                self.grant=self.load_cache('alexagrant')
+            except:
+                self.grant={}
             if 'expires' in self.grant:
-                self.grant['expires']=datetime.datetime.strptime(self.grant['expires'].split('.')[0], '%Y-%m-%dT%H:%M:%S')    
+                self.grant['expires']=datetime.datetime.strptime(self.grant['expires'].split('.')[0], '%Y-%m-%dT%H:%M:%S') 
+            else:
+                self.grant['expires']=datetime.datetime.now()
+                
             self.log.info('.. Starting Alexa Bridge')
             try:
                 session = aiobotocore.get_session(loop=self.loop)
@@ -551,7 +557,7 @@ class alexaBridge(sofabase):
                 self.grant['access_token']=tokenresponse["access_token"]
                 self.grant['refresh_token']=tokenresponse["refresh_token"]
                 self.grant['expires']=datetime.datetime.now()+datetime.timedelta(0,int(tokenresponse["expires_in"]))
-                self.saveJSON('alexagrant', self.grant )
+                self.save_cache('alexagrant', self.grant )
                 self.tokenRefresh=False
                 self.log.info('New grant data: %s' % self.grant)
             except:
@@ -582,7 +588,7 @@ class alexaBridge(sofabase):
                 self.grant['access_token']=tokenresponse["access_token"]
                 self.grant['refresh_token']=tokenresponse["refresh_token"]
                 self.grant['expires']=datetime.datetime.now()+datetime.timedelta(0,int(tokenresponse["expires_in"]))
-                self.saveJSON('alexagrant', self.grant )
+                self.save_cache('alexagrant', self.grant )
                 self.tokenRefresh=False
                 self.newGrant=False
                 self.log.info('New grant data: %s' % self.grant)
@@ -594,7 +600,7 @@ class alexaBridge(sofabase):
             try:
                 self.log.info('++ new grant message: %s' % message)
                 self.grant={'code': message['directive']['payload']['grant']['code'], 'token':message['directive']['payload']['grantee']['token']}
-                self.saveJSON('alexagrant', self.grant )
+                self.save_cache('alexagrant', self.grant )
                 self.tokenRefresh=False
                 self.newGrant=True
                 return {

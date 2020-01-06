@@ -219,6 +219,8 @@ class homekitcamera(sofabase):
                 for drv in self.drivers:
                     self.log.info('.. Stopping driver %s...' % drv)
                     self.drivers[drv].stop()
+            except RuntimeError:
+                pass
             except:
                 self.log.error('!! Error stopping Accessory Bridge Driver', exc_info=True)
 
@@ -254,7 +256,7 @@ class homekitcamera(sofabase):
             try:
                 cam=device['endpointId']
                 camid=device['endpointId'].split(':')[2]
-                self.drivers[cam] = AccessoryDriver(port=51830+self.portindex, persist_file='/opt/sofa-server/config/homekitcamera-%s.json' % cam)
+                self.drivers[cam] = AccessoryDriver(port=51830+self.portindex, persist_file='/opt/sofa-server/cache/homekitcamera-%s.json' % cam)
                 self.portindex=self.portindex+1
                 self.log.info('++ Adding Homekit Camera: %s PIN: %s' % (device['friendlyName'], self.drivers[cam].state.pincode))
                 self.options['address']=self.dataset.config['ffmpeg_address'] # seems like it must be an IP address for whatever reason

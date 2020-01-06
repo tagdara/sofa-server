@@ -188,8 +188,11 @@ class sofaWebUI():
             self.serverApp.router.add_get('/lastupdate', self.sse_last_update_handler)
             
             self.serverApp.router.add_static('/log/', path=self.dataset.baseConfig['logDirectory'])
-            self.cors.add(self.serverApp.router.add_static('/client', path=self.config['client_build_directory'], append_version=True))
-            self.cors.add(self.serverApp.router.add_static('/fonts', path=self.config['client_build_directory']+"/fonts", append_version=True))
+            if os.path.isdir(self.config['client_build_directory']):
+                self.cors.add(self.serverApp.router.add_static('/client', path=self.config['client_build_directory'], append_version=True))
+                self.cors.add(self.serverApp.router.add_static('/fonts', path=self.config['client_build_directory']+"/fonts", append_version=True))
+            else:
+                self.log.error('!! Client build directory does not exist.  Cannot host client until this directory is created and this adapter is restarted')
 
             self.runner=aiohttp.web.AppRunner(self.serverApp)
             await self.runner.setup()

@@ -3,6 +3,8 @@
 import sys, os
 # Add relative paths for the directory where the adapter is located as well as the parent
 import json
+import subprocess
+import pprint
 
 class sofa_service_manager():
     
@@ -18,7 +20,7 @@ class sofa_service_manager():
                             "Service": {
                                 "Type": "simple",
                                 "ExecStart":"%s/adapters/%s/%s.py" % (basepath, adapter, adapter),
-                                "Restart":"Always",
+                                "Restart":"always",
                                 "RestartSec":"300",
                                 "KillMode":"control-group",
                             },
@@ -43,12 +45,63 @@ class sofa_service_manager():
         try:
             with open(servicefilename, "r") as servicefile:
                 serviceinfo=servicefile.read()
-            print('Contents of existing service file:')
-            print(serviceinfo)
+            print('Service exists: %s ' % servicefilename)
+            #print(serviceinfo)
+            return True
         except:
             print('could not open  %s' % servicefilename)
+            return False
+            
+    def check_service_running(self, servicefilename):
+        result = self.run_and_return("systemctl is-active --quiet %s" % servicefilename, True)
+        if result>0:
+            return False
+        return True
+            
+    def run_and_return(self, command, returncode=False):
+        result = subprocess.run(command.split(" "), stdout=subprocess.PIPE)
+        if returncode:
+            return result.returncode
+        else:
+            return result.stdout
         
+    def check_services(self, service_list):
         
+        pp = pprint.PrettyPrinter(indent=4, width=80, compact=True)
+        for service in service_list:
+            #try:
+                self.servicefilename=os.path.join('/etc/systemd/system', 'sofa-%s.service' % service)
+                service_exists=self.check_for_service(self.servicefilename)
+                if service_exists:
+                    service_running=self.check_service_running(self.servicefilename)
+                    print('.. %s service exists. running: %s / %s ' % (service, service_running, self.servicefilename))
+                else:
+                    service_running=False
+                    
+                if not service_running:
+                    if service_exists:
+                        result = self.run_and_return("systemctl stop sofa-%s.service" % service)
+                        print('.. %s service stop: %s' % (service, result))
+                        result = self.run_and_return("systemctl disable sofa-%s.service" % service)
+                        print('.. %s service disable: %s' % (service, result))
+                    self.contents=self.buildContents(self.config['baseDirectory'], service)
+                    output=self.systemd_formatter(self.contents)
+                    print('.. %s creating service file:  %s' % (service, self.servicefilename) )
+                    with open(self.servicefilename, "w") as servicefile:
+                        servicefile.write(output)
+                    result = self.run_and_return("systemctl daemon-reload")      
+                    print('.. %s daemon-reload: %s' % (service, result))
+                    result = self.run_and_return("systemctl enable sofa-%s.service" % service)
+                    print('.. %s service enable: %s' % (service, result))
+                    print(' .. %s starting service' % service)
+                    result = self.run_and_return("systemctl start sofa-%s.service" % service)
+                    pp.pprint('.. %s service start: %s' % (service, result))
+                
+                result = self.run_and_return("systemctl status sofa-%s.service --lines=0" % service)
+                pp.pprint('service status: %s' % result)
+            #except:
+            #    print('.. error while trying to add service for %s' % service)
+                
     def readBaseConfig(self):
 
         try:
@@ -78,16 +131,14 @@ class sofa_service_manager():
 
     def start(self):
         self.config=self.readBaseConfig()
-        self.servicefilename=os.path.join('/etc/systemd/system', 'sofa-%s.service' % self.adapter)
-        self.check_for_service(self.servicefilename)
-        self.contents=self.buildContents(self.config['baseDirectory'], self.adapter)
-        output=self.systemd_formatter(self.contents)
-        print('using path %s' % self.servicefilename )
-        with open(self.servicefilename, "w") as servicefile:
-            servicefile.write(output)
-        print(output)
+        if self.adapter=='all':
+            if 'adapters' in self.config:
+                self.check_services(self.config['adapters'])
+        else:
+            self.check_services([self.adapter])
         
 
 if __name__ == '__main__':
-    svcmgr=sofa_service_manager('homekitcamera')
+
+    svcmgr=sofa_service_manager(sys.argv[1])
     svcmgr.start()

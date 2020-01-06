@@ -174,7 +174,7 @@ class unifivideo(sofabase):
             try:
                 url="https://%s:%s/api/2.0/snapshot/camera/%s?force=true&width=640&apiKey=%s" % (self.dataset.config['nvr'], self.dataset.config['snapshot_port'], path, self.dataset.config['api_key'])
                 #self.log.info('URL: %s' % url)
-                async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(verify_ssl=False)) as client:
+                async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=False)) as client:
                     try:
                         async with client.get(url) as response:
                             result=await response.read()

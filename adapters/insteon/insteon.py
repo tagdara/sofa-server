@@ -21,8 +21,8 @@ import xml.etree.ElementTree as et
 import urllib.request
 import socket
 
-import deepdiff
-from deepdiff import DeepDiff
+#import deepdiff
+#from deepdiff import DeepDiff
 
 class insteonCatalog():
     

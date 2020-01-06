@@ -571,11 +571,11 @@ class homekit(sofabase):
             
             try:
                 self.log.info('Starting homekit')
-                await self.dataset.ingest({'accessorymap': self.loadJSON(self.dataset.config['accessory_map'])})
+                await self.dataset.ingest({'accessorymap': self.load_cache(self.dataset.config['accessory_map'])})
                 #self.log.info('Known devices: %s' % self.dataset.nativeDevices['accessorymap'])
                 self.getNewAid()
                 self.accloop=asyncio.new_event_loop()
-                self.driver = AccessoryDriver(port=self.dataset.config['accessory_port'], persist_file='/opt/sofa-server/config/accessory.state', pincode=self.dataset.config['pin_code'].encode('utf-8'))
+                self.driver = AccessoryDriver(port=self.dataset.config['accessory_port'], persist_file='/opt/sofa-server/cache/accessory.state', pincode=self.dataset.config['pin_code'].encode('utf-8'))
 
                 self.buildBridge()
                 self.driver.add_accessory(accessory=self.bridge)
@@ -600,6 +600,8 @@ class homekit(sofabase):
             try:
                 self.log.info('!. Stopping Accessory Bridge Driver')
                 self.driver.stop()
+            except RuntimeError:
+                pass
             except:
                 self.log.error('!! Error stopping Accessory Bridge Driver', exc_info=True)
 
@@ -706,7 +708,7 @@ class homekit(sofabase):
                         self.log.info('TS', exc_info=True)
                 #self.log.info('am: %s' % accmap)
                 await self.dataset.ingest({"accessorymap": accmap})
-                self.saveJSON(self.dataset.config['accessory_map'], accmap)
+                self.save_cache(self.dataset.config['accessory_map'], accmap)
             except:
                 self.log.error('Error in virt aid', exc_info=True)
                 
@@ -720,7 +722,7 @@ class homekit(sofabase):
                     if self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['device']['endpointId']!=device['endpointId']:
                         self.log.info('Fixing changed endpointId for %s from %s to %s' % (device['friendlyName'], self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['endpointId'], device['endpointId']))
                         self.dataset.nativeDevices['accessorymap'][device['friendlyName']]['device']=device                 
-                        self.saveJSON(self.dataset.config['accessory_map'], self.dataset.nativeDevices['accessorymap'])
+                        self.save_cache(self.dataset.config['accessory_map'], self.dataset.nativeDevices['accessorymap'])
                     response=await self.dataset.requestReportState(device['endpointId'])
                     #self.log.info('Already know about: %s' % device['friendlyName'])
                     return True

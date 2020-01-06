@@ -95,7 +95,7 @@ class tplink(sofabase):
                         strip = pyHS100.SmartStrip(dev)
                         sysinfo=strip.get_sysinfo()
                         sysinfo['address']=dev
-                        await self.dataset.ingest({'strip': { sysinfo['deviceId']: sysinfo}})
+                        await self.dataset.ingest({'strip': { sysinfo['deviceId']: sysinfo}}, mergeReplace=True)
                         for i,child_plug in enumerate(sysinfo['children']):
                             child_plug['parent']=sysinfo['deviceId']
                             child_plug['child_index']=i

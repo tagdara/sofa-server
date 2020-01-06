@@ -46,20 +46,56 @@ class adapterbase():
         try:
             with open(os.path.join(self.dataset.baseConfig['configDirectory'], '%s.json' % jsonfilename),'r') as jsonfile:
                 return json.loads(jsonfile.read())
+        except FileNotFoundError:
+            self.log.error('!! Error loading json - file does not exist: %s' % jsonfilename)
+            return {}
         except:
             self.log.error('Error loading pattern: %s' % jsonfilename,exc_info=True)
             return {}
-
-
+            
     def saveJSON(self, jsonfilename, data):
         
         try:
             jsonfile = open(os.path.join(self.dataset.baseConfig['configDirectory'], '%s.json' % jsonfilename), 'wt')
             json.dump(data, jsonfile, ensure_ascii=False, default=self.jsonDateHandler)
             jsonfile.close()
+
         except:
-            self.log.error('Error saving json to %s' % jsonfilename, exc_info=True)
-    
+            self.log.error('Error saving json: %s' % jsonfilename,exc_info=True)
+            return {}
+            
+    def load_cache(self, filename, json_format=True):
+        
+        try:
+            if json_format:
+                filename="%s.json" % filename
+            with open(os.path.join(self.dataset.baseConfig['cacheDirectory'], filename),'r') as cachefile:
+                if json_format:
+                    return json.loads(cachefile.read())
+                else:
+                    return cachefile.read()
+        except FileNotFoundError:
+            self.log.error('!! Error loading cache - file does not exist: %s' % filename)
+            return {}
+        except:
+            self.log.error('Error loading cache: %s' % filename,exc_info=True)
+            return {}
+
+    def save_cache(self, filename, data, json_format=True):
+        
+        try:
+            if json_format:
+                filename="%s.json" % filename
+            cachefile = open(os.path.join(self.dataset.baseConfig['cacheDirectory'], filename), 'wt')
+            if json_format:
+                json.dump(data, cachefile, ensure_ascii=False, default=self.jsonDateHandler)
+            else:
+                cachefile.write(data)
+            cachefile.close()
+        except:
+            self.log.error('Error saving cache to %s' % filename, exc_info=True)
+
+
     def addControllerProps(self, controllerlist, controller, prop):
         
         try:
