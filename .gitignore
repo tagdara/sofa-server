@@ -9,4 +9,4 @@ gitpush
 test
 backup
 data
-adapters
+adapters/*
