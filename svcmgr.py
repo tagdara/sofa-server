@@ -45,25 +45,34 @@ class sofa_service_manager():
         try:
             with open(servicefilename, "r") as servicefile:
                 serviceinfo=servicefile.read()
-            print('Service exists: %s ' % servicefilename)
             #print(serviceinfo)
             return True
         except:
             print('could not open  %s' % servicefilename)
             return False
             
-    def check_service_running(self, servicefilename):
-        result = self.run_and_return("systemctl is-active --quiet %s" % servicefilename, True)
-        if result>0:
+    def check_service_running(self, servicefilename, return_result="value"):
+        result = self.run_and_return("systemctl show -p ActiveState --value %s" % servicefilename, return_result)
+        if return_result=="value":
+            return result
+        if result!="active":
             return False
         return True
             
-    def run_and_return(self, command, returncode=False):
+    def run_and_return(self, command, return_result="value"):
         result = subprocess.run(command.split(" "), stdout=subprocess.PIPE)
-        if returncode:
+        if return_result=="code":
             return result.returncode
         else:
-            return result.stdout
+            return result.stdout.decode()
+
+    def check_status(self, service_list):
+        for service in service_list:        
+            self.servicefilename=os.path.join('/etc/systemd/system', 'sofa-%s.service' % service)
+            service_exists=self.check_for_service(self.servicefilename)
+            service_running=self.check_service_running(self.servicefilename, return_result="value")
+            print('.. %s service exists. running: %s / %s ' % (service, service_running, self.servicefilename))            
+
         
     def check_services(self, service_list):
         
@@ -131,7 +140,10 @@ class sofa_service_manager():
 
     def start(self):
         self.config=self.readBaseConfig()
-        if self.adapter=='all':
+        if self.adapter=='status':
+            self.check_status(self.config['adapters'])
+            
+        elif self.adapter=='all':
             if 'adapters' in self.config:
                 self.check_services(self.config['adapters'])
         else:

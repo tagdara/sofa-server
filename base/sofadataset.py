@@ -435,7 +435,6 @@ class sofaDataset():
                 patch = jsonpatch.JsonPatch.from_diff(self.oldNativeDevices, self.nativeDevices)
                 
             if patch:
-                self.log.info('.. patch: %s' % patch)
                 await self.checkDevicesForChanges(patch, oldDevices)
                 return patch
 
