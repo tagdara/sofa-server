@@ -30,7 +30,6 @@ class adapterbase():
     
     async def stop(self):
         self.log.info('Stopping adapter')
-        pass
         
     def jsonDateHandler(self, obj):
 
@@ -152,13 +151,18 @@ class sofabase():
         #log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s %(lineno)4d %(threadName)-.1s: %(message)s','%m/%d %H:%M:%S')
 
         #log_error_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s%(lineno)4d: %(message)s','%m/%d %H:%M:%S')
-        log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(name)s %(levelname).1s%(lineno)4d: %(message)s','%m/%d %H:%M:%S')
+        log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(filename).8s %(levelname).1s%(lineno)4d: %(message)s','%m/%d %H:%M:%S')
         logpath=os.path.join(logbasepath, logname)
         logfile=os.path.join(logpath,"%s.log" % logname)
+        errorfile=os.path.join(logpath,"%s.err.log" % logname)
         loglink=os.path.join(logbasepath,"%s.log" % logname)
         if not os.path.exists(logpath):
             os.makedirs(logpath)
         #check if a log file already exists and if so rotate it
+
+        log_error_handler = logging.FileHandler(errorfile)
+        log_error_handler.setFormatter(log_formatter)
+        log_error_handler.setLevel(logging.WARNING)
 
         needRoll = os.path.isfile(logfile)
         log_handler = RotatingFileHandler(logfile, mode='a', maxBytes=1024*1024, backupCount=5)
@@ -183,7 +187,9 @@ class sofabase():
         self.log =  logging.getLogger(logname)
         self.log.setLevel(getattr(logging,level))
         self.log.addHandler(log_handler)
+        self.log.addHandler(log_error_handler)
         self.log.addHandler(self.count_handler)
+
         if not os.path.exists(loglink):
             os.symlink(logfile, loglink)
         

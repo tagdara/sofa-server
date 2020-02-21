@@ -91,12 +91,9 @@ class sofaMQTT():
 
     def on_disconnect(self, client, packet, exc=None):
         try:
-            if self.client._reconnect:
-                self.log.info('-- mqtt server disconnected %s.  Will retry to connect ' % self.dataset.baseConfig['mqttBroker'])
-            else:
-                self.log.info('-- mqtt server disconnected %s.  Will not retry to connect' % self.dataset.baseConfig['mqttBroker'] )
+            self.log.info('-- mqtt server disconnected %s.  Will retry to connect ' % self.dataset.baseConfig['mqttBroker'])
         except:
-            self.log.error('Error server disconnected from client: %s' % client, exc_info=True)
+            self.log.error('!! Error server disconnected from client: %s' % client, exc_info=True)
         
     def on_message(self, client, topic, payload, qos, properties):
         try:
@@ -111,7 +108,7 @@ class sofaMQTT():
                             return True
                             
             except json.decoder.JSONDecodeError:
-                self.log.warn('JSON decode error', exc_info=True)
+                self.log.warn('.! JSON decode error', exc_info=True)
                 pass
 
             if hasattr(self.adapter, "adapterTopics"):
@@ -123,7 +120,7 @@ class sofaMQTT():
             self.log.debug('<< mqtt/%s %s' % (topic, payload.decode()))
             asyncio.tasks.ensure_future(self.processSofaMessage(topic, json.loads(payload.decode())))
         except:
-            self.log.error('Error handling message',exc_info=True)
+            self.log.error('!! Error handling message',exc_info=True)
 
     async def disconnectTopics(self):
 

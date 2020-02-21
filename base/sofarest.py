@@ -54,8 +54,10 @@ class sofaRest():
             self.serverApp.router.add_get('/thumbnail/{item:.+}', self.thumbnailHandler)
             self.serverApp.router.add_get('/list/{list:.+}', self.listHandler)
             self.serverApp.router.add_post('/list/{list:.+}', self.listPostHandler)
-
+            
             self.serverApp.router.add_get('/var/{list:.+}', self.varHandler)
+            
+            self.serverApp.router.add_post('/update/{item}', self.updatePostHandler)
             
             self.serverApp.router.add_post('/save/{save:.+}', self.saveHandler)
             self.serverApp.router.add_post('/add/{add:.+}', self.addHandler)
@@ -294,6 +296,28 @@ class sofaRest():
         except:
             self.log.info('error handling list post', exc_info=True)
             return web.Response(text="{}")
+
+    async def updatePostHandler(self, request):
+        
+        try:
+            if hasattr(self.adapter, "virtual_update"):
+                subset={}
+                if request.body_exists:
+                    try:
+                        body=await request.read()
+                        #item="%s?%s" % (request.match_info['list'], request.query_string)
+                        item=request.match_info['item']
+                        body=body.decode()
+                        response=await self.adapter.virtual_update(request.match_info['item'], data=body)
+                        self.log.info('Update request for %s: %s' % (request.match_info['item'], body))
+                    except:
+                        self.log.info('error handling list query request', exc_info=True)
+                    
+            return web.Response(text=json.dumps(response, default=self.date_handler))
+        except:
+            self.log.info('error handling list post', exc_info=True)
+            return web.Response(text="{}")
+
             
 
             
@@ -439,9 +463,11 @@ class sofaRest():
 
         
     async def statusHandler(self, request):
-        urls={ "native": "http://%s:%s/native" % (self.serverAddress, self.port), "devices": "http://%s:%s/devices" % (self.serverAddress, self.port)}
-        return web.Response(text=json.dumps({"mqtt": self.dataset.mqtt, "logged": self.dataset.logged_lines, "urls": urls}, default=self.date_handler))
-
+        try:
+            urls={ "native": "http://%s:%s/native" % (self.serverAddress, self.port), "devices": "http://%s:%s/devices" % (self.serverAddress, self.port)}
+            return web.Response(text=json.dumps({"name": self.dataset.adaptername, "mqtt": self.dataset.mqtt, "logged": self.dataset.logged_lines, "urls": urls}, default=self.date_handler))
+        except:
+            self.log.error('!! Error handling status request',exc_info=True)
     async def rootHandler(self, request):
 
         return web.Response(text=json.dumps(self.dataset.mqtt, default=self.date_handler))

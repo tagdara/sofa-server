@@ -370,6 +370,7 @@ class sofaDataset():
                 if len(item['path'].split('/'))<3:
                     # ignore top level category adds
                     continue
+
                 if item['op']=='add' and hasattr(self.adapter, "addSmartDevice"):
                     smartDevice=await self.adapter.addSmartDevice(item['path'])
                     if smartDevice:
@@ -382,12 +383,20 @@ class sofaDataset():
                     # Why the fuck are we using friendly names for keys in local devices instead of endpoint id's?
                     #if smartDevice and smartDevice.endpointId in oldDevicePropertyStates:
                     if smartDevice and smartDevice.endpointId not in done and smartDevice.friendlyName in oldDevicePropertyStates:
+                        #self.log.info('patch handling: %s %s' % (item, smartDevice))
                         newdev={}
                         olddev={}
                         for prop in smartDevice.propertyStates: 
-                            newdev[prop['namespace']+'.'+prop['name']]=prop
+                            # This is now taking into account multiple mode controllers
+                            if 'instance' in prop:
+                                newdev[prop['namespace']+'.'+prop['name']+"."+prop['instance']]=prop
+                            else:
+                                newdev[prop['namespace']+'.'+prop['name']]=prop
                         for prop in oldDevicePropertyStates[smartDevice.friendlyName]:
-                            olddev[prop['namespace']+'.'+prop['name']]=prop
+                            if 'instance' in prop:
+                                olddev[prop['namespace']+'.'+prop['name']+"."+prop['instance']]=prop
+                            else:
+                                olddev[prop['namespace']+'.'+prop['name']]=prop
                         controllers={}
                         for prop in newdev:
                             # We may need to walk through the resulting dictionary for values that have a dict
@@ -395,13 +404,17 @@ class sofaDataset():
                                 if newdev[prop]['namespace'] not in controllers:
                                     controllers[newdev[prop]['namespace']]=[]
                                 controllers[newdev[prop]['namespace']].append(newdev[prop]['name'])
-
                         if controllers:
                             changeReport=smartDevice.changeReport(controllers)
                             if changeReport:
                                 try:
+                                    changes="[> mqtt changes: %s %s -" % (smartDevice.friendlyName, smartDevice.endpointId)
                                     for prop in changeReport['event']['payload']['change']['properties']:
-                                        self.log.info('[> mqtt change: %s %s %s %s %s' % (smartDevice.friendlyName, smartDevice.endpointId, prop['namespace'], prop['name'], prop['value'] ))
+                                        if 'instance' in prop:
+                                            changes=changes+" %s.%s.%s %s" % (prop['namespace'], prop['instance'], prop['name'], prop['value'] )
+                                        else:
+                                            changes=changes+" %s.%s %s" % (prop['namespace'], prop['name'], prop['value'] )
+                                        self.log.info(changes)
                                 except:
                                     self.log.info('[> mqtt changereport: %s' % changeReport, exc_info=True)
                                 self.notify('sofa/updates',json.dumps(changeReport))
