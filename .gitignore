@@ -2,6 +2,7 @@
 node_modules
 config
 cache
+cache/*
 log
 __pycache__
 *.pickle
