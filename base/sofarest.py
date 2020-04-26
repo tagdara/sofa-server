@@ -50,6 +50,8 @@ class sofaRest():
             self.serverApp.router.add_post('/deviceStates', self.deviceStatesReportHandler)
             self.serverApp.router.add_get('/ReportState/{item}', self.deviceStateReportHandler)
             
+            self.serverApp.router.add_post('/nativegroup', self.nativeGroupHandler)
+            
             self.serverApp.router.add_get('/image/{item:.+}', self.imageHandler)
             self.serverApp.router.add_get('/thumbnail/{item:.+}', self.thumbnailHandler)
             self.serverApp.router.add_get('/list/{list:.+}', self.listHandler)
@@ -82,6 +84,14 @@ class sofaRest():
             self.log.error('!! Error starting REST server', exc_info=True)
             return False
 
+    def json_response(self, body='', **kwargs):
+        try:
+            kwargs['body'] = json.dumps(body or kwargs['body']).encode('utf-8')
+            kwargs['content_type'] = 'application/json'
+            return web.Response(**kwargs)
+        except:
+            self.log.error('!! error with json response', exc_info=True)
+            return web.Response({'body':''})
 
 
     def date_handler(self, obj):
@@ -272,10 +282,11 @@ class sofaRest():
         try:
             self.log.info('request: %s' % request.match_info['list'])
             subset=await self.dataset.getList(request.match_info['list'])
-            return web.Response(body=subset)
+            return self.json_response(subset)
+            #return web.Response(body=subset)
         except:
             self.log.info('error handling list', exc_info=True)
-            return web.Response(text="{}")
+            return self.json_response({})
 
     async def listPostHandler(self, request):
         
@@ -297,6 +308,26 @@ class sofaRest():
             self.log.info('error handling list post', exc_info=True)
             return web.Response(text="{}")
 
+    async def nativeGroupHandler(self, request):
+        
+        try:
+            response={}
+            if hasattr(self.adapter, "virtual_group_handler"):
+                subset={}
+                if request.body_exists:
+                    try:
+                        body=await request.read()
+                        body=body.decode()
+                        data=json.loads(body)
+                        result=await self.adapter.virtual_group_handler(data['controller'], data['devices'])
+                        self.log.info('<< native group %s: %s' % (body, result))
+                    except:
+                        self.log.info('!! error handling nativegroup request', exc_info=True)
+        except:
+            self.log.info('error handling list post', exc_info=True)
+        return web.Response(text=json.dumps(result, default=self.date_handler))
+
+
     async def updatePostHandler(self, request):
         
         try:
@@ -308,8 +339,8 @@ class sofaRest():
                         #item="%s?%s" % (request.match_info['list'], request.query_string)
                         item=request.match_info['item']
                         body=body.decode()
+                        self.log.info('>> update/%s: %s' % (request.match_info['item'], body))
                         response=await self.adapter.virtual_update(request.match_info['item'], data=body)
-                        self.log.info('Update request for %s: %s' % (request.match_info['item'], body))
                     except:
                         self.log.info('error handling list query request', exc_info=True)
                     
@@ -362,24 +393,25 @@ class sofaRest():
                 return web.Response(text='{"status":"failed", "reason":"Error with Add Handler"}')
 
     async def delHandler(self, request):
-        
-        if request.body_exists:
-            try:
-                outputData={}
+
+        try:
+            outputData={}
+            body={}
+            if request.body_exists:
                 body=await request.read()
-                #item="%s?%s" % (request.match_info['del'], request.query_string)
-                item=request.match_info['del']
                 body=body.decode()
-                self.log.info('Write request for %s: %s' % (request.match_info['del'], body))
-                if hasattr(self.adapter, "virtualDel"):
-                    result=await self.adapter.virtualDel(request.match_info['del'], body)
-                    return web.Response(text=result)
-                
-                return web.Response(text='{"status":"failed", "reason":"No Del Handler Available"}')
-                
-            except:
-                self.log.info('error handling del request', exc_info=True)
-                return web.Response(text='{"status":"failed", "reason":"Error with Del Handler"}')
+            #item="%s?%s" % (request.match_info['del'], request.query_string)
+            item=request.match_info['del']
+            self.log.info('Write request for %s: %s' % (request.match_info['del'], body))
+            if hasattr(self.adapter, "virtualDel"):
+                result=await self.adapter.virtualDel(request.match_info['del'], body)
+                return web.Response(text=result)
+            
+            return web.Response(text='{"status":"failed", "reason":"No Del Handler Available"}')
+            
+        except:
+            self.log.info('error handling del request', exc_info=True)
+            return web.Response(text='{"status":"failed", "reason":"Error with Del Handler"}')
 
 
     async def imageHandler(self, request):

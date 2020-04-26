@@ -117,7 +117,7 @@ class sofaMQTT():
                         asyncio.tasks.ensure_future(self.adapter.processAdapterTopicMessage(topic, payload.decode()))
                         return True
                         
-            self.log.debug('<< mqtt/%s %s' % (topic, payload.decode()))
+            #self.log.debug('<< mqtt/%s %s' % (topic, payload.decode()))
             asyncio.tasks.ensure_future(self.processSofaMessage(topic, json.loads(payload.decode())))
         except:
             self.log.error('!! Error handling message',exc_info=True)

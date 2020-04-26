@@ -61,10 +61,13 @@ class capabilityInterface(object):
         supported=[]
         for prop in self.props:
             supported.append({"name": prop})
+        baseprop={ "proactivelyReported": self.proactivelyReported, "retrievable": self.retrievable }
         if supported:
-            return { "proactivelyReported": self.proactivelyReported, "retrievable": self.retrievable, "supported": supported}
-        else:
-            return { "proactivelyReported": self.proactivelyReported, "retrievable": self.retrievable }
+            baseprop["supported"]=supported
+        if hasattr(self, 'nonControllable'):
+            baseprop["nonControllable"]=self.nonControllable
+
+        return baseprop
 
     @property
     def capability(self):
@@ -162,7 +165,12 @@ class StateController(capabilityInterface):
     async def Capture(self, correlationToken=''):
         
         try:
-            self.savedState=copy.deepcopy(self.device.propertyStates)
+            newstate=copy.deepcopy(self.device.propertyStates)
+            # this prevents recursive state from increasing object size
+            for propstate in newstate:
+                if propstate['name']=='savedState':
+                    newstate.remove(propstate)
+            self.savedState=newstate
             self.log.info('.. Captured state %s: %s' % (self.device.endpointId, self.savedState))
         except:
             self.log.error('!! Error capturing state for %s' % self.device.endpointId)
@@ -192,8 +200,8 @@ class StateController(capabilityInterface):
             powerOff=False
             # This is a shim to deal with brightness conflicts between the colorcontroller and the brightness controller
             if 'Alexa.BrightnessController.brightness' in oldprops and 'Alexa.ColorController.color' in oldprops:
-                if oldprops['Alexa.BrightnessController.brightness']/100!=oldprops['Alexa.ColorController.color']['brightness']:
-                    self.log.warn('Warning: brightness (%s) and color brightness (%s) do not match' % (oldprops['Alexa.BrightnessController.brightness'], oldprops['Alexa.ColorController.color']['brightness']))
+                if oldprops['Alexa.BrightnessController.brightness']!=int(oldprops['Alexa.ColorController.color']['brightness']*100):
+                    self.log.warn('Warning: brightness (%s) and color brightness (%s) do not match' % (oldprops['Alexa.BrightnessController.brightness'], int(oldprops['Alexa.ColorController.color']['brightness']*100)))
                     # it seems like the right answer is normally in the brightness value so overlaying this to minimize
                     # the number of required commands on color bulbs.
                     oldprops['Alexa.ColorController.color']['brightness']=oldprops['Alexa.BrightnessController.brightness']/100
@@ -250,6 +258,37 @@ class PowerLevelController(capabilityInterface):
     @property          
     def props(self):
         return { 'powerLevel' : { "value": "integer" }}
+
+
+class EnergySensor(capabilityInterface):
+
+    @property
+    def controller(self):
+        return "EnergySensor"
+
+    @property          
+    def props(self):
+        return { 'voltage' : { "value": "integer" }, "current": { "value": "integer" }, "power" : { "value": "integer" }, "total" : { "value": "integer" } }
+
+    @property
+    def namespace(self):
+        return "Sofa"
+
+    @property            
+    def voltage(self):
+        return 0
+
+    @property            
+    def current(self):
+        return 0
+            
+    @property            
+    def power(self):
+        return 0
+
+    @property            
+    def total(self):
+        return 0
 
 
 class ColorController(capabilityInterface):
@@ -338,10 +377,11 @@ class InputController(capabilityInterface):
 
 class ModeController(capabilityInterface):
    
-    def __init__(self, name='ModeController', device=None, friendlyNames=[], supportedModes=[], devicetype=None):
+    def __init__(self, name='ModeController', device=None, friendlyNames=[], supportedModes=[], devicetype=None, nonControllable=False):
         self.name=name
         self.device=device
         self._supportedModes=supportedModes
+        self.nonControllable=nonControllable
         
         self._friendlyNames=friendlyNames
         if not self._friendlyNames:
@@ -389,7 +429,7 @@ class ModeController(capabilityInterface):
 
     @property            
     def directives(self):
-        return { "SelectInput": { "input": "string" }}
+        return { "SetMode": { "mode": "string" }}
 
     @property          
     def props(self):
@@ -618,24 +658,37 @@ class LogicController(capabilityInterface):
     @property
     def controller(self):
         return "LogicController"
+        
+    @property
+    def namespace(self):
+        return "Sofa"
     
     @property
     def time(self):
         # should we really be returning UTC? datetime.datetime.now(datetime.timezone.utc).isoformat()[:-10]+"Z"
         return datetime.datetime.now()
+ 
+    @property
+    def sunset(self):
+        # should we really be returning UTC? datetime.datetime.now(datetime.timezone.utc).isoformat()[:-10]+"Z"
+        return datetime.datetime.now()
+
+    @property
+    def sunrise(self):
+        # should we really be returning UTC? datetime.datetime.now(datetime.timezone.utc).isoformat()[:-10]+"Z"
+        return datetime.datetime.now()
+
         
     @property            
     def directives(self):
         return {    "Delay": { "duration": "integer" }, 
                     "Alert": { "message": { "text":"string", "image":"string" }},
-                    "Capture": { "device": { "endpointId":"string" }},
-                    "Reset": { "device": { "endpointId":"string" }},
                     "Wait": {}
                 }
         
     @property          
     def props(self):
-        return { "time": { "start":"time", "end":"time" }}
+        return { "time": { "start":"time", "end":"time" }, "sunrise": { "value": "time"}, "sunset": { "value": "time"} }
 
         
 class MusicController(capabilityInterface):
@@ -886,7 +939,7 @@ class AdapterHealth(capabilityInterface):
 
 class alexaDevice(object):
     
-    def __init__(self, path, name, adapter=None, nativeObject=None, displayCategories=["OTHER"], description="Smart Device", manufacturerName="Sofa", modelName="", log=None, native=None):
+    def __init__(self, path, name, adapter=None, nativeObject=None, displayCategories=["OTHER"], description="Smart Device", manufacturerName="Sofa", modelName="", log=None, hidden=False, native=None):
         self._path=path
         self._friendlyName=name
         self._displayCategories=displayCategories
@@ -897,6 +950,7 @@ class alexaDevice(object):
         self.log=adapter.log
         self.adapter=adapter
         self.nativeObject=nativeObject
+        self.hidden=hidden
     
     @property
     def name(self):

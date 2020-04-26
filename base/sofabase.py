@@ -24,7 +24,55 @@ import sofadataset
 import sofarest
 import sofarequester
 
+from logging import handlers
 
+class DailyRotatingFileHandler(handlers.RotatingFileHandler):
+
+    def __init__(self, alias, basedir, mode='a', maxBytes=0, backupCount=0, encoding=None, delay=0):
+        """
+        @summary: 
+        Set self.baseFilename to date string of today.
+        The handler create logFile named self.baseFilename
+        """
+        self.basedir_ = basedir
+        self.alias_ = alias
+
+        self.baseFilename = self.getBaseFilename()
+
+        handlers.RotatingFileHandler.__init__(self, self.baseFilename, mode, maxBytes, backupCount, encoding, delay)
+
+    def getBaseFilename(self):
+        """
+        @summary: Return logFile name string formatted to "today.log.alias"
+        """
+        self.today_ = datetime.date.today()
+        basename_ = self.alias_+"."+self.today_.strftime("%Y-%m-%d") + ".log"
+        return os.path.join(self.basedir_, basename_)
+
+    def shouldRollover(self, record):
+        """
+        @summary: 
+        Rollover happen 
+        1. When the logFile size is get over maxBytes.
+        2. When date is changed.
+
+        @see: BaseRotatingHandler.emit
+        """
+
+        if self.stream is None:                
+            self.stream = self._open()
+
+        if self.maxBytes > 0 :                  
+            msg = "%s\n" % self.format(record)
+            self.stream.seek(0, 2)  
+            if self.stream.tell() + len(msg) >= self.maxBytes:
+                return 1
+
+        if self.today_ != datetime.date.today():
+            self.baseFilename = self.getBaseFilename()
+            return 1
+
+        return 0
 
 class adapterbase():
     
@@ -146,7 +194,7 @@ class sofabase():
         self.loop = asyncio.get_event_loop()
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10,)
 
-    def logsetup(self, logbasepath, logname, level="DEBUG", errorOnly=[]):
+    def logsetup(self, logbasepath, logname, level="INFO", errorOnly=[]):
 
         #log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s %(lineno)4d %(threadName)-.1s: %(message)s','%m/%d %H:%M:%S')
 
@@ -159,16 +207,21 @@ class sofabase():
         if not os.path.exists(logpath):
             os.makedirs(logpath)
         #check if a log file already exists and if so rotate it
+        
+        #log_error_handler = logging.FileHandler(errorfile)
+        log_error_handler = RotatingFileHandler(errorfile, logbasepath, mode='a', maxBytes=1024*1024, backupCount=5)
 
-        log_error_handler = logging.FileHandler(errorfile)
         log_error_handler.setFormatter(log_formatter)
         log_error_handler.setLevel(logging.WARNING)
-
-        needRoll = os.path.isfile(logfile)
+        if os.path.isfile(logfile):
+            log_handler.doRollover()
+            
         log_handler = RotatingFileHandler(logfile, mode='a', maxBytes=1024*1024, backupCount=5)
+        #log_handler = RotatingFileHandler(logname, logbasepath, mode='a', maxBytes=1024*1024, backupCount=5)
+
         log_handler.setFormatter(log_formatter)
         log_handler.setLevel(getattr(logging,level))
-        if needRoll:
+        if os.path.isfile(logfile):
             log_handler.doRollover()
             
         self.count_handler = MsgCounterHandler()
@@ -291,6 +344,11 @@ class sofabase():
         self.dataset.baseConfig=self.baseConfig
         self.dataset.config=self.readconfig()
         self.dataset.saveConfig=self.saveConfig
+        
+        if 'log_changes' in self.dataset.config and self.dataset.config['log_changes']==True:
+            pass
+        else:
+            self.log.info('.. this adapter is not logging device changes')
         
         self.requester=sofarequester.sofaRequester()
         

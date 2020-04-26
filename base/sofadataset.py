@@ -130,7 +130,8 @@ class sofaDataset():
             
         disco=[]
         for dev in self.localDevices:
-            disco.append(self.localDevices[dev].discoverResponse)
+            if not self.localDevices[dev].hidden:
+                disco.append(self.localDevices[dev].discoverResponse)
         return disco
 
     def deleteDevice(self, name):
@@ -221,8 +222,10 @@ class sofaDataset():
 
     def getDeviceByEndpointId(self, endpointId):
         
+        xl=[]
         # first check devices that are local to this adapter
         for device in self.localDevices:
+            xl.append(self.localDevices[device].endpointId)
             if self.localDevices[device].endpointId==endpointId:
                 return self.localDevices[device]
         
@@ -233,7 +236,9 @@ class sofaDataset():
                     return self.devices[device]
             except:
                 self.log.error('Error with %s' % self.devices[device], exc_info=True)
-                
+        
+        #self.log.info('.. did not find device %s in %s' % (endpointId,xl))
+        
         return None
     
     def getDeviceByfriendlyName(self, friendlyName):
@@ -276,6 +281,7 @@ class sofaDataset():
                 for cap in self.devices[device]['capabilities']:
                     if len(cap['interface'].split('.')) > 1:
                         capname=cap['interface'].split('.')[1]
+                        #self.log.info('cap: %s %s' % (self.devices[device]['friendlyName'], cap))
                         if capname not in directives:
                             try:
                                 controllerclass = getattr(devices, capname)
@@ -376,7 +382,8 @@ class sofaDataset():
                     if smartDevice:
                         self.log.info('++ AddOrUpdateReport: %s (%s)' % (smartDevice.friendlyName, smartDevice.endpointId))
                         #self.log.info('++ AddOrUpdateReport: %s (%s) %s' % (smartDevice.friendlyName, smartDevice.endpointId, smartDevice.addOrUpdateReport))
-                        self.notify('sofa/updates',json.dumps(smartDevice.addOrUpdateReport))
+                        if not smartDevice.hidden:
+                            self.notify('sofa/updates',json.dumps(smartDevice.addOrUpdateReport))
                         done.append(smartDevice.endpointId) 
                 else:
                     smartDevice=self.getDeviceByEndpointId("%s%s" % (self.adaptername, self.getObjectPath(item['path']).replace("/",":")))
@@ -414,7 +421,8 @@ class sofaDataset():
                                             changes=changes+" %s.%s.%s %s" % (prop['namespace'], prop['instance'], prop['name'], prop['value'] )
                                         else:
                                             changes=changes+" %s.%s %s" % (prop['namespace'], prop['name'], prop['value'] )
-                                        self.log.info(changes)
+                                        if 'log_changes' in self.config and self.config['log_changes']==True:
+                                            self.log.info(changes)
                                 except:
                                     self.log.info('[> mqtt changereport: %s' % changeReport, exc_info=True)
                                 self.notify('sofa/updates',json.dumps(changeReport))
@@ -444,7 +452,6 @@ class sofaDataset():
                     dpath.util.merge(self.nativeDevices, data, flags=dpath.util.MERGE_REPLACE)
                 else:
                     dpath.util.merge(self.nativeDevices, data)
-
                 patch = jsonpatch.JsonPatch.from_diff(self.oldNativeDevices, self.nativeDevices)
                 
             if patch:
@@ -636,12 +643,13 @@ class sofaDataset():
                 self.log.warn('!. No data received from post')
                 return {}
         
+        except concurrent.futures._base.TimeoutError:
+            self.log.error("!. Error - Timeout requesting state from %s: %s" % (adapter,data))
         except (aiohttp.client_exceptions.ClientConnectorError,
                 ConnectionRefusedError,
                 aiohttp.client_exceptions.ClientOSError,
                 concurrent.futures._base.CancelledError) as e:
             self.log.warn('!. Connection refused for adapter %s. %s' % (adapter, str(e)))       
-
         except:
             self.log.error("!. Error requesting state: %s" % data,exc_info=True)
       
@@ -715,7 +723,26 @@ class sofaDataset():
             self.log.error("Error requesting states for %s (%s)" % (adapter, devicelist),exc_info=True)
         
         return {}
+
+
+    async def checkNativeGroup(self, adapter, controller, devicelist):
     
+        try:
+            url=self.adapters[adapter]['url']+"/nativegroup"
+            self.log.info('>> checking for %s.%s in %s' % (devicelist, controller, adapter))
+            response=await self.restPost(url, {"controller":controller, "devices":devicelist})
+            if response:
+                self.log.info('<< %s %s response: %s' % (adapter, devicelist, response))    
+                return response
+
+        except ConnectionRefusedError:
+            self.log.error("Error sending Directive to Adapter: %s (connection refused)" % data)
+            
+        except:
+            self.log.error("Error sending Directive to Adapter: %s" % data,exc_info=True)
+        
+        return {}
+
                
     async def sendDirectiveToAdapter(self, data):
     
@@ -780,7 +807,11 @@ class sofaDataset():
                             response=await getattr(device_controller, directive)(*args, **kwargs)
                             return response
                 else:
-                    self.log.info('No interface found: %s %s' % (controller+'Interface', device.__dict__))
+                    if device:
+                        self.log.info('.! No interface found: %s %s' % (controller+'Interface', device.__dict__))
+                    else:
+                        self.log.info('.! No device found: %s %s' % (controller+'Interface', endpointId))
+                        
                 self.log.info('~~ Fallthrough on handle directive for %s' % data)
             except:
                 self.log.info('Could not run device integrated command: %s' % data, exc_info=True)
