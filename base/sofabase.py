@@ -76,6 +76,14 @@ class DailyRotatingFileHandler(handlers.RotatingFileHandler):
 
 class adapterbase():
     
+    @property
+    def collector(self):
+        return False 
+        
+    @property
+    def collector_categories(self):
+        return []  
+            
     async def stop(self):
         self.log.info('Stopping adapter')
         
@@ -155,6 +163,8 @@ class adapterbase():
                 
         return controllerlist
 
+
+
 class MsgCounterHandler(logging.Handler):
 
     def __init__(self, *args, **kwargs):
@@ -171,12 +181,68 @@ class sofabase():
     class adapterProcess():
         
         # AdapterProcess should be implemented independently by each adapter
-    
+
         def __init__(self, log):
             pass
         
         def get(self):
             pass
+        
+        async def stop(self):
+            self.log.info('Stopping adapter')
+
+        def alexa_json_filter(self, data, namespace="", level=0):
+            
+            # this function allows for logging alexa smarthome API commands while reducing unnecessary fields
+            
+            try:
+                out_data={}
+                if 'directive' in data:
+                    out_data['type']='Directive'
+                    out_data['name']=data['directive']['header']['name']
+                    out_data['namespace']=data['directive']['header']['namespace'].split('.')[1]
+                    out_data['endpointId']=data['directive']['endpoint']['endpointId']
+                    out_text="%s: %s/%s %s" % (out_data['type'], out_data['namespace'], out_data['name'], out_data['endpointId'])
+                    
+                elif 'event' in data:
+                    # CHEESE: Alexa API formatting is weird with the placement of payload
+                    out_data['type']='Event'
+                    out_data['name']=data['event']['header']['name']
+                    if data['event']['header']['name']=='ErrorResponse':
+                        return "%s: %s %s" % (out_data['name'], out_data['endpointId'], data['event']['payload'])    
+                    
+                    if data['event']['header']['namespace'].endswith('Discovery'):
+                        if 'payload' in data['event'] and 'endpoints' in data['event']['payload']:
+                            out_data['endpointId']='['
+                            for item in data['event']['payload']['endpoints']:
+                                out_data['endpointId']+=item['endpointId']+" "
+                        out_text="%s: %s" % (out_data['name'], out_data['endpointId'])    
+                        return out_text
+    
+                    out_data['endpointId']=data['event']['endpoint']['endpointId']
+                    out_text="%s: %s" % (out_data['name'], out_data['endpointId'])
+    
+                    if 'payload' in data['event'] and data['event']['payload']:
+                        out_text+=" %s" % data['event']['payload']
+                    elif 'payload' in data and data['payload']:
+                        out_text+=" %s" % data['payload']
+                        
+                    if namespace:
+                        out_text+=" %s:" % namespace
+                        if 'context' in data and 'properties' in data['context']:
+                            for prop in data['context']['properties']:
+                                if prop['namespace'].endswith(namespace):
+                                    out_text+=" %s : %s" % (prop['name'], prop['value'])
+    
+                else:
+                    self.log.info('.. unknown response to filter: %s' % data)
+                    return data
+    
+                return out_text
+            except:
+                self.log.error('Error parsing alexa json', exc_info=True)
+                return data
+
 
     def __init__(self, name=None, loglevel="INFO"):
         
@@ -194,6 +260,7 @@ class sofabase():
         self.loop = asyncio.get_event_loop()
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10,)
 
+
     def logsetup(self, logbasepath, logname, level="INFO", errorOnly=[]):
 
         #log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s %(lineno)4d %(threadName)-.1s: %(message)s','%m/%d %H:%M:%S')
@@ -209,12 +276,12 @@ class sofabase():
         #check if a log file already exists and if so rotate it
         
         #log_error_handler = logging.FileHandler(errorfile)
-        log_error_handler = RotatingFileHandler(errorfile, logbasepath, mode='a', maxBytes=1024*1024, backupCount=5)
+        log_error_handler = RotatingFileHandler(errorfile, mode='a', maxBytes=1024*1024, backupCount=5)
 
         log_error_handler.setFormatter(log_formatter)
         log_error_handler.setLevel(logging.WARNING)
         if os.path.isfile(logfile):
-            log_handler.doRollover()
+            log_error_handler.doRollover()
             
         log_handler = RotatingFileHandler(logfile, mode='a', maxBytes=1024*1024, backupCount=5)
         #log_handler = RotatingFileHandler(logname, logbasepath, mode='a', maxBytes=1024*1024, backupCount=5)
@@ -306,6 +373,7 @@ class sofabase():
         except:
             print('Did not get base config properly')
             sys.exit(1)
+
     
     def service_stop(self, sig=None):
         try:
@@ -315,21 +383,27 @@ class sofabase():
                     self.adapter.running=False
                     if hasattr(self.adapter, 'service_stop'):
                         self.adapter.service_stop()
-                    asyncio.ensure_future(self.adapter.stop())
+                    #asyncio.ensure_future(self.adapter.stop())
+
                 if self.restServer:
                     self.restServer.shutdown()
                 if self.executor:
                     self.log.info('Shutting down executor')
                     self.executor.shutdown()
-
+                    
+                tasks = asyncio.all_tasks(self.loop)
+                #expensive_tasks = {task for task in tasks if task._coro.__name__ != coro.__name__}
+                self.loop.run_until_complete(asyncio.gather(*tasks))
+                
             except:
                 self.log.error('!! error in service stop', exc_info=True)
             self.loop.stop()
         except:
             self.log.error('Error stopping loop', exc_info=True)
+
         
     def start(self):
-        self.log.info('.. Sofa 2 Adapter module initialized and starting.')
+        self.log.info('.. Sofa 2 Adapter module initialized and starting')
         signal.signal(signal.SIGTERM, self.service_stop)
         asyncio.set_event_loop(self.loop)
         for signame in {'SIGINT', 'SIGTERM'}:
@@ -350,51 +424,75 @@ class sofabase():
         else:
             self.log.info('.. this adapter is not logging device changes')
         
-        self.requester=sofarequester.sofaRequester()
+        #self.requester=sofarequester.sofaRequester()
         
-        self.log.info('.. starting MQTT client')
         self.restAddress = self.dataset.baseConfig['restAddress']
         self.restPort=self.dataset.config['rest_port']
         
-        self.mqttServer = sofamqtt.sofaMQTT(self.adaptername, self.restPort, self.restAddress, dataset=self.dataset, log=self.log)
+        mqtt_deprecated=True
+        if 'mqtt' in self.dataset.config and self.dataset.config['mqtt']==False:
+            mqtt_deprecated=True
+        
+        if not mqtt_deprecated:
+            self.log.info('.. starting MQTT client')
+            self.mqttServer = sofamqtt.sofaMQTT(self.adaptername, self.restPort, self.restAddress, dataset=self.dataset, log=self.log, deprecated=mqtt_deprecated)
 
-        self.dataset.notify=self.mqttServer.notify
-        self.dataset.notifyChanges=self.mqttServer.notifyChanges
-        self.dataset.mqttRequestReply=self.mqttServer.requestReply
+            self.dataset.notify=self.mqttServer.notify
+            self.dataset.notifyChanges=self.mqttServer.notifyChanges
+            self.dataset.mqttRequestReply=self.mqttServer.requestReply
+
+        self.log.info('.. starting main adapter %s' % self.adaptername)
+        if not mqtt_deprecated:
+            #self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=self.requester.request, loop=self.loop, executor=self.executor, token=self.restServer.token)
+            #self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=self.requester.request, loop=self.loop, executor=self.executor)
+            self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=None, loop=self.loop, executor=self.executor)
+
+        else:
+            #self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=None, discover=None, request=self.requester.request, loop=self.loop, executor=self.executor, token=self.restServer.token)
+            #self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=None, discover=None, request=self.requester.request, loop=self.loop, executor=self.executor)
+            self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=None, discover=None, request=None, loop=self.loop, executor=self.executor)
+        self.adapter.url='http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port'])
         
         self.log.info('.. starting REST server: http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port']))
-        self.restServer = sofarest.sofaRest(port=self.dataset.config['rest_port'], loop=self.loop, log=self.log, dataset=self.dataset)
+        self.restServer = sofarest.sofaRest(port=self.dataset.config['rest_port'], loop=self.loop, log=self.log, dataset=self.dataset, collector=self.adapter.collector, categories=self.adapter.collector_categories)
         result=self.restServer.initialize()
         if not result:
             self.loop.stop()
             self.loop.close()
             sys.exit(1)
-            
-
-        self.log.info('.. starting main adapter %s' % self.adaptername)
-        self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=self.requester.request, loop=self.loop, executor=self.executor)
         self.dataset.adapter=self.adapter
-        self.mqttServer.adapter=self.adapter
+        
+        if not mqtt_deprecated:
+            self.mqttServer.adapter=self.adapter
+        
         self.restServer.adapter=self.adapter
     
         # wait until the adapter is created to avoid a number of race conditions
-        self.loop.run_until_complete(self.mqttServer.connectServer())
-
+        if not mqtt_deprecated:
+            self.loop.run_until_complete(self.mqttServer.connectServer())
+            if not 'delay_discovery' in self.dataset.config or self.dataset.config['delay_discovery']==False:
+                self.loop.run_until_complete(self.mqttServer.discoverAdapters())
+        self.loop.run_until_complete(self.restServer.activate())
+        self.dataset.web_notify=self.restServer.notify_event_gateway
+        self.dataset.token=self.restServer.token
         self.adapter.running=True
+
+        #self.loop.run_until_complete(self.restServer.start_event_listener())
+
         self.loop.run_until_complete(self.adapter.start())
-
-        self.restServer.adapter=self.adapter
-
+        
+        if not mqtt_deprecated and 'delay_discovery' in self.dataset.config and self.dataset.config['delay_discovery']==True:
+            self.loop.run_until_complete(self.mqttServer.discoverAdapters())
         
         try:
-            self.log.info('Adapter primary loop running')
+            self.log.info('.. adapter primary loop running')
             self.loop.run_forever()
         except KeyboardInterrupt:
             pass
         except:
-            self.log.error('Loop terminated', exc_info=True)
-        finally:
-            self.service_stop()
+            self.log.error('.. adapter primary loop terminated', exc_info=True)
+        #finally:
+            #self.service_stop()
         
         self.log.info('.. stopping adapter %s' % self.adaptername)
         self.loop.close()

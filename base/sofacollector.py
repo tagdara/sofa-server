@@ -24,9 +24,17 @@ class SofaCollector(sofabase):
 
     # This is a variant of sofabase that listens for other adapters and collects information.  Generally this would be used for
     # UI, Logic, or other modules where state tracking of devices is important
-
+        
     class collectorAdapter(adapterbase):
-    
+
+        @property
+        def collector(self):
+            return True
+
+        @property
+        def collector_categories(self):
+            return ['ALL']
+
         async def discoverAdapterDevices(self, url):
             
             try:
@@ -134,6 +142,7 @@ class SofaCollector(sofabase):
                 
                 for dev in dead_devs:
                     del self.dataset.devices[dev]
+                    self.log.debug('.. removing device on adapter restart: %s' % dev)
             
             except:
                 self.log.error('Error scrubbing devices on adapter restart', exc_info=True)
@@ -149,7 +158,7 @@ class SofaCollector(sofabase):
                     for dev in devlist:
                         eplist.append(dev['friendlyName'])
                         #self.log.info('++ device added from mqtt: %s' % eplist)
-                        stateReport=await self.dataset.requestReportState(dev['endpointId'])
+                        stateReport=await self.dataset.requestReportState(dev['endpointId'], cookie={"adapter": self.dataset.adaptername})
                         #self.log.info('++ device updated from mqtt: %s' % stateReport)
 
             except:

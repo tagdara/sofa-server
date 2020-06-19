@@ -17,6 +17,7 @@ import functools
 import devices
 import sofamqtt
 import sofadataset
+from aiohttp_sse_client import client as sse_client
 
 class sofaRest():
         
@@ -467,8 +468,16 @@ class sofaRest():
             try:
                 body=await request.read()
                 jsondata=json.loads(body.decode())
-                self.log.debug('Post JSON: %s' % jsondata)
+                self.log.debug('>> Post JSON: %s %s' % (request.remote, jsondata))
+                if 'event' in jsondata:
+                    await self.dataset.processSofaMessage(jsondata)
+                    
                 if 'directive' in jsondata:
+                    if jsondata['directive']['header']['name']=='Discover':
+                        lookup=self.dataset.discovery()
+                        #self.log.info('>> discovery Devices: %s' % lookup)
+                        return web.Response(text=json.dumps(lookup, default=self.date_handler))
+
                     if jsondata['directive']['header']['name']=='ReportState':
                         try:
                             bearerToken=jsondata['directive']['endpoint']['scope']['token']
@@ -478,13 +487,17 @@ class sofaRest():
                         #self.log.info('Reportstate: %s %s' % (jsondata['directive']['endpoint']['endpointId'], jsondata['directive']['header']['correlationToken']))
                         response=self.dataset.generateStateReport(jsondata['directive']['endpoint']['endpointId'], correlationToken=jsondata['directive']['header']['correlationToken'], bearerToken=bearerToken)
                     else:
-                        self.log.info('<< %s %s / %s' % (jsondata['directive']['header']['name'],jsondata['directive']['endpoint']['endpointId'], jsondata))
+                        target_namespace=jsondata['directive']['header']['namespace'].split('.')[1]
+                        self.log.info('<< %s' % (self.dataset.alexa_json_filter(jsondata)))
                         response=await self.dataset.handleDirective(jsondata)
                         if response:
                             try:
-                                self.log.info('>> %s %s / %s' % (response['event']['header']['name'],response['event']['endpoint']['endpointId'], response))
+                                self.log.info('>> %s' % (self.dataset.alexa_json_filter(response, target_namespace)))
                             except:
                                 self.log.warn('>> %s' % response)
+        
+                #else:
+                #    self.log.info('<< Post JSON: %s' %  jsondata)
             except KeyError:
                 self.log.error('!! Invalid root request from %s: %s' % (request.remote, body))
             except:
@@ -497,7 +510,7 @@ class sofaRest():
     async def statusHandler(self, request):
         try:
             urls={ "native": "http://%s:%s/native" % (self.serverAddress, self.port), "devices": "http://%s:%s/devices" % (self.serverAddress, self.port)}
-            return web.Response(text=json.dumps({"name": self.dataset.adaptername, "mqtt": self.dataset.mqtt, "logged": self.dataset.logged_lines, "urls": urls}, default=self.date_handler))
+            return web.Response(text=json.dumps({"name": self.dataset.adaptername, "mqtt": self.dataset.mqtt, "logged": self.dataset.logged_lines, "native_size": self.dataset.getSizeOfNative(), "urls": urls}, default=self.date_handler))
         except:
             self.log.error('!! Error handling status request',exc_info=True)
     async def rootHandler(self, request):
@@ -507,18 +520,185 @@ class sofaRest():
     async def iconHandler(self, request):
 
         return web.Response(text="")
-
-
-
         
-    def shutdown(self):
-        asyncio.ensure_future(self.serverApp.shutdown())
+    async def retry_activation(self):
+        try:
+            await asyncio.sleep(20)                
+            self.activated=await self.activate()
+        except:
+            self.log.error('!! error retrying activation')
 
-    def __init__(self, port, loop, log=None, dataset={}):
+    async def publish_adapter_device(self):
+        try:
+            url="http://%s:%s" % (self.serverAddress, self.port)
+            device=devices.alexaDevice('%s/adapter/%s' % (self.dataset.adaptername, self.dataset.adaptername), self.dataset.adaptername, displayCategories=["ADAPTER"], adapter=self)
+            device.AdapterHealth=devices.AdapterHealth(device=device, url=url)
+            smartAdapter=self.dataset.newaddDevice(device)
+            self.log.info('++ AddOrUpdateReport: %s (%s)' % (smartAdapter.friendlyName, smartAdapter.endpointId))
+            await self.notify_event_gateway(smartAdapter.addOrUpdateReport)
+        except:
+            self.log.error('!! error publishing adapter', exc_info=True)
+
+    async def hub_watchdog(self):
+        try:
+            while self.activated:
+                url = '%s/status' % (self.dataset.baseConfig['hub_address'] )
+                headers = { 'authorization': self.token }
+                async with aiohttp.ClientSession() as client:
+                    async with client.get(url, headers=headers) as response:
+                        if response.status != 200:
+                            self.log.info('.. watchdog failed on hub')
+                            self.activated=False
+                            break
+                await asyncio.sleep(20)
+            
+            await self.activate()
+        except aiohttp.client_exceptions.ClientConnectorError:
+            await self.activate()
+        except:
+            self.log.error('!! error running watchdog', exc_info=True)
+
+    async def hub_discovery(self):
+
+        discovery_directive={   "directive": {
+                                    "header": {
+                                        "namespace": "Alexa.Discovery", 
+                                        "name": "Discover", 
+                                        "messageId": str(uuid.uuid1()),
+                                        "payloadVersion": "3"
+                                    },
+                                    "payload": {
+                                        "scope": {
+                                            "type": "BearerToken",
+                                            "token": "fake_temporary"
+                                        }
+                                    }
+                                }
+                            }
+
+
+        try:
+            if self.activated:
+                headers = { 'authorization': self.token }
+                async with aiohttp.ClientSession() as client:
+                    async with client.post(self.dataset.baseConfig['hub_address'], data=json.dumps(discovery_directive), headers=headers) as response:
+                        result=await response.read()
+                        result=result.decode()
+                        result=json.loads(result)
+                        await self.dataset.updateDeviceList(result['event']['payload']['endpoints'])
+                        self.log.info('.. discovered %s devices on hub @ %s' % (len(result['event']['payload']['endpoints']), self.dataset.baseConfig['hub_address']) )
+        except:
+            self.log.error('!! Error running discovery on hub: %s' % self.dataset.baseConfig['hub_address'] ,exc_info=True)
+        
+    async def activate(self):
+        try:
+            if self.dataset.adaptername=="hub":
+                self.log.info('.. activation not required for Hub adapter')
+                return True
+            if 'api_key' not in self.dataset.config:
+                self.dataset.config['api_key']=str(uuid.uuid1())
+                self.dataset.saveConfig()
+            url = '%s/activate' % (self.dataset.baseConfig['apiGateway'] )
+            self.log.info('>> Posting activation request to %s' % url)
+            data={ 'name':self.dataset.adaptername, 'api_key': self.dataset.config['api_key'], 'collector': self.collector, "categories": self.collector_categories, "type": "adapter", "url": "http://%s:%s" % (self.serverAddress, self.port) }
+            async with aiohttp.ClientSession() as client:
+                async with client.post(url, json=data) as response:
+                    if response.status == 200:
+                        result=await response.read()
+                        result=result.decode()
+                        self.log.debug('.. activation response: %s' % result)
+                        result=json.loads(result)
+                        if 'token' in result:
+                            self.log.info('.. received token: %s' % result['token'][-10:])
+                            self.token=result['token']
+                            self.token_expires=datetime.datetime.strptime(result['expiration'], '%Y-%m-%dT%H:%M:%S.%f')
+                            # supposedly supported in python 3.7 but does not seem to work in 3.7.3 on rpi
+                            #self.token_expires=datetime.fromisoformat(result['expiration'])
+                            self.activated=True
+                            if self.collector:
+                                asyncio.create_task(self.hub_discovery())    
+
+                            asyncio.create_task(self.hub_watchdog())
+                            return True
+                        else:
+                            self.log.debug('.. activation failed with response: %s' % result)
+                    else:
+                        self.log.error('.. activation failed with %s ' % response.status)
+
+        except aiohttp.client_exceptions.ClientConnectorError:
+            self.log.error('!! Error activating (could not connect)')
+        except:
+            self.log.error('!! Error activating', exc_info=True)
+        try:
+            asyncio.create_task(self.retry_activation())
+        except:
+            self.log.error('!! Error retrying activation', exc_info=True)            
+        return False
+
+
+    async def check_token_refresh(self, refresh_buffer=120):
+        try:
+            expire_seconds=0
+            if self.token_expires:
+                delta=(self.token_expires-datetime.datetime.now()).total_seconds()
+                expire_seconds=int(delta)
+            if expire_seconds<refresh_buffer:
+                self.log.info('.. token needs refresh')
+                self.activated=await self.activate()
+                if self.token_expires:
+                    delta=(self.token_expires-datetime.datetime.now()).total_seconds()
+                    expire_seconds=int(delta)
+        except:
+            self.log.error('error checking token expiration', exc_info=True)
+
+    async def notify_event_gateway(self, data):
+        try:
+            if self.activated:
+                await self.check_token_refresh()
+            if self.token and self.activated:
+                if self.dataset.adaptername=="ui" or self.dataset.adaptername=="hub":
+                    self.log.info('.. activation not required for Hub and UI adapter')
+                    return True
+                url = self.dataset.baseConfig['eventGateway'] 
+                headers = { 'authorization': self.token }
+                async with aiohttp.ClientSession() as client:
+                    async with client.post(url, json=data, headers=headers) as response:
+                        if response.status == 200:
+                            #self.log.info('>> event gateway: %s' % (self.adapter.alexa_json_filter(data)))
+                            result=await response.read()
+                            result=result.decode()
+                            if result!="{}":
+                                self.log.info('.. result: %s' % result)
+                        elif response.status == 401:
+                            self.log.info('.. error token is not valid: %s' % response.status)
+                            self.activated=False
+                            asyncio.create_task(self.activate())
+                        else:
+                            self.log.error('>! Error sending to event gateway: %s' % response.status, exc_info=True)
+            #else:
+            #    self.log.info('$$ did not forward to event gateway: %s %s' % (self.activated, self.token))
+        except aiohttp.client_exceptions.ClientConnectorError:
+            self.log.error('>! Error sending to event gateway (could not connect)', exc_info=True)
+        except:
+            self.log.error('.. error in event gateway notify', exc_info=True)
+
+
+    def shutdown(self):
+        #asyncio.ensure_future(self.serverApp.shutdown())
+        asyncio.create_task(self.serverApp.shutdown())
+
+    def __init__(self, port, loop, log=None, dataset={}, collector=False, categories=[]):
         self.port = port
         self.loop = loop
         self.workloadData={}
         self.log=log
         self.adapter=None
         self.dataset=dataset
+        self.activated=False
+        self.token=None
+        self.token_expires=0
+        self.collector=collector
+        self.url='http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port'])
+        self.collector_categories=categories
+
     

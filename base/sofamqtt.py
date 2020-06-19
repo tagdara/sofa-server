@@ -24,7 +24,7 @@ class sofaMQTT():
 
     # The Sofa MQTT Handler provides an process for pushing updates to MQTT
         
-    def __init__(self, adaptername, restPort, restAddress, dataset={}, log=None):
+    def __init__(self, adaptername, restPort, restAddress, dataset={}, log=None, deprecated=False):
         self.backlog=[]
         self.connected=False
         if log:
@@ -38,10 +38,11 @@ class sofaMQTT():
         self.restPort=restPort
         self.restAddress=restAddress
         self.dataset.mqtt={'connected':False, 'lastmessage':'', 'lasttime':'never', 'backlog':len(self.backlog)}
-        self.log.info('.. MQTT Module initialized')
+        self.log.info('.. MQTT Module initialized (deprecated for this module: %s)' % deprecated)
         self.pendingRequests=[]
         self.adapter_channels=[]
         self.pendingResponses={}
+        self.deprecated=deprecated
         
     def jsonDateHandler(self, obj):
 
@@ -139,10 +140,17 @@ class sofaMQTT():
                 self.client.subscribe(topic, qos=1)
 
             self.log.info(".. mqtt subscribed topics: %s" % topics)
+            #self.announceRest('sofa')
+            #self.notify('sofa','{"op":"discover"}')
+        except ClientException as ce:
+            self.log.error("!! mqtt client exception: %s" % ce)
+            
+    async def discoverAdapters(self):
+        try:
             self.announceRest('sofa')
             self.notify('sofa','{"op":"discover"}')
         except ClientException as ce:
-            self.log.error("!! mqtt client exception: %s" % ce)
+            self.log.error("!! mqtt client exception: %s" % ce)        
 
 
     def subscribeAdapterTopics(self):
@@ -242,7 +250,9 @@ class sofaMQTT():
                     #self.log.info('Adapter Announcement: %s' % message)
                     await self.dataset.register({message['adapter'] : { 'startup': message['startup'], 'address':message['address'], 'port':message['port'], "url": "http://%s:%s" % (message['address'],message['port'])}})
 
-            elif 'event' in message:
+            elif 'event' in message and not self.deprecated:
+                
+                #self.log.info('MQ message: %s' % message)
             
                 if 'correlationToken' in message['event']['header']:
                     try:

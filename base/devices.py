@@ -200,8 +200,8 @@ class StateController(capabilityInterface):
             powerOff=False
             # This is a shim to deal with brightness conflicts between the colorcontroller and the brightness controller
             if 'Alexa.BrightnessController.brightness' in oldprops and 'Alexa.ColorController.color' in oldprops:
-                if oldprops['Alexa.BrightnessController.brightness']!=int(oldprops['Alexa.ColorController.color']['brightness']*100):
-                    self.log.warn('Warning: brightness (%s) and color brightness (%s) do not match' % (oldprops['Alexa.BrightnessController.brightness'], int(oldprops['Alexa.ColorController.color']['brightness']*100)))
+                if oldprops['Alexa.BrightnessController.brightness']!=int(round(oldprops['Alexa.ColorController.color']['brightness'],2)*100):
+                    self.log.warn('Warning: brightness (%s) and color brightness (%s) do not match' % (oldprops['Alexa.BrightnessController.brightness'], int(round(oldprops['Alexa.ColorController.color']['brightness'],2)*100)))
                     # it seems like the right answer is normally in the brightness value so overlaying this to minimize
                     # the number of required commands on color bulbs.
                     oldprops['Alexa.ColorController.color']['brightness']=oldprops['Alexa.BrightnessController.brightness']/100
@@ -906,28 +906,28 @@ class EndpointHealth(capabilityInterface):
         return { "connectivity": { "value": "string"} }
         
 class AdapterHealth(capabilityInterface):
+ 
+    def __init__(self, device=None, url=""):
+        self._url=url
+        super().__init__(device=device)
     
     @property
     def controller(self):
         return "AdapterHealth"
 
     @property
-    def port(self):
-        return ''
-
-    @property
-    def address(self):
-        return ''
+    def url(self):
+        return self._url
   
-
     @property
     def state(self):
-        thisState=super().state
-        for item in thisState:
-            if item['name'] in ["connectivity"]:
-                item['value']={'value': item['value']}
+        return {}
+        #thisState=super().state
+        #for item in thisState:
+        #    if item['name'] in ["connectivity"]:
+        #        item['value']={'value': item['value']}
                 
-        return thisState
+        #return thisState
 
     @property            
     def directives(self):
@@ -935,7 +935,7 @@ class AdapterHealth(capabilityInterface):
 
     @property          
     def props(self):
-        return { "url": { "value": "string"}, "address": { "value": "string"},  "startup": { "value": "string"}, "port": { "value": "string"}, "logged": {"value": "dict" }}
+        return { "url": { "value": "string"}, "address": { "value": "string"},  "startup": { "value": "string"}, "port": { "value": "string"}, "logged": {"value": "dict" }, "datasize": { "value": "number" } }
 
 class alexaDevice(object):
     
@@ -1088,7 +1088,7 @@ class alexaDevice(object):
             "description": self.description,
             "manufacturerName": self.manufacturerName,
             "modelName": self.modelName,
-            "cookie": {},
+            "cookie": {"url": self.adapter.url},
             "capabilities": self.capabilities,
         }
         
@@ -1233,6 +1233,29 @@ class alexaDevice(object):
             },
             "payload": payload
         }
+
+    def ErrorResponse(self, correlationToken="", error_type="INTERNAL_ERROR", error_message="An unknown exception occurred"):
+
+        # Possible error messages are defined at https://developer.amazon.com/en-US/docs/alexa/device-apis/alexa-errorresponse.html
+        return {
+            "event": {
+                "header": {
+                    "name":"ErrorResponse",
+                    "payloadVersion": self.payloadVersion,
+                    "messageId":str(uuid.uuid1()),
+                    "namespace":self.namespace,
+                    "correlationToken":correlationToken
+                },
+                "endpoint": {
+                    "endpointId": self.endpointId
+                }
+            },
+            "payload": {
+                "type": error_type,
+                "message": error_message
+            }
+        }
+
         
 
 class remoteAlexaDevice(object):
@@ -1254,7 +1277,8 @@ class remoteAlexaDevice(object):
         self.log=localadapter.log
         self.adapter=localadapter
         self.nativeObject=None
-
+        self.adaptername=self.adapter.dataset.adaptername
+        self.url=self.adapter.url
 
 if __name__ == '__main__':
     pass
