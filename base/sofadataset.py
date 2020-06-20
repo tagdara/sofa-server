@@ -33,7 +33,7 @@ class sofaDataset():
         self.loop=loop
         self.mqtt={}
         self.nodevices=[]
-        self.restTimeout=20
+        self.restTimeout=2
         self.pendingRequests={}
 
     def count_items(self, d, ct):
@@ -412,10 +412,7 @@ class sofaDataset():
                     smartDevice=await self.adapter.addSmartDevice(item['path'])
                     if smartDevice:
                         self.log.info('++ AddOrUpdateReport: %s (%s)' % (smartDevice.friendlyName, smartDevice.endpointId))
-                        #self.log.info('++ AddOrUpdateReport: %s (%s) %s' % (smartDevice.friendlyName, smartDevice.endpointId, smartDevice.addOrUpdateReport))
                         if not smartDevice.hidden:
-                            if hasattr(self, "notify"):
-                                self.notify('sofa/updates',json.dumps(smartDevice.addOrUpdateReport))
                             if hasattr(self, "web_notify"):
                                 await self.web_notify(smartDevice.addOrUpdateReport)
                         done.append(smartDevice.endpointId) 
@@ -449,7 +446,7 @@ class sofaDataset():
                             changeReport=smartDevice.changeReport(controllers)
                             if changeReport:
                                 try:
-                                    changes="[> mqtt changes: %s %s -" % (smartDevice.friendlyName, smartDevice.endpointId)
+                                    changes="[> changes: %s %s -" % (smartDevice.friendlyName, smartDevice.endpointId)
                                     for prop in changeReport['event']['payload']['change']['properties']:
                                         if 'instance' in prop:
                                             changes=changes+" %s.%s.%s %s" % (prop['namespace'], prop['instance'], prop['name'], prop['value'] )
@@ -458,9 +455,9 @@ class sofaDataset():
                                         if 'log_changes' in self.config and self.config['log_changes']==True:
                                             self.log.info(changes)
                                 except:
-                                    self.log.info('[> mqtt changereport: %s' % changeReport, exc_info=True)
-                                if hasattr(self, "notify"):    
-                                    self.notify('sofa/updates',json.dumps(changeReport))
+                                    self.log.info('[> changereport: %s' % changeReport, exc_info=True)
+                                #if hasattr(self, "notify"):    
+                                #    self.notify('sofa/updates',json.dumps(changeReport))
                                 if hasattr(self, "web_notify"):
                                     await self.web_notify(changeReport)
                         done.append(smartDevice.endpointId) 
@@ -528,7 +525,7 @@ class sofaDataset():
                             event=self.adapter.virtualEventSource(item['path'], item)
                             if event:
                                 self.log.info('[> mqtt event: %s' % event, exc_info=True)
-                                self.notify('sofa/updates',json.dumps(event))
+                                #self.notify('sofa/updates',json.dumps(event))
                                 if hasattr(self, "web_notify"):
                                     await self.web_notify(event)
 
@@ -677,13 +674,17 @@ class sofaDataset():
             self.log.error('Error generating delete report: %s' % endpointId, exc_info=True)
             return {}
 
-    async def restPost(self, url, data={}, headers={ "Content-type": "text/xml" }, adapter=''):  
+    async def restPost(self, path="", data={}):  
         
         try:
-            if not url:
-                self.log.error('!! Error sending rest/post - no URL for %s' % data)
+            if self.token==None:
+                self.log.error('!! Error - no token %s' % self.token)
                 return {}
+            headers={ "Content-type": "text/xml", "authorization": self.token }
             timeout = aiohttp.ClientTimeout(total=self.restTimeout)
+            url=self.baseConfig['hub_address']
+            if path:
+                url=url+"/"+path
             async with aiohttp.ClientSession(timeout=timeout) as client:
                 response=await client.post(url, data=json.dumps(data), headers=headers)
                 result=await response.read()
@@ -692,59 +693,89 @@ class sofaDataset():
                         return json.loads(result.decode())
                     except:
                         self.log.info('bad json? %s' % result)
-                
+                        self.log.info('request? %s %s' % (path,data))
                 self.log.warn('!. No data received from post')
                 return {}
         
         except concurrent.futures._base.TimeoutError:
-            self.log.error("!. Error - Timeout requesting state from %s: %s" % (adapter,data))
+            self.log.error("!. Error - Timeout in rest post to %s: %s %s %s" % (url, headers, data))
         except (aiohttp.client_exceptions.ClientConnectorError,
                 ConnectionRefusedError,
                 aiohttp.client_exceptions.ClientOSError,
                 concurrent.futures._base.CancelledError) as e:
-            self.log.warn('!. Connection refused for adapter %s. %s' % (adapter, str(e)))       
+            self.log.warn('!. Connection refused. %s' % (str(e)))       
         except:
             self.log.error("!. Error requesting state: %s" % data,exc_info=True)
       
         return {}
 
+    async def generateStateReports(self, devlist, correlationToken='', bearerToken='', cookie={}):
+        
+        try:
+            result={}
+            for dev in devlist:
+                try:
+                    result[dev]=self.getDeviceByEndpointId(dev).StateReport()
+                    #result[dev]=self.dataset.getDeviceByfriendlyName(dev).StateReport()
+                #except AttributeError: 
+                #    self.log.warn('Warning - device was not ready for statereport: %s' % dev)
+                except:
+                    self.log.error('Error getting statereport for %s' % dev, exc_info=True)
+            return result    
 
-    async def requestReportState(self, endpointId, mqtt_topic=None, correlationToken='', bearerToken='', cookie={}):
+        except:
+            self.log.error('Error generating device states report: %s' % devlist, exc_info=True)
+        return result        
+
+
+
+    async def requestReportStates(self, devicelist, correlationToken='', bearerToken='', cookie={}):
+        
+        try:
+            reqstart=datetime.datetime.now()
+            if not correlationToken:
+                correlationToken=str(uuid.uuid1())
+
+            adapter=devicelist[0].split(":")[0]
+            if adapter==self.adaptername:
+                stateReports=self.generateStateReports(devicelist)
+            else:
+                reportStates=self.ReportStates(devicelist)
+                stateReports=await self.restPost(data=reportStates)
+
+
+            if (datetime.datetime.now()-reqstart).total_seconds()>0.5:
+                self.log.info('Warning - %s Report States took %s seconds to respond' % (adapter, (datetime.datetime.now()-reqstart).total_seconds()))
+            return stateReports
+        except:
+            self.log.error("Error requesting states for %s (%s)" % (adapter, devicelist),exc_info=True)
+        
+        return {}
+
+
+    async def requestReportState(self, endpointId, correlationToken='', bearerToken='', cookie={}):
         
         try:
             if endpointId not in self.devices:
                 self.log.info('.. requested ReportState for unknown device: %s' % endpointId)
-                self.log.info('.. devices: %s' % self.devices)
                 return {}
-            
-            if cookie=={}:
-                cookie={ "adapter" : self.adaptername }
-           
+
             if not correlationToken:
                 correlationToken=str(uuid.uuid1())
             
             reportState=self.ReportState(endpointId, correlationToken, bearerToken, cookie)
 
-            if mqtt_topic:
-                return await self.mqttRequestReply(reportState, correlationToken, topic=mqtt_topic)
-            
-            else:
-                adapter=endpointId.split(":")[0]
-                if adapter!=self.adaptername:
-                    url=await self.get_url_for_device(endpointId)
-                else:
-                    url=None
-                adapter=endpointId.split(":")[0]
-                #self.log.info('endpoint and adapter: %s %s %s' % (adapter, endpointId, url))
-                if not url:
-                    if adapter in self.adapters:
-                        url=self.adapters[adapter]['url']
+            adapter=endpointId.split(":")[0]
 
-                #url=self.adapters[adapter]['url']
-                statereport=await self.restPost(url, reportState)
-                if statereport and hasattr(self.adapter, "handleStateReport"):
-                    await self.adapter.handleStateReport(statereport)
-                    return statereport
+            if adapter==self.adaptername:
+                statereport=self.generateStateReport(endpointId, correlationToken=correlationToken, bearerToken=bearerToken)
+            else:
+                #self.log.info('rrs: %s %s' % (endpointId, reportState))
+                statereport=await self.restPost(data=reportState)
+
+            if statereport and hasattr(self.adapter, "handleStateReport"):
+                await self.adapter.handleStateReport(statereport)
+                return statereport
             
             self.log.warn('.! No State Report returned for %s' % endpointId)            
             return {}
@@ -754,7 +785,7 @@ class sofaDataset():
         
         return {}
         
-        
+
     def ReportState(self, endpointId, correlationToken='' , bearerToken='', cookie={}):
 
         return  {
@@ -777,35 +808,61 @@ class sofaDataset():
                 "payload": {}
             },
         }
-        
-    async def requestReportStates(self, adapter, devicelist):
+
+    def ReportStates(self, endpoint_list, correlationToken='' , bearerToken='', cookie={}):
+
+        return  {
+            "directive": {
+                "header": {
+                    "name":"ReportStates",
+                    "payloadVersion": 3,
+                    "messageId":str(uuid.uuid1()),
+                    "namespace":"Alexa",
+                    "correlationToken":correlationToken
+                },
+                "payload": {
+                    "endpoints": endpoint_list
+                }
+            },
+        }
+
+    async def old_requestReportStates(self, adapter, devicelist):
         
         try:
-            url=await self.get_url_for_device(devicelist[0])
-            reqstart=datetime.datetime.now()
-            if url or adapter in self.adapters:
-                #url=self.adapters[adapter]['url']+"/deviceStates"
-                url=url+"/deviceStates"
-                outdata=await self.restPost(url, devicelist, adapter=adapter)
-                if (datetime.datetime.now()-reqstart).total_seconds()>0.25:
-                    self.log.info('Warning - %s Report States took %s seconds to respond' % (adapter, (datetime.datetime.now()-reqstart).total_seconds()))
-                return outdata
-
+            outdata=await self.restPost(path="deviceStates", data=devicelist)
+            if (datetime.datetime.now()-reqstart).total_seconds()>0.25:
+                self.log.info('Warning - %s Report States took %s seconds to respond' % (adapter, (datetime.datetime.now()-reqstart).total_seconds()))
+            return outdata
         except:
             self.log.error("Error requesting states for %s (%s)" % (adapter, devicelist),exc_info=True)
         
         return {}
 
 
-    async def checkNativeGroup(self, adapter, controller, devicelist, url):
-    
+
+    async def checkNativeGroup(self, adapter, controller, devicelist, url, correlationToken=""):
+
+        directive=  {
+            "directive": {
+                "header": {
+                    "name":"CheckGroup",
+                    "payloadVersion": 3,
+                    "messageId":str(uuid.uuid1()),
+                    "namespace":"Alexa",
+                    "correlationToken":correlationToken
+                },
+                "payload": {
+                    "controllers": controller,
+                    "endpoints": devicelist
+                }
+            }
+        }
+
         try:
-            #url=await self.get_url_for_device(devicelist[0])
-            ngurl=url+"/nativegroup"
             self.log.debug('>> checking for %s.%s in %s' % (devicelist, controller, adapter))
-            response=await self.restPost(ngurl, {"controller":controller, "devices":devicelist})
+            response=await self.restPost(data=directive)
             if response:
-                self.log.debug('<< cng %s %s response: %s' % (adapter, devicelist, response))    
+                self.log.info('<< cng %s %s response: %s' % (adapter, devicelist, response))    
                 return response
 
         except ConnectionRefusedError:
@@ -822,42 +879,22 @@ class sofaDataset():
         try:
             device=None
             device=self.getDeviceByEndpointId(endpointId)
-            return device['cookie']['url']
+            if not device:
+                self.log.error('.. get_url for device - unknown device: %s' % endpointId)
+            try:
+                return device['cookie']['url']
+            except KeyError:
+                pass
+            adapter_name=endpointId.split(':')[0]
+            if adapter_name in self.adapters:
+                return self.adapters[adapter_name]['url']
+            
+            self.log.info('.. could not determine url for device: %s' % endpointId)
+            return None
         except:
             self.log.error("!! Error getting URL for device: %s %s" % (endpointId, device), exc_info=True)
         
                
-    async def old_sendDirectiveToAdapter(self, data, url=None):
-    
-        try:
-            adapter=data['directive']['endpoint']['endpointId'].split(":")[0]
-            if url:
-                url=url
-            elif adapter!=self.adaptername:
-                url=await self.get_url_for_device(data['directive']['endpoint']['endpointId'])
-
-            #url=self.adapters[adapter]['url']
-            directiveName=data['directive']['header']['name']
-            if adapter==self.adaptername:
-                self.log.info('=> %s %s' % (adapter, self.alexa_json_filter(data)))
-                response=await self.handleDirective(data)
-            else:
-                self.log.info('>> %s %s' % (adapter, self.alexa_json_filter(data)))
-                response=await self.restPost(url, data)
-            if response and hasattr(self.adapter, "handleResponse"):
-                await self.adapter.handleResponse(response)
-                self.log.info('<< %s %s response: %s' % (adapter, directiveName, self.alexa_json_filter(data)))    
-                return response
-
-        except ConnectionRefusedError:
-            self.log.error("Error sending Directive to Adapter: %s (connection refused)" % data)
-            
-        except:
-            self.log.error("Error sending Directive to Adapter: %s" % data,exc_info=True)
-        
-        return {}
-
-
     async def sendDirectiveToAdapter(self, data, url=None):
     
         try:
@@ -870,7 +907,7 @@ class sofaDataset():
                 response=await self.handleDirective(data)
             else:
                 self.log.info('>> %s %s' % (adapter, self.alexa_json_filter(data)))
-                response=await self.restPost(self.baseConfig['hub_address'], data)
+                response=await self.restPost(data=data)
             if response and hasattr(self.adapter, "handleResponse"):
                 await self.adapter.handleResponse(response)
                 self.log.info('<< %s %s response: %s' % (adapter, directiveName, self.alexa_json_filter(data)))    
@@ -999,65 +1036,4 @@ class sofaDataset():
             self.log.error('Error handling directive', exc_info=True)
         
         return response
-        
-    ## Moving some components from sofacollector
-    
-    async def updateDeviceList(self, objlist):
-        
-        for obj in objlist:
-            try:
-                self.devices[obj['endpointId']]=obj
-                #self.dataset.devices[obj['friendlyName']]=obj
-                if hasattr(self.adapter, "virtualAddDevice"):
-                    await self.adapter.virtualAddDevice(obj['endpointId'], obj)
-                    self.log.debug('.. added %s' % obj['endpointId'])
-                    #await self.virtualAddDevice(obj['friendlyName'], obj)
-            except:
-                self.log.error('Error updating device list: %s' % objlist[obj],exc_info=True)
-                
-    async def processSofaMessage(self, message):
-            
-        try:
-            if 'event' in message:
-                
-                #self.log.info('MQ message: %s' % message)
-            
-                if 'correlationToken' in message['event']['header']:
-                    try:
-                        if message['event']['header']['correlationToken'] in self.pendingRequests:
-                            self.pendingResponses[message['event']['header']['correlationToken']]=message
-                            self.pendingRequests.remove(message['event']['header']['correlationToken'])
-                    except:
-                        self.log.error('Error handling a correlation token response: %s ' % message, exc_info=True)
-
-
-                elif message['event']['header']['name']=='DoorbellPress':
-                    if message['event']['endpoint']['endpointId'].split(":")[0]!=self.adaptername:
-                        if hasattr(self.adapter, "handleAlexaEvent"):
-                            await self.adapter.handleAlexaEvent(message)
-            
-                elif message['event']['header']['name']=='StateReport':
-                    if message['event']['endpoint']['endpointId'].split(":")[0]!=self.adaptername:
-                        if hasattr(self.adapter, "handleStateReport"):
-                            await self.adapter.handleStateReport(message)
-
-                elif message['event']['header']['name']=='ChangeReport':
-                    if message['event']['endpoint']['endpointId'].split(":")[0]!=self.adaptername:
-                        if hasattr(self.adapter, "handleChangeReport"):
-                            await self.adapter.handleChangeReport(message)
-
-                elif message['event']['header']['name']=='DeleteReport':
-                    if hasattr(self.adapter, "handleDeleteReport"):
-                        await self.adapter.handleDeleteReport(message)
-
-                
-                elif message['event']['header']['name']=='AddOrUpdateReport':
-                    if hasattr(self.adapter, "handleAddOrUpdateReport"):
-                        await self.adapter.handleAddOrUpdateReport(message)
-                        #await self.adapter.handleAddOrUpdateReport(message['event']['payload']['endpoints'])
-                else:
-                    self.log.info('Message type not processed: %s' % message['event']['header']['name'])
-                
-        except:
-            self.log.error('Error processing MQTT Message', exc_info=True)
 

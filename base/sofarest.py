@@ -464,13 +464,23 @@ class sofaRest():
         #cmds=['SetBrightness', 'TurnOn', 'TurnOff', 'SetColorTemperature', 'SetColor', 'SetVolume', 'SetMute', 'Play', 'Pause', 'Stop', 'SetSurround', 'SetDecoder']
             
         response={}
+        if self.response_token==None:
+            self.log.info('.. adapter is not activated and no response_token has been generated. %s' % jsondata)
+            raise web.HTTPUnauthorized()
+        elif 'authorization' in request.headers:
+            if request.headers['authorization']!=self.response_token:
+                self.log.info('.. incorrect response_token: %s vs %s' % (request.headers['authorization'],self.response_token))
+                raise web.HTTPUnauthorized()
+        else:
+            self.log.info('.. no token was provided.')
+            raise web.HTTPUnauthorized()
         if request.body_exists:
             try:
                 body=await request.read()
                 jsondata=json.loads(body.decode())
-                self.log.debug('>> Post JSON: %s %s' % (request.remote, jsondata))
-                if 'event' in jsondata:
-                    await self.dataset.processSofaMessage(jsondata)
+                #self.log.info('>> Post JSON: %s %s' % ('event' in jsondata, hasattr(self.adapter,'process_event')))
+                if 'event' in jsondata and hasattr(self.adapter,'process_event'):
+                    await self.adapter.process_event(jsondata)
                     
                 if 'directive' in jsondata:
                     if jsondata['directive']['header']['name']=='Discover':
@@ -478,7 +488,12 @@ class sofaRest():
                         #self.log.info('>> discovery Devices: %s' % lookup)
                         return web.Response(text=json.dumps(lookup, default=self.date_handler))
 
-                    if jsondata['directive']['header']['name']=='ReportState':
+                    elif jsondata['directive']['header']['name']=='ReportStates':
+                        bearerToken=''
+                        #self.log.info('Reportstate: %s %s' % (jsondata['directive']['endpoint']['endpointId'], jsondata['directive']['header']['correlationToken']))
+                        response=await self.dataset.generateStateReports(jsondata['directive']['payload']['endpoints'], correlationToken=jsondata['directive']['header']['correlationToken'], bearerToken=bearerToken)
+
+                    elif jsondata['directive']['header']['name']=='ReportState':
                         try:
                             bearerToken=jsondata['directive']['endpoint']['scope']['token']
                         except:
@@ -486,6 +501,17 @@ class sofaRest():
                             bearerToken=''
                         #self.log.info('Reportstate: %s %s' % (jsondata['directive']['endpoint']['endpointId'], jsondata['directive']['header']['correlationToken']))
                         response=self.dataset.generateStateReport(jsondata['directive']['endpoint']['endpointId'], correlationToken=jsondata['directive']['header']['correlationToken'], bearerToken=bearerToken)
+
+                    elif jsondata['directive']['header']['name']=='CheckGroup':
+                        try:
+                            if hasattr(self.adapter, "virtual_group_handler"):
+                                result=await self.adapter.virtual_group_handler(jsondata['directive']['payload']['controllers'], jsondata['directive']['payload']['endpoints'])
+                                self.log.info('<< native group %s: %s' % (jsondata['directive']['payload'], result))
+                                return web.Response(text=json.dumps(result, default=self.date_handler))
+                        except:
+                            self.log.info('!! error handling nativegroup request', exc_info=True)
+                            response={}
+
                     else:
                         target_namespace=jsondata['directive']['header']['namespace'].split('.')[1]
                         self.log.info('<< %s' % (self.dataset.alexa_json_filter(jsondata)))
@@ -499,7 +525,7 @@ class sofaRest():
                 #else:
                 #    self.log.info('<< Post JSON: %s' %  jsondata)
             except KeyError:
-                self.log.error('!! Invalid root request from %s: %s' % (request.remote, body))
+                self.log.error('!! Invalid root request from %s: %s' % (request.remote, body), exc_info=True)
             except:
                 self.log.error('Error handling root request from %s: %s' % (request.remote, body),exc_info=True)
                 response={}
@@ -547,7 +573,7 @@ class sofaRest():
                 async with aiohttp.ClientSession() as client:
                     async with client.get(url, headers=headers) as response:
                         if response.status != 200:
-                            self.log.info('.. watchdog failed on hub')
+                            self.log.info('.. hub monitor failed to reply on status update check. attempting to re-activate adapter.')
                             self.activated=False
                             break
                 await asyncio.sleep(20)
@@ -585,13 +611,14 @@ class sofaRest():
                         result=await response.read()
                         result=result.decode()
                         result=json.loads(result)
-                        await self.dataset.updateDeviceList(result['event']['payload']['endpoints'])
+                        await self.adapter.updateDeviceList(result['event']['payload']['endpoints'])
                         self.log.info('.. discovered %s devices on hub @ %s' % (len(result['event']['payload']['endpoints']), self.dataset.baseConfig['hub_address']) )
         except:
             self.log.error('!! Error running discovery on hub: %s' % self.dataset.baseConfig['hub_address'] ,exc_info=True)
         
     async def activate(self):
         try:
+            self.response_token=str(uuid.uuid1())
             if self.dataset.adaptername=="hub":
                 self.log.info('.. activation not required for Hub adapter')
                 return True
@@ -599,9 +626,11 @@ class sofaRest():
                 self.dataset.config['api_key']=str(uuid.uuid1())
                 self.dataset.saveConfig()
             url = '%s/activate' % (self.dataset.baseConfig['apiGateway'] )
-            self.log.info('>> Posting activation request to %s' % url)
-            data={ 'name':self.dataset.adaptername, 'api_key': self.dataset.config['api_key'], 'collector': self.collector, "categories": self.collector_categories, "type": "adapter", "url": "http://%s:%s" % (self.serverAddress, self.port) }
-            async with aiohttp.ClientSession() as client:
+            data={ 'name':self.dataset.adaptername, 'response_token': self.response_token, 'api_key': self.dataset.config['api_key'], 'collector': self.collector, "categories": self.collector_categories, "type": "adapter", "url": "http://%s:%s" % (self.serverAddress, self.port) }
+
+            self.log.info('>> Posting activation request to %s - %s' % (url, data))
+            timeout = aiohttp.ClientTimeout(total=1)
+            async with aiohttp.ClientSession(timeout=timeout) as client:
                 async with client.post(url, json=data) as response:
                     if response.status == 200:
                         result=await response.read()
@@ -611,6 +640,7 @@ class sofaRest():
                         if 'token' in result:
                             self.log.info('.. received token: %s' % result['token'][-10:])
                             self.token=result['token']
+                            self.dataset.token=result['token']
                             self.token_expires=datetime.datetime.strptime(result['expiration'], '%Y-%m-%dT%H:%M:%S.%f')
                             # supposedly supported in python 3.7 but does not seem to work in 3.7.3 on rpi
                             #self.token_expires=datetime.fromisoformat(result['expiration'])
@@ -632,7 +662,8 @@ class sofaRest():
         try:
             asyncio.create_task(self.retry_activation())
         except:
-            self.log.error('!! Error retrying activation', exc_info=True)            
+            self.log.error('!! Error retrying activation', exc_info=True)        
+        self.devices={}
         return False
 
 
@@ -656,8 +687,8 @@ class sofaRest():
             if self.activated:
                 await self.check_token_refresh()
             if self.token and self.activated:
-                if self.dataset.adaptername=="ui" or self.dataset.adaptername=="hub":
-                    self.log.info('.. activation not required for Hub and UI adapter')
+                if self.dataset.adaptername=="hub":
+                    self.log.info('.. activation not required for Hub')
                     return True
                 url = self.dataset.baseConfig['eventGateway'] 
                 headers = { 'authorization': self.token }
@@ -696,6 +727,7 @@ class sofaRest():
         self.dataset=dataset
         self.activated=False
         self.token=None
+        self.response_token=None
         self.token_expires=0
         self.collector=collector
         self.url='http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port'])

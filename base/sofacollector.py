@@ -98,39 +98,6 @@ class SofaCollector(sofabase):
                 #self.log.error('Error with shortchange', exc_info=True)
                 return changereport
                 
-        async def handleAdapterAnnouncement(self, adapterdata, patch=[]):
-            
-            for adapter in adapterdata:
-                try:
-                    if patch:
-                        devlist={}
-                        for change in patch:
-                            if change['op']=='add':
-                                self.log.info('.. mqtt adapter discovered: %s (%s)' % (adapter, adapterdata[adapter]['url']))
-                                if hasattr(self, "virtualAddAdapter"):
-                                    await self.virtualAddAdapter(adapter, adapterdata[adapter])
-                                devlist=await self.discoverAdapterDevices(adapterdata[adapter]['url'])
-                                break
-                            elif change['path']=='/%s/startup' % adapter:
-                                self.log.info('.. mqtt adapter %s startup time change. Scanning for new devices' % adapter)
-                                await self.scrubDevicesOnStartup(adapter)
-                                if hasattr(self, "virtualUpdateAdapter"):
-                                    await self.virtualUpdateAdapter(adapter, adapterdata[adapter])
-                                
-                                # This should be unnecessary because once the startup is complete the adapter sends each device in an 
-                                # AddOrUpdate Report
-                                #devlist=await self.discoverAdapterDevices(adapterdata[adapter]['url'])
-                                #self.log.info('.. new devices: %s' % devlist)
-                                break
-                                
-                        if devlist:
-                            eplist=[]
-                            for dev in devlist:
-                                eplist.append(dev['friendlyName'])
-                            self.log.info('++ devices added from %s: %s' % (adapter, eplist))
-                            await self.updateDeviceList(devlist)
-                except:
-                    self.log.error('Error handling announcement: %s ' % adapterdata[adapter], exc_info=True)
 
         async def scrubDevicesOnStartup(self, adaptername):
             
@@ -156,9 +123,14 @@ class SofaCollector(sofabase):
                     await self.updateDeviceList(devlist)
                     eplist=[]
                     for dev in devlist:
-                        eplist.append(dev['friendlyName'])
+                        eplist.append(dev['endpointId'])
+
+                    stateReports=await self.dataset.requestReportStates(eplist)
+                    #eplist=[]
+                    #for dev in devlist:
+                    #    eplist.append(dev['friendlyName'])
                         #self.log.info('++ device added from mqtt: %s' % eplist)
-                        stateReport=await self.dataset.requestReportState(dev['endpointId'], cookie={"adapter": self.dataset.adaptername})
+                    #    stateReport=await self.dataset.requestReportState(dev['endpointId'], cookie={"adapter": self.dataset.adaptername})
                         #self.log.info('++ device updated from mqtt: %s' % stateReport)
 
             except:
@@ -264,4 +236,52 @@ class SofaCollector(sofabase):
             except:
                 self.log.error('Error executing Alexa Command: %s %s %s %s' % (command, controller, endpointId, payload), exc_info=True)
                 return {}
+
+
+        async def process_event(self, message, source=None):
+            
+            # Only Collector modules should need to handle Event messages
+            try:
+                if 'event' in message:
+                    try:
+                        if message['event']['endpoint']['endpointId'].split(":")[0]==self.dataset.adaptername:
+                            return False
+                    except KeyError:
+                        pass
+
+                    if 'correlationToken' in message['event']['header']:
+                        try:
+                            if message['event']['header']['correlationToken'] in self.pendingRequests:
+                                self.pendingResponses[message['event']['header']['correlationToken']]=message
+                                self.pendingRequests.remove(message['event']['header']['correlationToken'])
+                        except:
+                            self.log.error('Error handling a correlation token response: %s ' % message, exc_info=True)
+    
+                    elif message['event']['header']['name']=='DoorbellPress':
+                        if hasattr(self, "handleAlexaEvent"):
+                            await self.handleAlexaEvent(message)
+                
+                    elif message['event']['header']['name']=='StateReport':
+                        if hasattr(self, "handleStateReport"):
+                            await self.handleStateReport(message)
+    
+                    elif message['event']['header']['name']=='ChangeReport':
+                        if hasattr(self, "handleChangeReport"):
+                            await self.handleChangeReport(message)
+    
+                    elif message['event']['header']['name']=='DeleteReport':
+                        if hasattr(self, "handleDeleteReport"):
+                            await self.handleDeleteReport(message)
+                    
+                    elif message['event']['header']['name']=='AddOrUpdateReport':
+                        if hasattr(self, "handleAddOrUpdateReport"):
+                            await self.handleAddOrUpdateReport(message)
+
+                    else:
+                        self.log.info('Message type not processed: %s' % message['event']['header']['name'])
+                    
+            except:
+                self.log.error('Error processing MQTT Message', exc_info=True)
+
+
 

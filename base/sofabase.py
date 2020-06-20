@@ -19,7 +19,7 @@ import functools
 import devices
 import signal
 
-import sofamqtt
+#import sofamqtt
 import sofadataset
 import sofarest
 import sofarequester
@@ -364,8 +364,8 @@ class sofabase():
                 baseconfig['baseDirectory']=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
             if 'logDirectory' not in baseconfig:
                 baseconfig['logDirectory']=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'log'))
-            if 'mqttBroker' not in baseconfig:
-                baseconfig['mqttBroker']='localhost'
+#            if 'mqttBroker' not in baseconfig:
+#                baseconfig['mqttBroker']='localhost'
             if 'restAddress' not in baseconfig:
                 baseconfig['restAddress']='localhost'
 
@@ -429,28 +429,28 @@ class sofabase():
         self.restAddress = self.dataset.baseConfig['restAddress']
         self.restPort=self.dataset.config['rest_port']
         
-        mqtt_deprecated=True
-        if 'mqtt' in self.dataset.config and self.dataset.config['mqtt']==False:
-            mqtt_deprecated=True
+#        mqtt_deprecated=True
+#        if 'mqtt' in self.dataset.config and self.dataset.config['mqtt']==False:
+#            mqtt_deprecated=True
         
-        if not mqtt_deprecated:
-            self.log.info('.. starting MQTT client')
-            self.mqttServer = sofamqtt.sofaMQTT(self.adaptername, self.restPort, self.restAddress, dataset=self.dataset, log=self.log, deprecated=mqtt_deprecated)
+#        if not mqtt_deprecated:
+#            self.log.info('.. starting MQTT client')
+#            self.mqttServer = sofamqtt.sofaMQTT(self.adaptername, self.restPort, self.restAddress, dataset=self.dataset, log=self.log, deprecated=mqtt_deprecated)
 
-            self.dataset.notify=self.mqttServer.notify
-            self.dataset.notifyChanges=self.mqttServer.notifyChanges
-            self.dataset.mqttRequestReply=self.mqttServer.requestReply
+#            self.dataset.notify=self.mqttServer.notify
+#            self.dataset.notifyChanges=self.mqttServer.notifyChanges
+#            self.dataset.mqttRequestReply=self.mqttServer.requestReply
 
         self.log.info('.. starting main adapter %s' % self.adaptername)
-        if not mqtt_deprecated:
+#        if not mqtt_deprecated:
             #self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=self.requester.request, loop=self.loop, executor=self.executor, token=self.restServer.token)
             #self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=self.requester.request, loop=self.loop, executor=self.executor)
-            self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=None, loop=self.loop, executor=self.executor)
+#            self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=None, loop=self.loop, executor=self.executor)
 
-        else:
+#        else:
             #self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=None, discover=None, request=self.requester.request, loop=self.loop, executor=self.executor, token=self.restServer.token)
             #self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=None, discover=None, request=self.requester.request, loop=self.loop, executor=self.executor)
-            self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=None, discover=None, request=None, loop=self.loop, executor=self.executor)
+        self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=None, discover=None, request=None, loop=self.loop, executor=self.executor)
         self.adapter.url='http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port'])
         
         self.log.info('.. starting REST server: http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port']))
@@ -462,16 +462,17 @@ class sofabase():
             sys.exit(1)
         self.dataset.adapter=self.adapter
         
-        if not mqtt_deprecated:
-            self.mqttServer.adapter=self.adapter
+#        if not mqtt_deprecated:
+#            self.mqttServer.adapter=self.adapter
         
         self.restServer.adapter=self.adapter
-    
+        if hasattr(self.adapter,'pre_activate'):
+            self.loop.run_until_complete(self.adapter.pre_activate())
         # wait until the adapter is created to avoid a number of race conditions
-        if not mqtt_deprecated:
-            self.loop.run_until_complete(self.mqttServer.connectServer())
-            if not 'delay_discovery' in self.dataset.config or self.dataset.config['delay_discovery']==False:
-                self.loop.run_until_complete(self.mqttServer.discoverAdapters())
+#        if not mqtt_deprecated:
+#            self.loop.run_until_complete(self.mqttServer.connectServer())
+#            if not 'delay_discovery' in self.dataset.config or self.dataset.config['delay_discovery']==False:
+#                self.loop.run_until_complete(self.mqttServer.discoverAdapters())
         self.loop.run_until_complete(self.restServer.activate())
         self.dataset.web_notify=self.restServer.notify_event_gateway
         self.dataset.token=self.restServer.token
@@ -481,8 +482,8 @@ class sofabase():
 
         self.loop.run_until_complete(self.adapter.start())
         
-        if not mqtt_deprecated and 'delay_discovery' in self.dataset.config and self.dataset.config['delay_discovery']==True:
-            self.loop.run_until_complete(self.mqttServer.discoverAdapters())
+#        if not mqtt_deprecated and 'delay_discovery' in self.dataset.config and self.dataset.config['delay_discovery']==True:
+#            self.loop.run_until_complete(self.mqttServer.discoverAdapters())
         
         try:
             self.log.info('.. adapter primary loop running')
