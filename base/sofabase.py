@@ -390,7 +390,7 @@ class sofabase():
                 if self.executor:
                     self.log.info('Shutting down executor')
                     self.executor.shutdown()
-                    
+                self.loop.stop()   
                 tasks = asyncio.all_tasks(self.loop)
                 #expensive_tasks = {task for task in tasks if task._coro.__name__ != coro.__name__}
                 self.loop.run_until_complete(asyncio.gather(*tasks))
@@ -411,10 +411,8 @@ class sofabase():
                 getattr(signal, signame),
                 functools.partial(self.service_stop, signame))
 
-
         self.dataset=sofadataset.sofaDataset(self.log, adaptername=self.adaptername, loop=self.loop)
         self.dataset.logged_lines=self.count_handler.logged_lines
-        #self.dataset.baseConfig=self.readBaseConfig()
         self.dataset.baseConfig=self.baseConfig
         self.dataset.config=self.readconfig()
         self.dataset.saveConfig=self.saveConfig
@@ -424,67 +422,36 @@ class sofabase():
         else:
             self.log.info('.. this adapter is not logging device changes')
         
-        #self.requester=sofarequester.sofaRequester()
-        
         self.restAddress = self.dataset.baseConfig['restAddress']
         self.restPort=self.dataset.config['rest_port']
         
-#        mqtt_deprecated=True
-#        if 'mqtt' in self.dataset.config and self.dataset.config['mqtt']==False:
-#            mqtt_deprecated=True
-        
-#        if not mqtt_deprecated:
-#            self.log.info('.. starting MQTT client')
-#            self.mqttServer = sofamqtt.sofaMQTT(self.adaptername, self.restPort, self.restAddress, dataset=self.dataset, log=self.log, deprecated=mqtt_deprecated)
-
-#            self.dataset.notify=self.mqttServer.notify
-#            self.dataset.notifyChanges=self.mqttServer.notifyChanges
-#            self.dataset.mqttRequestReply=self.mqttServer.requestReply
-
         self.log.info('.. starting main adapter %s' % self.adaptername)
-#        if not mqtt_deprecated:
-            #self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=self.requester.request, loop=self.loop, executor=self.executor, token=self.restServer.token)
-            #self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=self.requester.request, loop=self.loop, executor=self.executor)
-#            self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=self.mqttServer.notify, discover=self.mqttServer.discover, request=None, loop=self.loop, executor=self.executor)
-
-#        else:
-            #self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=None, discover=None, request=self.requester.request, loop=self.loop, executor=self.executor, token=self.restServer.token)
-            #self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=None, discover=None, request=self.requester.request, loop=self.loop, executor=self.executor)
         self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=None, discover=None, request=None, loop=self.loop, executor=self.executor)
         self.adapter.url='http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port'])
         
         self.log.info('.. starting REST server: http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port']))
         self.restServer = sofarest.sofaRest(port=self.dataset.config['rest_port'], loop=self.loop, log=self.log, dataset=self.dataset, collector=self.adapter.collector, categories=self.adapter.collector_categories)
+
         result=self.restServer.initialize()
+
         if not result:
             self.loop.stop()
             self.loop.close()
             sys.exit(1)
+            
         self.dataset.adapter=self.adapter
-        
-#        if not mqtt_deprecated:
-#            self.mqttServer.adapter=self.adapter
-        
         self.restServer.adapter=self.adapter
+
+        self.adapter.running=True
         if hasattr(self.adapter,'pre_activate'):
             self.loop.run_until_complete(self.adapter.pre_activate())
-        # wait until the adapter is created to avoid a number of race conditions
-#        if not mqtt_deprecated:
-#            self.loop.run_until_complete(self.mqttServer.connectServer())
-#            if not 'delay_discovery' in self.dataset.config or self.dataset.config['delay_discovery']==False:
-#                self.loop.run_until_complete(self.mqttServer.discoverAdapters())
+
         self.loop.run_until_complete(self.restServer.activate())
         self.dataset.web_notify=self.restServer.notify_event_gateway
         self.dataset.token=self.restServer.token
-        self.adapter.running=True
-
-        #self.loop.run_until_complete(self.restServer.start_event_listener())
-
         self.loop.run_until_complete(self.adapter.start())
         
-#        if not mqtt_deprecated and 'delay_discovery' in self.dataset.config and self.dataset.config['delay_discovery']==True:
-#            self.loop.run_until_complete(self.mqttServer.discoverAdapters())
-        
+
         try:
             self.log.info('.. adapter primary loop running')
             self.loop.run_forever()
@@ -492,9 +459,7 @@ class sofabase():
             pass
         except:
             self.log.error('.. adapter primary loop terminated', exc_info=True)
-        #finally:
-            #self.service_stop()
-        
+
         self.log.info('.. stopping adapter %s' % self.adaptername)
         self.loop.close()
 

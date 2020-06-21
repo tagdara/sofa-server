@@ -155,15 +155,31 @@ class sofaDataset():
             return {}
 
 
-    def discovery(self):
+    async def discovery(self):
     
         # respond to discovery with list of local devices
+
+        disco =  {
+            "event": {
+                "header": {
+                    "namespace": "Alexa.Discovery",
+                    "name": "Discover.Response",
+                    "payloadVersion": "3",
+                    "messageId":  str(uuid.uuid1()),
+                },
+                "payload": {
+                    "endpoints": []          
+                }
+            }
+        }
             
-        disco=[]
         for dev in self.localDevices:
             if not self.localDevices[dev].hidden:
-                disco.append(self.localDevices[dev].discoverResponse)
+                disco['event']['payload']['endpoints'].append(self.localDevices[dev].discoverResponse)
+                
         return disco
+
+
 
     def deleteDevice(self, name):
             
@@ -253,10 +269,8 @@ class sofaDataset():
 
     def getDeviceByEndpointId(self, endpointId):
         
-        xl=[]
         # first check devices that are local to this adapter
         for device in self.localDevices:
-            xl.append(self.localDevices[device].endpointId)
             if self.localDevices[device].endpointId==endpointId:
                 return self.localDevices[device]
         
@@ -267,8 +281,6 @@ class sofaDataset():
                     return self.devices[device]
             except:
                 self.log.error('Error with %s' % self.devices[device], exc_info=True)
-        
-        #self.log.info('.. did not find device %s in %s' % (endpointId,xl))
         
         return None
     
@@ -698,7 +710,7 @@ class sofaDataset():
                 return {}
         
         except concurrent.futures._base.TimeoutError:
-            self.log.error("!. Error - Timeout in rest post to %s: %s %s %s" % (url, headers, data))
+            self.log.error("!. Error - Timeout in rest post to %s: %s %s" % (url, headers, data))
         except (aiohttp.client_exceptions.ClientConnectorError,
                 ConnectionRefusedError,
                 aiohttp.client_exceptions.ClientOSError,
@@ -708,6 +720,42 @@ class sofaDataset():
             self.log.error("!. Error requesting state: %s" % data,exc_info=True)
       
         return {}
+
+    async def restGet(self, path=""):  
+        
+        try:
+            if self.token==None:
+                self.log.error('!! Error - no token %s' % self.token)
+                return {}
+            headers={ "Content-type": "text/xml", "authorization": self.token }
+            timeout = aiohttp.ClientTimeout(total=self.restTimeout)
+            url=self.baseConfig['hub_address']
+            if path:
+                url=url+"/"+path
+            async with aiohttp.ClientSession(timeout=timeout) as client:
+                response=await client.get(url, headers=headers)
+                result=await response.read()
+                if result:
+                    try:
+                        return json.loads(result.decode())
+                    except:
+                        self.log.info('bad json? %s' % result)
+                        self.log.info('request? %s %s' % (path,data))
+                self.log.warn('!. No data received from post')
+                return {}
+        
+        except concurrent.futures._base.TimeoutError:
+            self.log.error("!. Error - Timeout in rest post to %s: %s %s" % (url, headers, data))
+        except (aiohttp.client_exceptions.ClientConnectorError,
+                ConnectionRefusedError,
+                aiohttp.client_exceptions.ClientOSError,
+                concurrent.futures._base.CancelledError) as e:
+            self.log.warn('!. Connection refused. %s' % (str(e)))       
+        except:
+            self.log.error("!. Error requesting state: %s" % data,exc_info=True)
+      
+        return {}
+
 
     async def generateStateReports(self, devlist, correlationToken='', bearerToken='', cookie={}):
         
@@ -744,8 +792,9 @@ class sofaDataset():
                 stateReports=await self.restPost(data=reportStates)
 
 
-            if (datetime.datetime.now()-reqstart).total_seconds()>0.5:
-                self.log.info('Warning - %s Report States took %s seconds to respond' % (adapter, (datetime.datetime.now()-reqstart).total_seconds()))
+            if (datetime.datetime.now()-reqstart).total_seconds()>2:
+                # typically takes about .5 seconds
+                self.log.info('.. Warning - %s Report States took %s seconds to respond' % (adapter, (datetime.datetime.now()-reqstart).total_seconds()))
             return stateReports
         except:
             self.log.error("Error requesting states for %s (%s)" % (adapter, devicelist),exc_info=True)
@@ -780,8 +829,11 @@ class sofaDataset():
             self.log.warn('.! No State Report returned for %s' % endpointId)            
             return {}
 
+        except concurrent.futures._base.TimeoutError:
+            self.log.error("!! Error requesting state for %s (timeout)" % endpointId,exc_info=True)
+
         except:
-            self.log.error("Error requesting state for %s" % endpointId,exc_info=True)
+            self.log.error("!! Error requesting state for %s" % endpointId,exc_info=True)
         
         return {}
         
@@ -929,10 +981,17 @@ class sofaDataset():
         
         try:
             out_data={}
-            if 'directive' in data:
+            
+            if data=={}:
+                return ""
+            elif 'directive' in data:
                 out_data['type']='Directive'
                 out_data['name']=data['directive']['header']['name']
-                out_data['namespace']=data['directive']['header']['namespace'].split('.')[1]
+                if '.' in data['directive']['header']['namespace']:
+                    out_data['namespace']=data['directive']['header']['namespace'].split('.')[1]
+                else:
+                    out_data['namespace']=data['directive']['header']['namespace'] # some commands like reportstate have just 'Alexa' as the namespace
+                    
                 if 'endpoint' in data['directive'] and 'endpointId' in data['directive']['endpoint']:
                     out_data['endpointId']=data['directive']['endpoint']['endpointId']
                 else:
@@ -993,7 +1052,10 @@ class sofaDataset():
             directive=data['directive']['header']['name']
             payload=data['directive']['payload']
             correlationToken=data['directive']['header']['correlationToken']
-            cookie=data['directive']['endpoint']['cookie']
+            if 'cookie' in data['directive']['endpoint']:
+                cookie=data['directive']['endpoint']['cookie']
+            else:
+                cookie=""
             try:
                 device_controller=None
                 device=self.getDeviceByEndpointId(endpointId)
@@ -1036,4 +1098,59 @@ class sofaDataset():
             self.log.error('Error handling directive', exc_info=True)
         
         return response
+        
+    def date_handler(self, obj):
+        
+        if hasattr(obj, 'isoformat'):
+            return obj.isoformat()
+        else:
+            self.log.info('Caused type error: %s' % obj)
+            raise TypeError
 
+    async def handle_local_directive(self, data):
+
+        response={}
+        try:
+            if 'directive' in data:
+                if data['directive']['header']['name']=='Discover':
+                    lookup=await self.discovery()
+                    return lookup
+    
+                elif data['directive']['header']['name']=='ReportStates':
+                    bearerToken=''
+                    #self.log.info('Reportstate: %s %s' % (data['directive']['endpoint']['endpointId'], data['directive']['header']['correlationToken']))
+                    response=await self.generateStateReports(data['directive']['payload']['endpoints'], correlationToken=data['directive']['header']['correlationToken'], bearerToken=bearerToken)
+    
+                elif data['directive']['header']['name']=='ReportState':
+                    try:
+                        bearerToken=data['directive']['endpoint']['scope']['token']
+                    except:
+                        self.log.info('No bearer token')
+                        bearerToken=''
+                    #self.log.info('Reportstate: %s %s' % (data['directive']['endpoint']['endpointId'], data['directive']['header']['correlationToken']))
+                    response=self.generateStateReport(data['directive']['endpoint']['endpointId'], correlationToken=data['directive']['header']['correlationToken'], bearerToken=bearerToken)
+    
+                elif data['directive']['header']['name']=='CheckGroup':
+                    try:
+                        if hasattr(self.adapter, "virtual_group_handler"):
+                            result=await self.adapter.virtual_group_handler(data['directive']['payload']['controllers'], data['directive']['payload']['endpoints'])
+                            self.log.info('<< native group %s: %s' % (data['directive']['payload'], result))
+                            return result
+                    except:
+                        self.log.info('!! error handling nativegroup request', exc_info=True)
+                        response={}
+    
+                else:
+                    target_namespace=data['directive']['header']['namespace'].split('.')[1]
+                    self.log.info('<< %s' % (self.alexa_json_filter(data)))
+                    response=await self.handleDirective(data)
+                    if response:
+                        try:
+                            self.log.info('>> %s' % (self.alexa_json_filter(response, target_namespace)))
+                        except:
+                            self.log.warn('>> %s' % response)
+            return response
+        
+        except:
+            self.log.error('!! error with local directive processing', exc_info=True)
+        return {}

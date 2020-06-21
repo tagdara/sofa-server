@@ -124,8 +124,10 @@ class SofaCollector(sofabase):
                     eplist=[]
                     for dev in devlist:
                         eplist.append(dev['endpointId'])
-
+                    self.log.info('++ AddOrUpdate %s devices. Now %s total devices.'  % (len(eplist), len(self.dataset.devices)))
                     stateReports=await self.dataset.requestReportStates(eplist)
+                else:
+                    self.log.warning('!? warning no endpoints in payload: %s' % message)
                     #eplist=[]
                     #for dev in devlist:
                     #    eplist.append(dev['friendlyName'])
@@ -141,11 +143,8 @@ class SofaCollector(sofabase):
             for obj in objlist:
                 try:
                     self.dataset.devices[obj['endpointId']]=obj
-                    #self.dataset.devices[obj['friendlyName']]=obj
                     if hasattr(self, "virtualAddDevice"):
                         await self.virtualAddDevice(obj['endpointId'], obj)
-                        #await self.virtualAddDevice(obj['friendlyName'], obj)
-
                 except:
                     self.log.error('Error updating device list: %s' % objlist[obj],exc_info=True)
 

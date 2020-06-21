@@ -92,8 +92,9 @@ class capabilityInterface(object):
     @property
     def state(self):
         supported=[]
-
+        
         for prop in self.props:
+
             try:
                 data={
                         "name": prop,
@@ -118,6 +119,11 @@ class capabilityInterface(object):
 # Work in progress - very different from other device types        
 class CameraStreamController(capabilityInterface):
 
+    def __init__(self, device=None):
+        self.streaming=False
+        self.heartbeat=None
+        super().__init__(device=device)
+
     @property
     def controller(self):
         return "CameraStreamController"
@@ -137,11 +143,16 @@ class CameraStreamController(capabilityInterface):
 
     @property            
     def directives(self):
-        return { 'InitializeCameraStreams' : { "cameraStreams": "list" } }
+        return { 'InitializeCameraStreams' : { "cameraStreams": "list" }, "KeepAlive": {} }
 
     @property          
     def props(self):
         return {}
+        
+    async def KeepAlive(self, correlationToken="", bearerToken=""):
+        self.log.info('.. keepalive: %s' % self.device.friendlyName)
+        self.heartbeat=datetime.datetime.now()
+
 
 
 class StateController(capabilityInterface):
@@ -906,10 +917,10 @@ class EndpointHealth(capabilityInterface):
         return { "connectivity": { "value": "string"} }
         
 class AdapterHealth(capabilityInterface):
- 
-    def __init__(self, device=None, url=""):
-        self._url=url
-        super().__init__(device=device)
+
+    @property
+    def namespace(self):
+        return "Sofa"
     
     @property
     def controller(self):
@@ -917,25 +928,27 @@ class AdapterHealth(capabilityInterface):
 
     @property
     def url(self):
-        return self._url
-  
-    @property
-    def state(self):
-        return {}
-        #thisState=super().state
-        #for item in thisState:
-        #    if item['name'] in ["connectivity"]:
-        #        item['value']={'value': item['value']}
-                
-        #return thisState
+        return ""
 
     @property            
     def directives(self):
         return {}
+        
+    @property            
+    def startup(self):
+        return ''
 
+    @property            
+    def datasize(self):
+        return 0
+
+    @property            
+    def logged(self):
+        return {'ERROR':0, 'INFO':0}    
+        
     @property          
     def props(self):
-        return { "url": { "value": "string"}, "address": { "value": "string"},  "startup": { "value": "string"}, "port": { "value": "string"}, "logged": {"value": "dict" }, "datasize": { "value": "number" } }
+        return { "url": { "value": "string"},  "startup": { "value": "string"}, "logged": {"value": "dict" }, "datasize": { "value": "number" } }
 
 class alexaDevice(object):
     

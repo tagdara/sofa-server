@@ -20,14 +20,6 @@ import sofadataset
 from aiohttp_sse_client import client as sse_client
 
 class sofaRest():
-        
-    # The Sofa Rest Handler provides an http request framework for retrieving the current state of an adapter
-    
-    # API
-    #       /status         - Show basic status and health of the adapter
-    #       /native         - List native devices and their properties
-    #       /discovery      - List device discovery data in Alexa format
-    
     
     def initialize(self):
             
@@ -203,7 +195,7 @@ class sofaRest():
 
 
     async def deviceLookupHandler(self, request):
-        lookup=self.dataset.discovery()
+        lookup=await self.dataset.discovery()
         #self.log.info('Devices: %s' % lookup)
         return web.Response(text=json.dumps(lookup, default=self.date_handler))
             
@@ -460,76 +452,44 @@ class sofaRest():
 
 
     async def rootRequestHandler(self, request):
-            
-        #cmds=['SetBrightness', 'TurnOn', 'TurnOff', 'SetColorTemperature', 'SetColor', 'SetVolume', 'SetMute', 'Play', 'Pause', 'Stop', 'SetSurround', 'SetDecoder']
-            
+        
         response={}
+#        try:
+        reqstart=datetime.datetime.now()
         if self.response_token==None:
-            self.log.info('.. adapter is not activated and no response_token has been generated. %s' % jsondata)
+            self.log.info('.. adapter is not activated and no response_token has been generated.')
             raise web.HTTPUnauthorized()
         elif 'authorization' in request.headers:
             if request.headers['authorization']!=self.response_token:
-                self.log.info('.. incorrect response_token: %s vs %s' % (request.headers['authorization'],self.response_token))
+                self.log.info('.. incorrect response_token: (%s vs %s)' % (request.headers['authorization'],self.response_token))
                 raise web.HTTPUnauthorized()
         else:
             self.log.info('.. no token was provided.')
             raise web.HTTPUnauthorized()
         if request.body_exists:
             try:
+                readstart=datetime.datetime.now()
                 body=await request.read()
                 jsondata=json.loads(body.decode())
+                readend=datetime.datetime.now()
                 #self.log.info('>> Post JSON: %s %s' % ('event' in jsondata, hasattr(self.adapter,'process_event')))
                 if 'event' in jsondata and hasattr(self.adapter,'process_event'):
-                    await self.adapter.process_event(jsondata)
+                    #await self.adapter.process_event(jsondata)
+                    #self.log.info('.. processing event: %s' % self.dataset.alexa_json_filter(jsondata))
+                    asyncio.create_task(self.adapter.process_event(jsondata))
                     
                 if 'directive' in jsondata:
-                    if jsondata['directive']['header']['name']=='Discover':
-                        lookup=self.dataset.discovery()
-                        #self.log.info('>> discovery Devices: %s' % lookup)
-                        return web.Response(text=json.dumps(lookup, default=self.date_handler))
+                    response= await self.dataset.handle_local_directive(jsondata)
 
-                    elif jsondata['directive']['header']['name']=='ReportStates':
-                        bearerToken=''
-                        #self.log.info('Reportstate: %s %s' % (jsondata['directive']['endpoint']['endpointId'], jsondata['directive']['header']['correlationToken']))
-                        response=await self.dataset.generateStateReports(jsondata['directive']['payload']['endpoints'], correlationToken=jsondata['directive']['header']['correlationToken'], bearerToken=bearerToken)
-
-                    elif jsondata['directive']['header']['name']=='ReportState':
-                        try:
-                            bearerToken=jsondata['directive']['endpoint']['scope']['token']
-                        except:
-                            self.log.info('No bearer token')
-                            bearerToken=''
-                        #self.log.info('Reportstate: %s %s' % (jsondata['directive']['endpoint']['endpointId'], jsondata['directive']['header']['correlationToken']))
-                        response=self.dataset.generateStateReport(jsondata['directive']['endpoint']['endpointId'], correlationToken=jsondata['directive']['header']['correlationToken'], bearerToken=bearerToken)
-
-                    elif jsondata['directive']['header']['name']=='CheckGroup':
-                        try:
-                            if hasattr(self.adapter, "virtual_group_handler"):
-                                result=await self.adapter.virtual_group_handler(jsondata['directive']['payload']['controllers'], jsondata['directive']['payload']['endpoints'])
-                                self.log.info('<< native group %s: %s' % (jsondata['directive']['payload'], result))
-                                return web.Response(text=json.dumps(result, default=self.date_handler))
-                        except:
-                            self.log.info('!! error handling nativegroup request', exc_info=True)
-                            response={}
-
-                    else:
-                        target_namespace=jsondata['directive']['header']['namespace'].split('.')[1]
-                        self.log.info('<< %s' % (self.dataset.alexa_json_filter(jsondata)))
-                        response=await self.dataset.handleDirective(jsondata)
-                        if response:
-                            try:
-                                self.log.info('>> %s' % (self.dataset.alexa_json_filter(response, target_namespace)))
-                            except:
-                                self.log.warn('>> %s' % response)
-        
-                #else:
-                #    self.log.info('<< Post JSON: %s' %  jsondata)
             except KeyError:
                 self.log.error('!! Invalid root request from %s: %s' % (request.remote, body), exc_info=True)
             except:
                 self.log.error('Error handling root request from %s: %s' % (request.remote, body),exc_info=True)
-                response={}
-                
+        reqend=datetime.datetime.now()
+        if (reqend-reqstart).total_seconds() > 1:
+            self.log.info('.. long request handle time: %s / read: %s ' % ( (reqend-reqstart).total_seconds(), (readend-readstart).total_seconds() )  )
+#        except:
+#            self.log.error('.. error with root request handler', exc_info=True)
         return web.Response(text=json.dumps(response, default=self.date_handler))
 
         
@@ -573,16 +533,17 @@ class sofaRest():
                 async with aiohttp.ClientSession() as client:
                     async with client.get(url, headers=headers) as response:
                         if response.status != 200:
-                            self.log.info('.. hub monitor failed to reply on status update check. attempting to re-activate adapter.')
+                            self.log.warning('!! hub monitor failed to reply on status update check. attempting to re-activate adapter.')
                             self.activated=False
                             break
                 await asyncio.sleep(20)
             
-            await self.activate()
         except aiohttp.client_exceptions.ClientConnectorError:
-            await self.activate()
+            self.log.error('!! error with watchdog (ClientConnectorError)')
         except:
             self.log.error('!! error running watchdog', exc_info=True)
+            
+        await self.activate()
 
     async def hub_discovery(self):
 
@@ -613,6 +574,7 @@ class sofaRest():
                         result=json.loads(result)
                         await self.adapter.updateDeviceList(result['event']['payload']['endpoints'])
                         self.log.info('.. discovered %s devices on hub @ %s' % (len(result['event']['payload']['endpoints']), self.dataset.baseConfig['hub_address']) )
+
         except:
             self.log.error('!! Error running discovery on hub: %s' % self.dataset.baseConfig['hub_address'] ,exc_info=True)
         
@@ -629,7 +591,7 @@ class sofaRest():
             data={ 'name':self.dataset.adaptername, 'response_token': self.response_token, 'api_key': self.dataset.config['api_key'], 'collector': self.collector, "categories": self.collector_categories, "type": "adapter", "url": "http://%s:%s" % (self.serverAddress, self.port) }
 
             self.log.info('>> Posting activation request to %s - %s' % (url, data))
-            timeout = aiohttp.ClientTimeout(total=1)
+            timeout = aiohttp.ClientTimeout(total=3)
             async with aiohttp.ClientSession(timeout=timeout) as client:
                 async with client.post(url, json=data) as response:
                     if response.status == 200:
@@ -645,10 +607,14 @@ class sofaRest():
                             # supposedly supported in python 3.7 but does not seem to work in 3.7.3 on rpi
                             #self.token_expires=datetime.fromisoformat(result['expiration'])
                             self.activated=True
+
                             if self.collector:
                                 asyncio.create_task(self.hub_discovery())    
 
                             asyncio.create_task(self.hub_watchdog())
+                            if hasattr(self.adapter,'post_activate'):
+                                await self.adapter.post_activate()
+ 
                             return True
                         else:
                             self.log.debug('.. activation failed with response: %s' % result)
@@ -657,6 +623,8 @@ class sofaRest():
 
         except aiohttp.client_exceptions.ClientConnectorError:
             self.log.error('!! Error activating (could not connect)')
+        except concurrent.futures._base.TimeoutError:
+            self.log.error('!! Error activating (timeout)')
         except:
             self.log.error('!! Error activating', exc_info=True)
         try:
@@ -708,8 +676,10 @@ class sofaRest():
                             self.log.error('>! Error sending to event gateway: %s' % response.status, exc_info=True)
             #else:
             #    self.log.info('$$ did not forward to event gateway: %s %s' % (self.activated, self.token))
+        except concurrent.futures._base.CancelledError:
+            self.log.error(">! Error sending to event gateway (cancelled) %s " % ( self.dataset.alexa_json_filter(data)))
         except aiohttp.client_exceptions.ClientConnectorError:
-            self.log.error('>! Error sending to event gateway (could not connect)', exc_info=True)
+            self.log.error(">! Error sending to event gateway (could not connect) %s " % ( self.dataset.alexa_json_filter(data) ) , exc_info=True)
         except:
             self.log.error('.. error in event gateway notify', exc_info=True)
 
