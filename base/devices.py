@@ -76,6 +76,26 @@ class capabilityInterface(object):
             basecapability['configuration']=self.configuration
             
         return basecapability
+
+    @property
+    def capability(self):
+        basecapability={
+            "interface":self.interface, 
+            "version": self.version, 
+            "type": self.capabilityType, 
+            "properties": self.properties
+        }
+        if getattr(self,'instance',False) and self.instance!="":
+            basecapability['instance']=self.instance
+        if self.capabilityResources:
+            basecapability['capabilityResources']=self.capabilityResources
+        if self.configuration:
+            basecapability['configuration']=self.configuration
+        if self.semantics:
+            basecapability['semantics']=self.semantics
+            
+        return basecapability
+
         
     @property
     def configuration(self):
@@ -88,7 +108,11 @@ class capabilityInterface(object):
     @property          
     def props(self):
         return {}
-    
+        
+    @property
+    def capabilityResources(self):
+        return {}
+        
     @property
     def state(self):
         supported=[]
@@ -104,17 +128,28 @@ class capabilityInterface(object):
                         "timeOfSample":datetime.datetime.now(datetime.timezone.utc).isoformat()[:-10]+"Z"
                     }
                 try:
-                    data['instance']=self.instance
+                    if getattr(self,'instance',False):
+                        data['instance']=self.instance
                 except:
-                    pass
+                    self.log.error('Error getting instance', exc_info=True)
                 supported.append(data)
 
             except:
-                self.log.error('Error adding property to state report: %s %s' % (prop, sys.exc_info()))
+                self.log.error('Error adding property to state report: %s' % (prop), exc_info=True) # sys.exc_info()))
         
         return supported
 
-
+    @property
+    def semantics(self):
+        _semantics={}
+        #self.log.info('Self: %s' % dir(self))
+        if hasattr(self, "actionMappings"):
+            _semantics['actionMappings']=self.actionMappings
+        if hasattr(self, "stateMappings"):
+            _semantics['stateMappings']=self.stateMappings
+            
+        return _semantics
+        
 
 # Work in progress - very different from other device types        
 class CameraStreamController(capabilityInterface):
@@ -160,6 +195,10 @@ class StateController(capabilityInterface):
     def __init__(self, device=None):
         self.savedState={}
         super().__init__(device=device)
+
+    @property
+    def namespace(self):
+        return "Sofa"
     
     @property
     def controller(self):
@@ -461,15 +500,6 @@ class ModeController(capabilityInterface):
                         })
         return sms 
 
-    @property
-    def capability(self):
-        basecapability={"interface":self.interface, "version": self.version, "type": self.capabilityType, "instance": self.instance, "properties": self.properties}
-        if self.capabilityResources:
-            basecapability['capabilityResources']=self.capabilityResources
-        if self.configuration:
-            basecapability['configuration']=self.configuration
-            
-        return basecapability
  
 class RemoteController(capabilityInterface):
     
@@ -503,6 +533,7 @@ class LockController(capabilityInterface):
     def props(self):
         return { "lockState" : { "value" : "string" }}
 
+
 class PowerController(capabilityInterface):
     
     @property
@@ -516,6 +547,21 @@ class PowerController(capabilityInterface):
     @property          
     def props(self):
         return { "powerState" : { "value": "string" }}
+
+
+class WakeOnLANController(capabilityInterface):
+
+    def __init__(self, device=None, MACAddresses=[]):
+        self.MACAddresses=MACAddresses
+        super().__init__(device=device)
+
+    @property
+    def controller(self):
+        return "WakeOnLANController"
+
+    @property        
+    def configuration(self):
+        return { "MACAddresses": self.MACAddresses }
 
 
 class ButtonController(capabilityInterface):
@@ -817,6 +863,46 @@ class AreaController(capabilityInterface):
         return { "children": { "value" : "list"}, "shortcuts": {"value": "list"}, "scene" : {"value":"string"}}
 
 
+class ServiceController(capabilityInterface):
+
+    @property
+    def controller(self):
+        return "ServiceController"
+        
+    @property
+    def namespace(self):
+        return "Sofa"
+        
+    @property          
+    def props(self):
+        return { "activeState": "string", "subState": "string", "pid": "number", "process":  "string", "startTime": "time", "loadState":  "string"}
+   
+    @property
+    def activeState(self):
+        return "unknown"
+        
+        
+    @property
+    def subState(self):
+        return "unknown"
+        
+    @property
+    def pid(self):
+        return 0
+                
+    @property
+    def process(self):
+        return ""
+
+    @property
+    def loadState(self):
+        return ""
+
+    @property
+    def startTime(self):
+        return ""
+
+
 
 class MotionSensor(capabilityInterface):
     
@@ -845,6 +931,112 @@ class ContactSensor(capabilityInterface):
     @property          
     def props(self):
         return { "detectionState": { "value" : "string"}}
+
+
+class ShadeModeController(ModeController):
+
+    # THIS IS A WORK IN PROGRESS
+    #   - Support Alexa Semantics
+    #   - Cross-reference outputs into a single device
+    #   - Decide what to do with no state reporting
+    #   - Decide what to do with stop command
+    
+    @property
+    def proactivelyReported(self):
+        return False
+
+    @property
+    def retrievable(self):
+        return False
+
+    @property            
+    def mode(self):
+        return "Position.Stop"
+
+    @property            
+    def capabilityResources(self):
+
+        return {
+            "friendlyNames": [
+                {
+                    "@type": "asset",
+                    "value": {
+                        "assetId": "Alexa.Setting.Opening"
+                    }
+                }
+            ]
+        }
+
+    @property
+    def supportedModes(self):
+        sms=[]
+        for sm in self._supportedModes:
+            sms.append( {   "value": "%s.%s" % (self.name, sm), 
+                            "modeResources": { 
+                                "friendlyNames": [
+                                    {
+                                        "@type": "asset",
+                                        "value": { 
+                                            "assetId": "Alexa.Value.%s" % self._supportedModes[sm]
+                                        }
+                                    }
+                                ]
+                            }
+                        })
+        return sms 
+
+
+    async def SetMode(self, payload, correlationToken=''):
+        self.log.warning('!! setmode not implemented: %s' % payload)
+
+    @property
+    def actionMappings(self):
+        # These are basically hardcoded since other values aren't accepted right now
+        # https://developer.amazon.com/en-US/docs/alexa/device-apis/alexa-modecontroller.html
+        # https://developer.amazon.com/en-US/docs/alexa/device-apis/alexa-discovery.html
+        return [   
+            {
+                "@type": "ActionsToDirective",
+                "actions": ["Alexa.Actions.Close", "Alexa.Actions.Lower"],
+                "directive": {
+                    "name": "SetMode",
+                    "payload": {
+                        "mode": "Position.Down"
+                    }
+                    }
+            },
+            {
+                "@type": "ActionsToDirective",
+                "actions": ["Alexa.Actions.Open", "Alexa.Actions.Raise"],
+                "directive": {
+                    "name": "SetMode",
+                    "payload": {
+                        "mode": "Position.Up"
+                    }
+                }
+            }
+        ]
+
+        
+    @property
+    def stateMappings(self):
+        # These are basically hardcoded since other values aren't accepted right now
+        # https://developer.amazon.com/en-US/docs/alexa/device-apis/alexa-modecontroller.html
+        # https://developer.amazon.com/en-US/docs/alexa/device-apis/alexa-discovery.html
+        return [
+            {
+                "@type": "StatesToValue",
+                "states": ["Alexa.States.Closed"],
+                "value": "Position.Down"
+            },
+            {
+                "@type": "StatesToValue",
+                "states": ["Alexa.States.Open"],
+                "value": "Position.Up"
+            }  
+        ]
+
+
 
 class DoorbellEventSource(capabilityInterface):
 
@@ -950,6 +1142,35 @@ class AdapterHealth(capabilityInterface):
     def props(self):
         return { "url": { "value": "string"},  "startup": { "value": "string"}, "logged": {"value": "dict" }, "datasize": { "value": "number" } }
 
+
+class WeatherSensor(capabilityInterface):
+    
+    def __init__(self, device=None, scale="FAHRENHEIT"):
+        self.scale=scale
+        super().__init__(device=device)
+
+    @property
+    def controller(self):
+        return "WeatherSensor"
+        
+    @property            
+    def directives(self):
+        return {}
+
+    @property          
+    def props(self):
+        return { "temperature": { "value" : "decimal", "scale":"string"}, "condition": {"value": "string"}, "high": { "value" : "decimal", "scale":"string"}, "low": { "value" : "decimal", "scale":"string"}}
+
+    @property
+    def state(self):
+        thisState=super().state
+        for item in thisState:
+            if item['name'] in ["temperature", "high", "low"]:
+                item['value']={'value': item['value'], 'scale':self.scale}
+                
+        return thisState
+
+
 class alexaDevice(object):
     
     def __init__(self, path, name, adapter=None, nativeObject=None, displayCategories=["OTHER"], description="Smart Device", manufacturerName="Sofa", modelName="", log=None, hidden=False, native=None):
@@ -964,6 +1185,7 @@ class alexaDevice(object):
         self.adapter=adapter
         self.nativeObject=nativeObject
         self.hidden=hidden
+        self.config=adapter.config
     
     @property
     def name(self):
@@ -1180,7 +1402,10 @@ class alexaDevice(object):
         props=self.propertyStates
         unchangedPropertyStates=[]
         changedPropertyStates=[]
+        x=0
         for prop in props:
+            
+            x=x+1
             if prop['namespace'].split(".")[1] in controllers:
                 if prop['name'] in controllers[prop['namespace'].split(".")[1]]:
                     changedPropertyStates.append(prop)
@@ -1191,9 +1416,9 @@ class alexaDevice(object):
                 if prop['name'] in controllers[prop['namespace']]:
                     changedPropertyStates.append(prop)
                     continue
-                    
-            unchangedPropertyStates.append(prop)
                 
+            unchangedPropertyStates.append(prop)
+
         if not changedPropertyStates:
             return {}
                 
@@ -1292,6 +1517,53 @@ class remoteAlexaDevice(object):
         self.nativeObject=None
         self.adaptername=self.adapter.dataset.adaptername
         self.url=self.adapter.url
+        
+        
+def ErrorResponse(endpointId, error_type, message, payload={}, messageId=None, correlationToken=None, bearerToken=""):
+
+    error_types=[  "ALREADY_IN_OPERATION","BRIDGE_UNREACHABLE","CLOUD_CONTROL_DISABLED","ENDPOINT_BUSY", "ENDPOINT_LOW_POWER", "ENDPOINT_UNREACHABLE", 
+                        "EXPIRED_AUTHORIZATION_CREDENTIAL","FIRMWARE_OUT_OF_DATE", "HARDWARE_MALFUNCTION", "INSUFFICIENT_PERMISSIONS", "INTERNAL_ERROR", 
+                        "INVALID_AUTHORIZATION_CREDENTIAL", "INVALID_DIRECTIVE", "INVALID_VALUE", "NO_SUCH_ENDPOINT", "NOT_CALIBRATED", 
+                        "NOT_SUPPORTED_IN_CURRENT_MODE", "NOT_IN_OPERATION", "POWER_LEVEL_NOT_SUPPORTED", "RATE_LIMIT_EXCEEDED", 
+                        "TEMPERATURE_VALUE_OUT_OF_RANGE","TOO_MANY_FAILED_ATTEMPTS","VALUE_OUT_OF_RANGE"
+                    ]
+
+    if not messageId:
+        messageId=str(uuid.uuid1())
+        
+    if error_type not in error_types:
+        error_type="INTERNAL_ERROR"
+        
+    payload['type']=error_type
+    payload['message']=message
+    
+    error = { 
+            "event": {
+                "header": {
+                    "namespace": "Alexa",
+                    "name": "ErrorResponse",
+                    "messageId": messageId,
+                    #"correlationToken": "<an opaque correlation token>",
+                    "payloadVersion": "3"
+                },
+                "endpoint":{
+                    "scope":{
+                        "type":"BearerToken",
+                        "token":bearerToken
+                    },
+                    "endpointId": endpointId
+                },
+                "payload": payload
+            }
+        }
+                
+    if correlationToken:
+        error['event']['header']['correlationToken']=correlationToken
+        
+    return error
+
+
+        
 
 if __name__ == '__main__':
     pass

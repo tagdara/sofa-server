@@ -2,31 +2,18 @@ import os
 import sys
 import logging
 import asyncio
-import aiohttp
-from aiohttp import web
 import concurrent.futures
 from logging.handlers import RotatingFileHandler
-import time
 import json
-import urllib.request
-import collections
-import jsonpatch
-import copy
-import dpath
 import datetime
-import uuid
 import functools
-import devices
 import signal
 
-#import sofamqtt
 import sofadataset
 import sofarest
-import sofarequester
 
-from logging import handlers
 
-class DailyRotatingFileHandler(handlers.RotatingFileHandler):
+class DailyRotatingFileHandler(RotatingFileHandler):
 
     def __init__(self, alias, basedir, mode='a', maxBytes=0, backupCount=0, encoding=None, delay=0):
         """
@@ -39,7 +26,7 @@ class DailyRotatingFileHandler(handlers.RotatingFileHandler):
 
         self.baseFilename = self.getBaseFilename()
 
-        handlers.RotatingFileHandler.__init__(self, self.baseFilename, mode, maxBytes, backupCount, encoding, delay)
+        RotatingFileHandler.__init__(self, self.baseFilename, mode, maxBytes, backupCount, encoding, delay)
 
     def getBaseFilename(self):
         """
@@ -74,7 +61,126 @@ class DailyRotatingFileHandler(handlers.RotatingFileHandler):
 
         return 0
 
+
+class configbase():
+    
+    def __init__(self, adapter_name, adapter_config={}, base_config={}):
+        self.adapter_name=adapter_name
+        self.config_needed=False
+        self.missing_fields=[]
+        self.base_config=self.read_base_config()
+        self.adapter_config=self.read_adapter_config()
+        self.log_changes=self.set_or_default("log_changes",default=False)
+        self.rest_port=self.set_or_generate("rest_port")
+        self.rest_address=self.set_or_generate("rest_address")
+        self.api_key=self.set_or_generate("api_key")
+        self.event_gateway=self.set_or_generate("event_gateway")
+        self.api_gateway=self.set_or_generate("api_gateway", mandatory=True)
+        self.adapter_fields()
+        
+    def adapter_fields(self):
+        pass
+
+    def read_base_config(self, config_path=None):
+
+        try:
+            base_config={}
+            if config_path:
+                config_dir=config_path
+            else:
+                config_dir=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config'))
+            if not os.path.isdir(config_dir):
+                os.makedirs(config_dir)
+            else:
+                with open(os.path.join(config_dir, 'sofabase.json'), "r") as config_file:
+                    base_config=json.loads(config_file.read())
+        except:
+            print('Did not load base config')
+            
+        try:
+            if 'config_directory' in base_config:
+                self.config_directory=base_config['config_directory']
+            else:
+                self.config_directory=config_dir
+
+            if 'base_directory' in base_config:
+                self.base_directory=base_config['base_directory']
+            else:
+                self.base_directory=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+
+            if 'data_directory' in base_config:
+                self.data_directory=base_config['data_directory']
+            else:
+                self.data_directory=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'data'))
+
+            if 'video_directory' in base_config:
+                self.video_directory=base_config['video_directory']
+            else:
+                self.video_directory=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'video'))
+
+            if 'cache_directory' in base_config:
+                self.cache_directory=base_config['cache_directory']
+            else:
+                self.cache_directory=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'cache'))
+
+            if 'log_directory' in base_config:
+                self.log_directory=base_config['log_directory']
+            else:
+                self.log_directory=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'log'))
+
+            if 'rest_address' in base_config:
+                self.log_directory=base_config['rest_address']
+            else:
+                self.log_directory='localhost'
+
+
+        except:
+            print('Did not get base config properly')
+            sys.exit(1)
+        return base_config
+            
+
+    def read_adapter_config(self):
+
+        try:
+            if not os.path.isdir(self.config_directory):
+                os.makedirs(self.config_directory)
+            with open(os.path.join(self.config_directory, "%s.json" % (self.adapter_name)), "r") as configfile:
+                configdata=configfile.read()
+                return json.loads(configdata)
+        except:
+            self.log.error('Did not load config: %s' % self.adaptername, exc_info=True)
+        return {}
+
+        
+    def set_or_default(self, property_name, mandatory=False, default=None):
+        if property_name in self.adapter_config:
+            setattr(self, property_name, self.adapter_config[property_name])
+            return self.adapter_config[property_name]
+        if property_name in self.base_config:
+            setattr(self, property_name, self.base_config[property_name])
+            return self.base_config[property_name]
+        if mandatory:
+            self.config_needed=True
+            self.missing_fields.append(property_name)
+            return None
+        setattr(self, property_name, default)
+        return default
+
+    def set_or_generate(self, property_name, mandatory=False):
+        if property_name in self.adapter_config:
+            return self.adapter_config[property_name]
+        if property_name in self.base_config:
+            return self.base_config[property_name]
+
+        if mandatory:
+            self.config_needed=True
+            self.missing_fields.append(property_name)
+        return default
+
+
 class adapterbase():
+
     
     @property
     def collector(self):
@@ -83,6 +189,13 @@ class adapterbase():
     @property
     def collector_categories(self):
         return []  
+
+    def __init__(self, log=None, loop=None, dataset=None, config=None, **kwargs):
+        self.dataset=dataset
+        self.config=config
+        self.log=log
+        self.loop=loop
+
             
     async def stop(self):
         self.log.info('Stopping adapter')
@@ -99,7 +212,7 @@ class adapterbase():
     def loadJSON(self, jsonfilename):
         
         try:
-            with open(os.path.join(self.dataset.baseConfig['configDirectory'], '%s.json' % jsonfilename),'r') as jsonfile:
+            with open(os.path.join(self.config.config_directory, '%s.json' % jsonfilename),'r') as jsonfile:
                 return json.loads(jsonfile.read())
         except FileNotFoundError:
             self.log.error('!! Error loading json - file does not exist: %s' % jsonfilename)
@@ -111,7 +224,7 @@ class adapterbase():
     def saveJSON(self, jsonfilename, data):
         
         try:
-            jsonfile = open(os.path.join(self.dataset.baseConfig['configDirectory'], '%s.json' % jsonfilename), 'wt')
+            jsonfile = open(os.path.join(self.config.config_directory, '%s.json' % jsonfilename), 'wt')
             json.dump(data, jsonfile, ensure_ascii=False, default=self.jsonDateHandler)
             jsonfile.close()
 
@@ -124,7 +237,7 @@ class adapterbase():
         try:
             if json_format:
                 filename="%s.json" % filename
-            with open(os.path.join(self.dataset.baseConfig['cacheDirectory'], filename),'r') as cachefile:
+            with open(os.path.join(self.config.cache_directory, filename),'r') as cachefile:
                 if json_format:
                     return json.loads(cachefile.read())
                 else:
@@ -141,7 +254,7 @@ class adapterbase():
         try:
             if json_format:
                 filename="%s.json" % filename
-            cachefile = open(os.path.join(self.dataset.baseConfig['cacheDirectory'], filename), 'wt')
+            cachefile = open(os.path.join(self.config.cache_directory, filename), 'wt')
             if json_format:
                 json.dump(data, cachefile, ensure_ascii=False, default=self.jsonDateHandler)
             else:
@@ -164,7 +277,6 @@ class adapterbase():
         return controllerlist
 
 
-
 class MsgCounterHandler(logging.Handler):
 
     def __init__(self, *args, **kwargs):
@@ -175,8 +287,14 @@ class MsgCounterHandler(logging.Handler):
         l = record.levelname
         if l in self.logged_lines:
             self.logged_lines[l]+=1
+
             
 class sofabase():
+    
+    class adapter_config(configbase):
+    
+        def start(self):
+            pass
 
     class adapterProcess():
         
@@ -190,58 +308,10 @@ class sofabase():
         
         async def stop(self):
             self.log.info('Stopping adapter')
-
-        def alexa_json_filter(self, data, namespace="", level=0):
             
-            # this function allows for logging alexa smarthome API commands while reducing unnecessary fields
-            
-            try:
-                out_data={}
-                if 'directive' in data:
-                    out_data['type']='Directive'
-                    out_data['name']=data['directive']['header']['name']
-                    out_data['namespace']=data['directive']['header']['namespace'].split('.')[1]
-                    out_data['endpointId']=data['directive']['endpoint']['endpointId']
-                    out_text="%s: %s/%s %s" % (out_data['type'], out_data['namespace'], out_data['name'], out_data['endpointId'])
-                    
-                elif 'event' in data:
-                    # CHEESE: Alexa API formatting is weird with the placement of payload
-                    out_data['type']='Event'
-                    out_data['name']=data['event']['header']['name']
-                    if data['event']['header']['name']=='ErrorResponse':
-                        return "%s: %s %s" % (out_data['name'], out_data['endpointId'], data['event']['payload'])    
-                    
-                    if data['event']['header']['namespace'].endswith('Discovery'):
-                        if 'payload' in data['event'] and 'endpoints' in data['event']['payload']:
-                            out_data['endpointId']='['
-                            for item in data['event']['payload']['endpoints']:
-                                out_data['endpointId']+=item['endpointId']+" "
-                        out_text="%s: %s" % (out_data['name'], out_data['endpointId'])    
-                        return out_text
-    
-                    out_data['endpointId']=data['event']['endpoint']['endpointId']
-                    out_text="%s: %s" % (out_data['name'], out_data['endpointId'])
-    
-                    if 'payload' in data['event'] and data['event']['payload']:
-                        out_text+=" %s" % data['event']['payload']
-                    elif 'payload' in data and data['payload']:
-                        out_text+=" %s" % data['payload']
-                        
-                    if namespace:
-                        out_text+=" %s:" % namespace
-                        if 'context' in data and 'properties' in data['context']:
-                            for prop in data['context']['properties']:
-                                if prop['namespace'].endswith(namespace):
-                                    out_text+=" %s : %s" % (prop['name'], prop['value'])
-    
-                else:
-                    self.log.info('.. unknown response to filter: %s' % data)
-                    return data
-    
-                return out_text
-            except:
-                self.log.error('Error parsing alexa json', exc_info=True)
-                return data
+        async def start(self):
+            self.log.info('Starting adapter')
+            pass
 
 
     def __init__(self, name=None, loglevel="INFO"):
@@ -250,42 +320,43 @@ class sofabase():
             print('Adapter name not provided')
             sys.exit(1)
         
-        
         self.adaptername=name
         self.configpath=".."
         self.baseConfig=self.readBaseConfig(self.configpath)
         self.basepath=self.baseConfig['baseDirectory']
         self.logsetup(self.baseConfig['logDirectory'], self.adaptername, loglevel, errorOnly=self.baseConfig['error_only_logs'])
-
+        
+        # https://github.com/django/asgiref/issues/143
+        if sys.platform == "win32" and sys.version_info >= (3, 8, 0):
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+            
         self.loop = asyncio.get_event_loop()
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=10,)
 
-
+    class eight_filter(logging.Filter):
+        def filter(self, record):
+            record.filename_eight = record.filename.split(".")[0][:8]
+            return True   
+            
     def logsetup(self, logbasepath, logname, level="INFO", errorOnly=[]):
 
-        #log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s %(lineno)4d %(threadName)-.1s: %(message)s','%m/%d %H:%M:%S')
-
-        #log_error_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(levelname).1s%(lineno)4d: %(message)s','%m/%d %H:%M:%S')
-        log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(filename).8s %(levelname).1s%(lineno)4d: %(message)s','%m/%d %H:%M:%S')
+        log_formatter = logging.Formatter('%(asctime)-6s.%(msecs).03d %(filename_eight)-8s %(levelname).1s%(lineno)4d: %(message)s','%m/%d %H:%M:%S')
+        if not os.path.isdir(logbasepath):
+            os.makedirs(logbasepath)
         logpath=os.path.join(logbasepath, logname)
         logfile=os.path.join(logpath,"%s.log" % logname)
         errorfile=os.path.join(logpath,"%s.err.log" % logname)
         loglink=os.path.join(logbasepath,"%s.log" % logname)
         if not os.path.exists(logpath):
             os.makedirs(logpath)
-        #check if a log file already exists and if so rotate it
-        
-        #log_error_handler = logging.FileHandler(errorfile)
-        log_error_handler = RotatingFileHandler(errorfile, mode='a', maxBytes=1024*1024, backupCount=5)
 
+        log_error_handler = RotatingFileHandler(errorfile, mode='a', maxBytes=1024*1024, backupCount=5)
         log_error_handler.setFormatter(log_formatter)
         log_error_handler.setLevel(logging.WARNING)
         if os.path.isfile(logfile):
             log_error_handler.doRollover()
             
         log_handler = RotatingFileHandler(logfile, mode='a', maxBytes=1024*1024, backupCount=5)
-        #log_handler = RotatingFileHandler(logname, logbasepath, mode='a', maxBytes=1024*1024, backupCount=5)
-
         log_handler.setFormatter(log_formatter)
         log_handler.setLevel(getattr(logging,level))
         if os.path.isfile(logfile):
@@ -293,18 +364,14 @@ class sofabase():
             
         self.count_handler = MsgCounterHandler()
         
-        #log_error = logging.FileHandler(os.path.join(logbasepath,"sofa-error.log"))
-        #log_error.setFormatter(log_formatter)
-        #log_error.setLevel(logging.WARNING)
-        
         console = logging.StreamHandler()
         console.setFormatter(log_handler)
         console.setLevel(getattr(logging,level))
         
         logging.getLogger(logname).addHandler(console)
-        #logging.getLogger(logname).addHandler(log_error)
         
         self.log =  logging.getLogger(logname)
+        self.log.addFilter(self.eight_filter()) 
         self.log.setLevel(getattr(logging,level))
         self.log.addHandler(log_handler)
         self.log.addHandler(log_error_handler)
@@ -326,7 +393,9 @@ class sofabase():
     def readconfig(self):
 
         try:
-            with open(os.path.join(self.baseConfig["configDirectory"], "%s.json" % (self.adaptername)), "r") as configfile:
+            if not os.path.isdir(self.config.config_directory):
+                os.makedirs(self.config.config_directory)
+            with open(os.path.join(self.config.config_directory, "%s.json" % (self.adaptername)), "r") as configfile:
                 configdata=configfile.read()
                 return json.loads(configdata)
         except FileNotFoundError:
@@ -339,7 +408,9 @@ class sofabase():
     def saveConfig(self):
 
         try:
-            with open(os.path.join(self.baseConfig["configDirectory"], "%s.json" % (self.adaptername)), "w") as configfile:
+            if not os.path.isdir(self.config.config_directory):
+                os.makedirs(self.config.config_directory)
+            with open(os.path.join(self.config.config_directory, "%s.json" % (self.adaptername)), "w") as configfile:
                 configfile.write(json.dumps(self.dataset.config))
             return True
 
@@ -347,29 +418,29 @@ class sofabase():
             self.log.error('Did not save config: %s' % self.adaptername, exc_info=True)
             return False
 
-    def readBaseConfig(self, configpath):
+    def readBaseConfig(self, config_path):
 
         try:
-            baseconfig={}
-            configdir=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config'))
-            with open(os.path.join(configdir, 'sofabase.json'), "r") as configfile:
-                baseconfig=json.loads(configfile.read())
+            base_config={}
+            config_dir=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'config'))
+            if not os.path.isdir(config_dir):
+                os.makedirs(config_dir)
+            with open(os.path.join(config_dir, 'sofabase.json'), "r") as config_file:
+                base_config=json.loads(config_file.read())
         except:
             print('Did not load base config')
             
         try:
-            if 'configDirectory' not in baseconfig:
-                baseconfig['configDirectory']=configdir
-            if 'baseDirectory' not in baseconfig:
-                baseconfig['baseDirectory']=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
-            if 'logDirectory' not in baseconfig:
-                baseconfig['logDirectory']=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'log'))
-#            if 'mqttBroker' not in baseconfig:
-#                baseconfig['mqttBroker']='localhost'
-            if 'restAddress' not in baseconfig:
-                baseconfig['restAddress']='localhost'
+            if 'configDirectory' not in base_config:
+                base_config['configDirectory']=config_dir
+            if 'baseDirectory' not in base_config:
+                base_config['baseDirectory']=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+            if 'logDirectory' not in base_config:
+                base_config['logDirectory']=os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'log'))
+            if 'restAddress' not in base_config:
+                base_config['restAddress']='localhost'
 
-            return baseconfig
+            return base_config
         except:
             print('Did not get base config properly')
             sys.exit(1)
@@ -384,16 +455,19 @@ class sofabase():
                     if hasattr(self.adapter, 'service_stop'):
                         self.adapter.service_stop()
                     #asyncio.ensure_future(self.adapter.stop())
-
+                    
+                for task in asyncio.Task.all_tasks():
+                    task.cancel()
+                    
                 if self.restServer:
                     self.restServer.shutdown()
                 if self.executor:
                     self.log.info('Shutting down executor')
-                    self.executor.shutdown()
-                self.loop.stop()   
-                tasks = asyncio.all_tasks(self.loop)
-                #expensive_tasks = {task for task in tasks if task._coro.__name__ != coro.__name__}
-                self.loop.run_until_complete(asyncio.gather(*tasks))
+                    self.executor.shutdown(wait=True)
+                #self.loop.run_until_complete(self.loop.shutdown_asyncgens())
+                
+                #tasks = asyncio.all_tasks(self.loop)
+                #self.loop.run_until_complete(asyncio.gather(*tasks))
                 
             except:
                 self.log.error('!! error in service stop', exc_info=True)
@@ -403,48 +477,58 @@ class sofabase():
 
         
     def start(self):
-        self.log.info('.. Sofa 2 Adapter module initialized and starting')
-        signal.signal(signal.SIGTERM, self.service_stop)
-        asyncio.set_event_loop(self.loop)
-        for signame in {'SIGINT', 'SIGTERM'}:
-            self.loop.add_signal_handler(
-                getattr(signal, signame),
-                functools.partial(self.service_stop, signame))
 
-        self.dataset=sofadataset.sofaDataset(self.log, adaptername=self.adaptername, loop=self.loop)
+        self.log.info('.. Sofa 2 Adapter module initialized and starting')
+        asyncio.set_event_loop(self.loop)
+        if not sys.platform == "win32":
+            signal.signal(signal.SIGTERM, self.service_stop)
+            for signame in {'SIGINT', 'SIGTERM'}:
+                self.loop.add_signal_handler(
+                    getattr(signal, signame),
+                    functools.partial(self.service_stop, signame))
+        
+        self.config=self.adapter_config(adapter_name=self.adaptername)
+
+        self.dataset=sofadataset.sofaDataset(self.log, adaptername=self.adaptername, loop=self.loop, config=self.config)
         self.dataset.logged_lines=self.count_handler.logged_lines
-        self.dataset.baseConfig=self.baseConfig
-        self.dataset.config=self.readconfig()
+        #self.dataset.baseConfig=self.baseConfig
+        #self.dataset.config=self.readconfig()
         self.dataset.saveConfig=self.saveConfig
         
-        if 'log_changes' in self.dataset.config and self.dataset.config['log_changes']==True:
+        if self.config.config_needed:
+            self.log.error('.. Mandatory fields missing from config: %s' % self.config.missing_fields)
+            self.loop.stop()
+            self.loop.close()
+            sys.exit(1)
+            
+        #self.dataset.config=self.config
+            
+        if self.config.log_changes==True:
             pass
         else:
-            self.log.info('.. this adapter is not logging device changes')
+            self.log.debug('.! adapter is not logging device changes')
         
-        self.restAddress = self.dataset.baseConfig['restAddress']
-        self.restPort=self.dataset.config['rest_port']
-        
-        self.log.info('.. starting main adapter %s' % self.adaptername)
-        self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=None, discover=None, request=None, loop=self.loop, executor=self.executor)
-        self.adapter.url='http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port'])
-        
-        self.log.info('.. starting REST server: http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port']))
-        self.restServer = sofarest.sofaRest(port=self.dataset.config['rest_port'], loop=self.loop, log=self.log, dataset=self.dataset, collector=self.adapter.collector, categories=self.adapter.collector_categories)
+        self.log.info('.. intializing main adapter %s' % self.adaptername)
+        self.adapter=self.adapterProcess(log=self.log, dataset=self.dataset, notify=None, discover=None, request=None, loop=self.loop, executor=self.executor, config=self.config)
 
+        self.adapter.running=True
+        self.dataset.adapter=self.adapter
+        
+        if hasattr(self.adapter,'pre_activate'):
+            self.loop.run_until_complete(self.adapter.pre_activate())
+
+        self.adapter.url='http://%s:%s' % (self.config.rest_address, self.config.rest_port)
+        
+        self.log.info('.. starting REST server: http://%s:%s' % (self.config.rest_address, self.config.rest_port))
+        self.restServer = sofarest.sofaRest(loop=self.loop, log=self.log, dataset=self.dataset, collector=self.adapter.collector, categories=self.adapter.collector_categories, config=self.config)
+        self.restServer.adapter=self.adapter
+        
         result=self.restServer.initialize()
 
         if not result:
             self.loop.stop()
             self.loop.close()
             sys.exit(1)
-            
-        self.dataset.adapter=self.adapter
-        self.restServer.adapter=self.adapter
-
-        self.adapter.running=True
-        if hasattr(self.adapter,'pre_activate'):
-            self.loop.run_until_complete(self.adapter.pre_activate())
 
         self.loop.run_until_complete(self.restServer.activate())
         self.dataset.web_notify=self.restServer.notify_event_gateway

@@ -14,19 +14,20 @@ import dpath
 import datetime
 import uuid
 import functools
-import devices
-import sofamqtt
-import sofadataset
-from aiohttp_sse_client import client as sse_client
 
 class sofaRest():
     
     def initialize(self):
             
         try:
+            if not self.port:
+                self.log.info('.. no rest port provided.  Adapter rest server will start when port is specified')
+            while not self.port:
+                asyncio.sleep(1)
+                
             #self.log.info('Dataset: %s' % self.dataset.__dict__)
-            self.serverAddress=self.dataset.baseConfig['restAddress']
-            self.serverApp = web.Application()
+            self.serverAddress=self.config.rest_address
+            self.serverApp = aiohttp.web.Application()
             self.serverApp.router.add_get('/', self.statusHandler)
             self.serverApp.router.add_post('/', self.rootRequestHandler)
             
@@ -37,7 +38,10 @@ class sofaRest():
             self.serverApp.router.add_get('/adapters', self.adapterLookupHandler)
             
             self.serverApp.router.add_get('/discovery', self.deviceLookupHandler)
-            self.serverApp.router.add_get('/devices', self.deviceLookupHandler)            
+            self.serverApp.router.add_get('/devices', self.deviceLookupHandler)        
+            self.serverApp.router.add_get('/devices/local', self.local_devices_handler)
+            self.serverApp.router.add_get('/devices/remote', self.remoteDeviceLookupHandler)         
+            self.serverApp.router.add_get('/devices/remote/{item}', self.remoteDeviceStateReportHandler)
             self.serverApp.router.add_get('/devices/{item}', self.deviceStateReportHandler)
             self.serverApp.router.add_get('/deviceState/{item}', self.deviceStateReportHandler)
             self.serverApp.router.add_post('/deviceStates', self.deviceStatesReportHandler)
@@ -65,7 +69,7 @@ class sofaRest():
 
             self.loop.run_until_complete(self.runner.setup())
 
-            self.site = web.TCPSite(self.runner, self.serverAddress, self.port)
+            self.site = aiohttp.web.TCPSite(self.runner, self.serverAddress, self.port)
             self.loop.run_until_complete(self.site.start())
             return True
         except OSError as e:
@@ -79,13 +83,14 @@ class sofaRest():
 
     def json_response(self, body='', **kwargs):
         try:
-            kwargs['body'] = json.dumps(body or kwargs['body']).encode('utf-8')
+            if (body or 'body' in kwargs):
+                kwargs['body'] = json.dumps(body or kwargs['body'], default=self.date_handler).encode('utf-8')
             kwargs['content_type'] = 'application/json'
-            return web.Response(**kwargs)
+            return aiohttp.web.Response(**kwargs)
         except:
-            self.log.error('!! error with json response', exc_info=True)
-            return web.Response({'body':''})
-
+            self.log.error('!! error with json response: %s %s' % (body, kwargs), exc_info=True)
+            return aiohttp.web.Response({'body':''})
+            
 
     def date_handler(self, obj):
         
@@ -95,7 +100,12 @@ class sofaRest():
             self.log.info('Caused type error: %s' % obj)
             raise TypeError
             
-                
+    def get_ip(self, request):
+        try:
+            return request.headers['X-Real-IP']
+        except:
+            return request.remote
+            
     def lookupAddressOrName(self, item, lookup=None):
             
         if lookup==None:
@@ -189,16 +199,39 @@ class sofaRest():
             lookup=self.dataset.nativeDevices
             if request.query_string:
                 lookup=self.queryStringAdjuster(request.query_string, lookup)
-            return web.Response(text=json.dumps(lookup, default=self.date_handler))
+            return self.json_response(lookup)
         except:
             self.log.error('Error with native lookup', exc_info=True)
 
 
     async def deviceLookupHandler(self, request):
+        self.log.info('.. device lookup handler')
         lookup=await self.dataset.discovery()
-        #self.log.info('Devices: %s' % lookup)
-        return web.Response(text=json.dumps(lookup, default=self.date_handler))
-            
+        return self.json_response(lookup)
+
+    async def local_devices_handler(self, request):
+        return self.json_response(self.dataset.localDevices)
+
+
+    async def remoteDeviceLookupHandler(self, request):
+        self.log.info('.. device lookup handler')
+        lookup=await self.dataset.remote_devices()
+        return self.json_response(lookup)
+        
+
+    async def remoteDeviceStateReportHandler(self, request):
+        try:
+            dev=urllib.parse.unquote(request.match_info['item'])
+            self.log.info('.. remote device lookup handler: %s' % dev)
+    
+            if hasattr(self.adapter, 'state_cache'):
+                if dev in self.adapter.state_cache:
+                    return self.json_response(self.adapter.state_cache[dev])
+        except:
+            self.log.error('!! error getting remote device state', exc_info=True)
+        return {}
+
+        
     async def deviceStatesReportHandler(self, request):
         
         body=''
@@ -208,35 +241,37 @@ class sofaRest():
                 body=body.decode()
                 devlist=json.loads(body)
                 result={}
+                self.log.info('.. states report handler: %s %s' % (self.get_ip(request),devlist) )
                 for dev in devlist:
                     try:
                         result[dev]=self.dataset.getDeviceByEndpointId(dev).StateReport()
                         #result[dev]=self.dataset.getDeviceByfriendlyName(dev).StateReport()
                     except AttributeError: 
-                        self.log.warn('Warning - device was not ready for statereport: %s' % dev)
+                        self.log.warn('.! warning - device was not ready for statereport: %s' % dev)
                     except:
-                        self.log.error('Error getting statereport for %s' % dev, exc_info=True)
+                        self.log.error('!! error getting statereport for %s' % dev, exc_info=True)
 
-                return web.Response(text=json.dumps(result, default=self.date_handler))
+                return self.json_response(result) 
             else:
-                return web.Response(text="{}")        
+                return self.json_response({})      
 
         except:
-            self.log.error('Error delivering device states report: %s' % body, exc_info=True)
-            return web.Response(text="{}")        
+            self.log.error('!! Error delivering device states report: %s' % body, exc_info=True)
+            return self.json_response({})        
 
     async def deviceStateReportHandler(self, request):
         try:
+            self.log.info('.. state report handler: %s %s' % (self.get_ip(request), request.match_info['item']) )
             dev=urllib.parse.unquote(request.match_info['item'])
             try:
                 lookup=self.dataset.getDeviceByEndpointId(dev).StateReport()
-                return web.Response(text=json.dumps(lookup, default=self.date_handler))
+                return self.json_response(lookup)
             except AttributeError:
                 pass
             
             try:
                 lookup=self.dataset.getDeviceByfriendlyName(dev).StateReport()
-                return web.Response(text=json.dumps(lookup, default=self.date_handler))
+                return self.json_response(lookup)
             except AttributeError:
                 pass
             
@@ -245,20 +280,20 @@ class sofaRest():
         except:
             self.log.error('Error delivering state report for %s' % urllib.parse.unquote(request.match_info['item']), exc_info=True)
         
-        return web.Response(text="{}")
+        return self.json_response({})
 
 
     async def categoryLookupHandler(self, request):
         try:
             self.log.info('request: %s' % request.match_info['category'])
             #subset=await self.dataset.getCategory(request.match_info['category'])
-            subset=await self.dataset.getObjectsByDisplayCategory(request.match_info['category'])
+            subset=self.dataset.getObjectsByDisplayCategory(request.match_info['category'])
             if request.query_string:
                 subset=self.queryStringAdjuster(request.query_string, subset)
-            return web.Response(text=json.dumps(subset, default=self.date_handler))
+            return self.json_response(subset)
         except:
             self.log.error('Error on category lookup', exc_info=True)
-            return web.Response(text="{}")
+            return self.json_response({})
 
 
     async def listHandler(self, request):
@@ -266,17 +301,17 @@ class sofaRest():
             #self.log.info('request: %s' % request.match_info['list'])
             subset=await self.dataset.getList(request.match_info['list'])
             #self.log.info('List: %s %s' % (request.match_info['list'],subset))
-
-            return web.Response(text=json.dumps(subset, default=self.date_handler))
+            return self.json_response(subset)
         except:
             self.log.info('error handling list', exc_info=True)
+            return self.json_response({})
 
     async def varHandler(self, request):
         try:
             self.log.info('request: %s' % request.match_info['list'])
             subset=await self.dataset.getList(request.match_info['list'])
             return self.json_response(subset)
-            #return web.Response(body=subset)
+
         except:
             self.log.info('error handling list', exc_info=True)
             return self.json_response({})
@@ -292,17 +327,17 @@ class sofaRest():
                     item=request.match_info['list']
                     body=body.decode()
                     subset=await self.dataset.getList(request.match_info['list'], query=body)
-                    self.log.info('List Query request for %s: %s' % (request.match_info['list'], body))
+                    #self.log.info('List Query request for %s: %s' % (request.match_info['list'], body))
                 except:
                     self.log.info('error handling list query request', exc_info=True)
                     
-            return web.Response(text=json.dumps(subset, default=self.date_handler))
+            return self.json_response(subset)
         except:
             self.log.info('error handling list post', exc_info=True)
-            return web.Response(text="{}")
+            return self.json_response({})
+
 
     async def nativeGroupHandler(self, request):
-        
         try:
             response={}
             if hasattr(self.adapter, "virtual_group_handler"):
@@ -318,7 +353,7 @@ class sofaRest():
                         self.log.info('!! error handling nativegroup request', exc_info=True)
         except:
             self.log.info('error handling list post', exc_info=True)
-        return web.Response(text=json.dumps(result, default=self.date_handler))
+        return self.json_response(result)
 
 
     async def updatePostHandler(self, request):
@@ -336,13 +371,10 @@ class sofaRest():
                         response=await self.adapter.virtual_update(request.match_info['item'], data=body)
                     except:
                         self.log.info('error handling list query request', exc_info=True)
-                    
-            return web.Response(text=json.dumps(response, default=self.date_handler))
+            return self.json_response(response)        
         except:
             self.log.info('error handling list post', exc_info=True)
-            return web.Response(text="{}")
-
-            
+            return self.json_response({})
 
             
     async def saveHandler(self, request):
@@ -354,16 +386,16 @@ class sofaRest():
                 #item="%s?%s" % (request.match_info['save'], request.query_string)
                 item=request.match_info['save']
                 body=body.decode()
-                self.log.info('Write request for %s: %s' % (request.match_info['save'], body))
+                self.log.info('.. save request for %s: %s' % (request.match_info['save'], body))
                 if hasattr(self.adapter, "virtualSave"):
                     result=await self.adapter.virtualSave(request.match_info['save'], body)
-                    return web.Response(text=result)
-                
-                return web.Response(text='{"status":"failed", "reason":"No Save Handler Available"}')
+                    return self.json_response(result)
+                response
+                return self.json_response({"status":"failed", "reason":"No Save Handler Available"})
                 
             except:
                 self.log.info('error handling write request', exc_info=True)
-                return web.Response(text='{"status":"failed", "reason":"Error with Save Handler"}')
+                return self.json_response({"status":"failed", "reason":"Error with Save Handler"})
 
     async def addHandler(self, request):
         
@@ -374,16 +406,15 @@ class sofaRest():
                 #item="%s?%s" % (request.match_info['add'], request.query_string)
                 item=request.match_info['add']
                 body=body.decode()
-                self.log.info('Write request for %s: %s' % (request.match_info['add'], body))
+                self.log.info('.. add request for %s: %s' % (request.match_info['add'], body))
                 if hasattr(self.adapter, "virtualAdd"):
                     result=await self.adapter.virtualAdd(request.match_info['add'], body)
-                    return web.Response(text=result)
-                
-                return web.Response(text='{"status":"failed", "reason":"No Add Handler Available"}')
+                    return self.json_response(result)
+                return self.json_response({"status":"failed", "reason":"No Add Handler Available"})
                 
             except:
                 self.log.info('error handling add request', exc_info=True)
-                return web.Response(text='{"status":"failed", "reason":"Error with Add Handler"}')
+                return self.json_response({"status":"failed", "reason":"Error with Add Handler"})
 
     async def delHandler(self, request):
 
@@ -395,42 +426,40 @@ class sofaRest():
                 body=body.decode()
             #item="%s?%s" % (request.match_info['del'], request.query_string)
             item=request.match_info['del']
-            self.log.info('Write request for %s: %s' % (request.match_info['del'], body))
+            self.log.info('.. del request for %s: %s' % (request.match_info['del'], body))
             if hasattr(self.adapter, "virtualDel"):
                 result=await self.adapter.virtualDel(request.match_info['del'], body)
-                return web.Response(text=result)
-            
-            return web.Response(text='{"status":"failed", "reason":"No Del Handler Available"}')
+                return self.json_response(result)
+            return self.json_response({"status":"failed", "reason":"No Del Handler Available"})
             
         except:
             self.log.info('error handling del request', exc_info=True)
-            return web.Response(text='{"status":"failed", "reason":"Error with Del Handler"}')
-
+            return self.json_response({"status":"failed", "reason":"Error with Del Handler"})
 
     async def imageHandler(self, request):
             
         try:
             if hasattr(self.adapter, "virtualImage"):
-                result=await self.adapter.virtualImage(request.match_info['item'])
-                return web.Response(body=result, headers = { "Content-type": "image/jpeg" })
+                result=await self.adapter.virtualImage(request.match_info['item'], width=request.rel_url.query.get('width'), height=request.rel_url.query.get('height'))
+                return aiohttp.web.Response(body=result, headers = { "Content-type": "image/jpeg" })
                         
-            return web.Response(text='No image found')
+            return aiohttp.web.Response(text='No image found')
         except:
             self.log.error('Error getting image for: %s' % request.match_info['item'], exc_info=True)
-            return web.Response(text='No image found')
+            return aiohttp.web.Response(text='No image found')
  
                 
     async def thumbnailHandler(self, request):
             
         try:
             if hasattr(self.adapter, "virtualThumbnail"):
-                result=await self.adapter.virtualThumbnail(request.match_info['item'])
-                return web.Response(body=result, headers = { "Content-type": "image/jpeg" })
+                result=await self.adapter.virtualThumbnail(request.match_info['item'], width=request.rel_url.query.get('width'), height=request.rel_url.query.get('height'))
+                return aiohttp.web.Response(body=result, headers = { "Content-type": "image/jpeg" })
                         
-            return web.Response(text='No thumbnail image found')
+            return aiohttp.web.Response(text='No thumbnail image found')
         except:
-            self.log.error('Error getting thumbnail image for: %s' % request.match_info['item'])
-            return web.Response(text='No thumbnail image found')
+            self.log.error('Error getting thumbnail image for: %s' % request.match_info['item'], exc_info=True)
+            return aiohttp.web.Response(text='No thumbnail image found')
 
 
     async def itemLookupHandler(self, request):
@@ -442,13 +471,13 @@ class sofaRest():
         subset=self.dataset.getObjectFromPath("/%s" % urllib.parse.unquote(request.match_info['item']), data=subset, trynames=True)    
         if request.query_string:
             subset=self.queryStringAdjuster(request.query_string, subset)
-                
-        return web.Response(text=json.dumps(subset, default=self.date_handler))
+        
+        return self.json_response(subset)
 
 
     async def adapterLookupHandler(self, request):
                 
-        return web.Response(text=json.dumps(self.dataset.adapters, default=self.date_handler))
+        return self.json_response(self.dataset.adapters)
 
 
     async def rootRequestHandler(self, request):
@@ -458,14 +487,14 @@ class sofaRest():
         reqstart=datetime.datetime.now()
         if self.response_token==None:
             self.log.info('.. adapter is not activated and no response_token has been generated.')
-            raise web.HTTPUnauthorized()
+            raise aiohttp.web.HTTPUnauthorized()
         elif 'authorization' in request.headers:
             if request.headers['authorization']!=self.response_token:
                 self.log.info('.. incorrect response_token: (%s vs %s)' % (request.headers['authorization'],self.response_token))
-                raise web.HTTPUnauthorized()
+                raise aiohttp.web.HTTPUnauthorized()
         else:
             self.log.info('.. no token was provided.')
-            raise web.HTTPUnauthorized()
+            raise aiohttp.web.HTTPUnauthorized()
         if request.body_exists:
             try:
                 readstart=datetime.datetime.now()
@@ -474,7 +503,6 @@ class sofaRest():
                 readend=datetime.datetime.now()
                 #self.log.info('>> Post JSON: %s %s' % ('event' in jsondata, hasattr(self.adapter,'process_event')))
                 if 'event' in jsondata and hasattr(self.adapter,'process_event'):
-                    #await self.adapter.process_event(jsondata)
                     #self.log.info('.. processing event: %s' % self.dataset.alexa_json_filter(jsondata))
                     asyncio.create_task(self.adapter.process_event(jsondata))
                     
@@ -490,27 +518,25 @@ class sofaRest():
             self.log.info('.. long request handle time: %s / read: %s ' % ( (reqend-reqstart).total_seconds(), (readend-readstart).total_seconds() )  )
 #        except:
 #            self.log.error('.. error with root request handler', exc_info=True)
-        return web.Response(text=json.dumps(response, default=self.date_handler))
+        return self.json_response(response)
 
         
     async def statusHandler(self, request):
         try:
             urls={ "native": "http://%s:%s/native" % (self.serverAddress, self.port), "devices": "http://%s:%s/devices" % (self.serverAddress, self.port)}
-            return web.Response(text=json.dumps({"name": self.dataset.adaptername, "mqtt": self.dataset.mqtt, "logged": self.dataset.logged_lines, "native_size": self.dataset.getSizeOfNative(), "urls": urls}, default=self.date_handler))
+            return self.json_response({"name": self.dataset.adaptername, "mqtt": self.dataset.mqtt, "logged": self.dataset.logged_lines, "native_size": self.dataset.getSizeOfNative(), "urls": urls})
         except:
             self.log.error('!! Error handling status request',exc_info=True)
-    async def rootHandler(self, request):
 
-        return web.Response(text=json.dumps(self.dataset.mqtt, default=self.date_handler))
 
     async def iconHandler(self, request):
-
-        return web.Response(text="")
+        return self.json_response({"icon": "missing"})
         
     async def retry_activation(self):
         try:
-            await asyncio.sleep(20)                
-            self.activated=await self.activate()
+            self.log.info('.. waiting %s seconds to retry activation' % self.activation_retry)
+            await asyncio.sleep(self.activation_retry)
+            self.activated=await self.activate(force=True)
         except:
             self.log.error('!! error retrying activation')
 
@@ -526,23 +552,20 @@ class sofaRest():
             self.log.error('!! error publishing adapter', exc_info=True)
 
     async def hub_watchdog(self):
-        try:
-            while self.activated:
-                url = '%s/status' % (self.dataset.baseConfig['hub_address'] )
-                headers = { 'authorization': self.token }
-                async with aiohttp.ClientSession() as client:
-                    async with client.get(url, headers=headers) as response:
-                        if response.status != 200:
-                            self.log.warning('!! hub monitor failed to reply on status update check. attempting to re-activate adapter.')
-                            self.activated=False
-                            break
-                await asyncio.sleep(20)
-            
-        except aiohttp.client_exceptions.ClientConnectorError:
-            self.log.error('!! error with watchdog (ClientConnectorError)')
-        except:
-            self.log.error('!! error running watchdog', exc_info=True)
-            
+
+        # This function does not have a try/except clause due to rare problems with GeneratorExit on 
+        # unusual crashes like temporary network connectivity problems
+        # https://stackoverflow.com/questions/30862196/generatorexit-in-python-generator
+
+        while self.activated:
+            status=await self.get_post_event_gateway(method='GET', path='status')
+            if 'status' in status and status['status']=='up':
+                self.log.debug('.. good status from watchdog: %s' % status)
+            else:
+                self.log.warning('!! hub monitor failed to reply on status update check. attempting to re-activate adapter.')
+                self.activated=False
+                break
+            await asyncio.sleep(20)
         await self.activate()
 
     async def hub_discovery(self):
@@ -566,71 +589,65 @@ class sofaRest():
 
         try:
             if self.activated:
-                headers = { 'authorization': self.token }
-                async with aiohttp.ClientSession() as client:
-                    async with client.post(self.dataset.baseConfig['hub_address'], data=json.dumps(discovery_directive), headers=headers) as response:
-                        result=await response.read()
-                        result=result.decode()
-                        result=json.loads(result)
-                        await self.adapter.updateDeviceList(result['event']['payload']['endpoints'])
-                        self.log.info('.. discovered %s devices on hub @ %s' % (len(result['event']['payload']['endpoints']), self.dataset.baseConfig['hub_address']) )
+                result=await self.get_post_event_gateway(data=json.dumps(discovery_directive))
+                #await self.adapter.updateDeviceList(result['event']['payload']['endpoints'])
+                await self.adapter.handleAddOrUpdateReport(result)
+                self.log.info('.. discovered %s devices on hub @ %s' % (len(result['event']['payload']['endpoints']), self.config.event_gateway) )
+                if hasattr(self.adapter, 'state_cache'):
+                    self.log.info('.. clearing state cache')
+                    self.adapter.state_cache={}
 
         except:
-            self.log.error('!! Error running discovery on hub: %s' % self.dataset.baseConfig['hub_address'] ,exc_info=True)
+            self.log.error('!! Error running discovery on hub: %s' % self.config.event_gateway ,exc_info=True)
         
-    async def activate(self):
+    async def activate(self, force=False):
         try:
-            self.response_token=str(uuid.uuid1())
-            if self.dataset.adaptername=="hub":
-                self.log.info('.. activation not required for Hub adapter')
-                return True
-            if 'api_key' not in self.dataset.config:
-                self.dataset.config['api_key']=str(uuid.uuid1())
-                self.dataset.saveConfig()
-            url = '%s/activate' % (self.dataset.baseConfig['apiGateway'] )
-            data={ 'name':self.dataset.adaptername, 'response_token': self.response_token, 'api_key': self.dataset.config['api_key'], 'collector': self.collector, "categories": self.collector_categories, "type": "adapter", "url": "http://%s:%s" % (self.serverAddress, self.port) }
+            if not self.activating or force:
+                self.activating=True
+                self.response_token=str(uuid.uuid1())
+                if self.dataset.adaptername=="hub":
+                    return True
+                if not hasattr(self.config,'api_key') or self.config.api_key=="":
+                    self.config.api_key=str(uuid.uuid1())
+                    self.dataset.saveConfig()
+                url = '%s/activate' % (self.config.api_gateway)
+                data={  'name':self.dataset.adaptername, 'response_token': self.response_token, 'api_key': self.config.api_key, 
+                        'collector': self.collector, "categories": self.collector_categories, "type": "adapter", 
+                        "url": "http://%s:%s" % (self.serverAddress, self.config.rest_port) }
+    
+                self.log.info('>> Posting activation request to %s' % url)
+                #self.log.debug('.. activation request: %s' % data)
 
-            self.log.info('>> Posting activation request to %s - %s' % (url, data))
-            timeout = aiohttp.ClientTimeout(total=3)
-            async with aiohttp.ClientSession(timeout=timeout) as client:
-                async with client.post(url, json=data) as response:
-                    if response.status == 200:
-                        result=await response.read()
-                        result=result.decode()
-                        self.log.debug('.. activation response: %s' % result)
-                        result=json.loads(result)
-                        if 'token' in result:
-                            self.log.info('.. received token: %s' % result['token'][-10:])
-                            self.token=result['token']
-                            self.dataset.token=result['token']
-                            self.token_expires=datetime.datetime.strptime(result['expiration'], '%Y-%m-%dT%H:%M:%S.%f')
-                            # supposedly supported in python 3.7 but does not seem to work in 3.7.3 on rpi
-                            #self.token_expires=datetime.fromisoformat(result['expiration'])
-                            self.activated=True
-
-                            if self.collector:
-                                asyncio.create_task(self.hub_discovery())    
-
-                            asyncio.create_task(self.hub_watchdog())
-                            if hasattr(self.adapter,'post_activate'):
-                                await self.adapter.post_activate()
- 
-                            return True
-                        else:
-                            self.log.debug('.. activation failed with response: %s' % result)
-                    else:
-                        self.log.error('.. activation failed with %s ' % response.status)
-
-        except aiohttp.client_exceptions.ClientConnectorError:
-            self.log.error('!! Error activating (could not connect)')
-        except concurrent.futures._base.TimeoutError:
-            self.log.error('!! Error activating (timeout)')
+                result=await self.get_post_event_gateway(path='activate', data=data)
+                if 'token' in result:
+                    self.token=result['token']
+                    self.dataset.token=result['token']
+                    self.token_expires=datetime.datetime.strptime(result['expiration'], '%Y-%m-%dT%H:%M:%S.%f')
+                    # supposedly supported in python 3.7 but does not seem to work in 3.7.3 on rpi
+                    # self.token_expires=datetime.fromisoformat(result['expiration'])
+                    self.log.info('<< received hub token: %s good until %s' % (result['token'][-10:], result['expiration']))
+                    self.activated=True
+    
+                    if self.collector:
+                        asyncio.create_task(self.hub_discovery())    
+    
+                    asyncio.create_task(self.hub_watchdog())
+                    
+                    self.activating=False
+                    if hasattr(self.adapter,'post_activate'):
+                        await self.adapter.post_activate()
+                    
+                    return True
+                elif result:
+                    self.log.error('<< Error with activation request: %s' % result)
+                    
+                asyncio.create_task(self.retry_activation())
+            else:
+                self.log.debug('.. activation is already in progress')
+        
         except:
-            self.log.error('!! Error activating', exc_info=True)
-        try:
-            asyncio.create_task(self.retry_activation())
-        except:
-            self.log.error('!! Error retrying activation', exc_info=True)        
+            self.log.error('!! Error with activation', exc_info=True)        
+        
         self.devices={}
         return False
 
@@ -643,10 +660,8 @@ class sofaRest():
                 expire_seconds=int(delta)
             if expire_seconds<refresh_buffer:
                 self.log.info('.. token needs refresh')
-                self.activated=await self.activate()
-                if self.token_expires:
-                    delta=(self.token_expires-datetime.datetime.now()).total_seconds()
-                    expire_seconds=int(delta)
+                await self.activate()
+
         except:
             self.log.error('error checking token expiration', exc_info=True)
 
@@ -655,52 +670,78 @@ class sofaRest():
             if self.activated:
                 await self.check_token_refresh()
             if self.token and self.activated:
-                if self.dataset.adaptername=="hub":
-                    self.log.info('.. activation not required for Hub')
-                    return True
-                url = self.dataset.baseConfig['eventGateway'] 
-                headers = { 'authorization': self.token }
-                async with aiohttp.ClientSession() as client:
-                    async with client.post(url, json=data, headers=headers) as response:
-                        if response.status == 200:
-                            #self.log.info('>> event gateway: %s' % (self.adapter.alexa_json_filter(data)))
-                            result=await response.read()
-                            result=result.decode()
-                            if result!="{}":
-                                self.log.info('.. result: %s' % result)
-                        elif response.status == 401:
-                            self.log.info('.. error token is not valid: %s' % response.status)
-                            self.activated=False
-                            asyncio.create_task(self.activate())
-                        else:
-                            self.log.error('>! Error sending to event gateway: %s' % response.status, exc_info=True)
-            #else:
-            #    self.log.info('$$ did not forward to event gateway: %s %s' % (self.activated, self.token))
-        except concurrent.futures._base.CancelledError:
-            self.log.error(">! Error sending to event gateway (cancelled) %s " % ( self.dataset.alexa_json_filter(data)))
-        except aiohttp.client_exceptions.ClientConnectorError:
-            self.log.error(">! Error sending to event gateway (could not connect) %s " % ( self.dataset.alexa_json_filter(data) ) , exc_info=True)
+                await self.get_post_event_gateway(data=data)
         except:
             self.log.error('.. error in event gateway notify', exc_info=True)
 
 
+    async def get_post_event_gateway(self, path=None, method='POST', data={}, timeout=5):
+        try:
+            result={}
+            url = self.config.event_gateway
+            if path:
+                url="%s/%s" % (url, path)
+            if self.token:
+                headers = { 'authorization': self.token }
+            else:
+                headers = {}
+            total_timeout = aiohttp.ClientTimeout(total=timeout)
+            async with aiohttp.ClientSession(timeout=total_timeout) as client:
+                if method=='POST':
+                    response=await client.post(url, json=data, headers=headers)
+                elif method=='GET':
+                    response=await client.get(url, headers=headers)
+                else:
+                    self.log.info('.. unsupported gateway method: %s' % method)
+                    return {}
+
+                if response.status == 200:
+                    #self.log.info('>> event gateway: %s' % (self.adapter.alexa_json_filter(data)))
+                    result=await response.read()
+                    result=result.decode()
+                    result=json.loads(result)
+                    if result:
+                        self.log.debug('.. result: %s' % result)
+                elif response.status == 401:
+                    self.log.info('.. error token is not valid: %s' % response.status)
+                    self.activated=False
+                    asyncio.create_task(self.activate())
+                    result={}
+                else:
+                    self.log.error('>! Error sending to event gateway: %s' % response.status, exc_info=True)
+                    result={}     
+                    
+        except concurrent.futures._base.CancelledError:
+            self.log.error(">! Error sending to event gateway (cancelled) %s" % ( self.dataset.alexa_json_filter(data)))
+        except aiohttp.client_exceptions.ClientConnectorError:
+            self.log.warn('>! Error in %s to event gateway (Client Connector Error): %s %s %s' % (method, url, headers, data))
+        except aiohttp.client_exceptions.ServerDisconnectedError:
+            self.log.error('>! Error sending to event gateway (server disconnected): %s %s %s' % (method, url, headers, data))
+        except concurrent.futures._base.TimeoutError:
+            self.log.warn('>! Error in %s to event gateway (Timeout): %s %s' % (method, url, data))
+        except:
+            self.log.warn('>! Error in %s to event gateway: %s %s' % (method, url, data), exc_info=True)
+        return result
+
     def shutdown(self):
-        #asyncio.ensure_future(self.serverApp.shutdown())
         asyncio.create_task(self.serverApp.shutdown())
 
-    def __init__(self, port, loop, log=None, dataset={}, collector=False, categories=[]):
-        self.port = port
+    def __init__(self, loop, log=None, dataset={}, collector=False, categories=[], config=None):
+        self.config=config
+        self.port = self.config.rest_port
         self.loop = loop
         self.workloadData={}
         self.log=log
         self.adapter=None
         self.dataset=dataset
         self.activated=False
+        self.activating=False
+        self.activation_retry=20
         self.token=None
         self.response_token=None
         self.token_expires=0
         self.collector=collector
-        self.url='http://%s:%s' % (self.dataset.baseConfig['restAddress'], self.dataset.config['rest_port'])
+        self.url='http://%s:%s' % (self.config.rest_address, self.config.rest_port)
         self.collector_categories=categories
 
     

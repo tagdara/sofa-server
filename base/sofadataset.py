@@ -20,21 +20,22 @@ import inspect
 
 class sofaDataset():
         
-    def __init__(self, log=None, adaptername="sofa", loop=None):
+    def __init__(self, log=None, adaptername="sofa", loop=None, config=None):
         self.startupTime=datetime.datetime.now()
         self.adaptername=adaptername
+        self.config=config
         self.localDevices={}
         self.nativeDevices={}
         self.devices={}
-        self.adapters={}
         self.listdata={}
         self.controllers={}
         self.log=log
         self.loop=loop
         self.mqtt={}
         self.nodevices=[]
-        self.restTimeout=2
+        self.restTimeout=5
         self.pendingRequests={}
+        self.lists={}
 
     def count_items(self, d, ct):
         nc=0
@@ -155,15 +156,16 @@ class sofaDataset():
             return {}
 
 
-    async def discovery(self):
+    async def discovery(self, remote=False):
     
-        # respond to discovery with list of local devices
+        # respond to discovery with list of devices.  Use remote to list the devices known from other sources
+        # otherwise just respond with devices owned by this adapter
 
         disco =  {
             "event": {
                 "header": {
                     "namespace": "Alexa.Discovery",
-                    "name": "Discover.Response",
+                    "name": "Discovery.Response",
                     "payloadVersion": "3",
                     "messageId":  str(uuid.uuid1()),
                 },
@@ -172,13 +174,16 @@ class sofaDataset():
                 }
             }
         }
+        
+        if remote:
+            disco['event']['payload']['endpoints']=list(self.devices.values())
             
-        for dev in self.localDevices:
-            if not self.localDevices[dev].hidden:
-                disco['event']['payload']['endpoints'].append(self.localDevices[dev].discoverResponse)
+        else:
+            for dev in self.localDevices:
+                if not self.localDevices[dev].hidden:
+                    disco['event']['payload']['endpoints'].append(self.localDevices[dev].discoverResponse)
                 
         return disco
-
 
 
     def deleteDevice(self, name):
@@ -210,30 +215,29 @@ class sofaDataset():
             self.log.error('Error deleting device: %s' % (name), exc_info=True)
             return False
 
-    def addDevice(self, name, obj):
+
+    def add_device(self, obj):
+            
+        # TODO: 8/21/20 - trying to change localDevices from using friendlyName keys and instead use device id's
+        # Adapters mostly still call newaddDevice whic will have to be migrated over to this add_device
+        # The impact of this change is still TBD but should be done once and for all
+        
             
         # add a smart device from the devices object set to the local device list
             
         try:
-            self.localDevices[name]=obj
-            #self.log.info('++ Added %s %s (%s)' % (obj.__class__.__name__, name, obj.endpointId))
-            return self.localDevices[name]
+            #shortname=obj.endpointId.split(':')[2]
+            #self.localDevices[shortname]=obj
+            #return self.localDevices[shortname]
+            
+            # 9/23/20 - continued march towards using full endpointId's in localDevices instead of friendly or short names
+            self.localDevices[obj.endpointId]=obj
+            return self.localDevices[obj.endpointId]            
+            
         except:
-            self.log.error('Error adding device: %s %s' % (name, obj))
+            self.log.error('!! Error adding device: %s' % (shortname), exc_info=True)
             return False
 
-    def newaddDevice(self, obj):
-            
-        # add a smart device from the devices object set to the local device list
-            
-        try:
-            self.localDevices[obj.friendlyName]=obj
-            #self.log.info('** Added %s %s (%s)' % (obj.__class__.__name__, obj.friendlyName, obj.endpointId))
-            return self.localDevices[obj.friendlyName]
-        except:
-            self.log.error('Error adding device: %s %s' % (name, obj))
-            return False
-            
 
     def getAllDevices(self):
     
@@ -267,11 +271,15 @@ class sofaDataset():
         except:
             self.log.error('Error ingesting list data: %s %s' % (listname, data), exc_info=true)
 
-    def getDeviceByEndpointId(self, endpointId):
+
+    def getDeviceByEndpointId(self, endpointId, as_dict=False):
         
         # first check devices that are local to this adapter
+        
         for device in self.localDevices:
             if self.localDevices[device].endpointId==endpointId:
+                if as_dict:
+                    return self.localDevices[device].discoverResponse
                 return self.localDevices[device]
         
         # now check other devices for collector type adapters
@@ -283,7 +291,47 @@ class sofaDataset():
                 self.log.error('Error with %s' % self.devices[device], exc_info=True)
         
         return None
-    
+        
+    def deviceHasCapability(self, endpointId, cap):
+        
+        try:
+            if endpointId in self.localDevices:
+                for devcap in self.localDevices[endpointId].capabilities:
+                    if '.' in devcap['interface']:
+                        if cap==devcap['interface'].split('.')[1]:
+                            return True
+                                
+            if endpointId in self.devices:
+                for devcap in self.devices[endpointId]['capabilities']:
+                    #self.log.info('interface: %s %s %s' % (cap, devcap['interface'], '.' in devcap['interface']))
+                    if '.' in devcap['interface']:
+                        if cap==devcap['interface'].split('.')[1]:
+                            return True
+        except:
+            self.log.error('!! Error checking for device capability on %s for %s' % (endpointId, cap), exc_info=True)
+        return False    
+
+    def device_capability(self, endpointId, cap):
+        
+        try:
+            if endpointId in self.localDevices:
+                for devcap in self.localDevices[endpointId].capabilities:
+                    if '.' in devcap['interface']:
+                        if cap==devcap['interface'].split('.')[1]:
+                            return devcap
+                                
+            if endpointId in self.devices:
+                for devcap in self.devices[endpointId]['capabilities']:
+                    #self.log.info('interface: %s %s %s' % (cap, devcap['interface'], '.' in devcap['interface']))
+                    if '.' in devcap['interface']:
+                        if cap==devcap['interface'].split('.')[1]:
+                            return devcap
+        except:
+            self.log.error('!! Error checking for device capability on %s for %s' % (endpointId, cap), exc_info=True)
+        return False    
+
+
+            
     def getDeviceByfriendlyName(self, friendlyName):
             
         for device in self.localDevices:
@@ -300,7 +348,7 @@ class sofaDataset():
                 
         return None
 
-    def getObjectsByDisplayCategory(self, category):
+    def getObjectsByDisplayCategory(self, category, local=True):
             
         devicelist=[]
         for device in self.localDevices:
@@ -309,6 +357,16 @@ class sofaDataset():
                     devicelist.append(self.localDevices[device])
             except:
                 pass
+
+        if not local:
+            for device in self.devices:
+                try:
+                    if category.upper() in self.devices[device].displayCategories:
+                        devicelist.append(self.devices[device])
+                    else:
+                        self.log.info('%s not in %s' % (category.upper(), self.devices[device].displayCategories))
+                except:
+                    self.log.error('%s not?' % category.upper(), exc_info=True)
                 
         return devicelist
 
@@ -365,21 +423,7 @@ class sofaDataset():
             self.log.error('Error creating list of Alexa properties', exc_info=True)
             
         return properties
-       
-       
-    async def register(self, adapterdata):
-            
-        try:
-            self.oldadapters = copy.deepcopy(self.adapters)
-            dpath.util.merge(self.adapters, adapterdata, flags=dpath.util.MERGE_REPLACE)
-            patch = jsonpatch.JsonPatch.from_diff(self.oldadapters, self.adapters)
-            if hasattr(self.adapter, "handleAdapterAnnouncement"):
-                #await self.adapter.handleAdapterAnnouncement(list(patch))
-                await self.adapter.handleAdapterAnnouncement(adapterdata, list(patch))
 
-        except:
-            self.log.error('Error registering adapter to dataset: %s' % (adapterdata), exc_info=True)
-             
             
     def nested_set(self, dic, keys, value):
         try:
@@ -411,6 +455,23 @@ class sofaDataset():
             self.log.error('Error updating properties', exc_info=True)
                             
 
+    async def addDeviceAndNotify(self, path):
+        try:
+            if hasattr(self.adapter, "addSmartDevice"):
+                smartDevice=await self.adapter.addSmartDevice(path)
+                if smartDevice:
+                    self.log.info('++ AddOrUpdateReport: %s (%s)' % (smartDevice.friendlyName, smartDevice.endpointId))
+                    if not smartDevice.hidden:
+                        if hasattr(self, "web_notify"):
+                            await self.web_notify(smartDevice.addOrUpdateReport)
+                        #if hasattr(self.adapter, "virtual_notify"):
+                        #    await self.adapter.virtual_notify(smartDevice.addOrUpdateReport)
+
+                    return smartDevice.endpointId
+        except:
+            self.log.error('Error addDeviceAndNotify: %s' % path, exc_info=True)
+            
+    
     async def checkDevicesForChanges(self, patch, oldDevicePropertyStates):
         
         try:
@@ -418,22 +479,21 @@ class sofaDataset():
             for item in patch:
                 if len(item['path'].split('/'))<3:
                     # ignore top level category adds
+                    #self.log.info('top level add: %s' % item)
                     continue
 
-                if item['op']=='add' and hasattr(self.adapter, "addSmartDevice"):
-                    smartDevice=await self.adapter.addSmartDevice(item['path'])
-                    if smartDevice:
-                        self.log.info('++ AddOrUpdateReport: %s (%s)' % (smartDevice.friendlyName, smartDevice.endpointId))
-                        if not smartDevice.hidden:
-                            if hasattr(self, "web_notify"):
-                                await self.web_notify(smartDevice.addOrUpdateReport)
-                        done.append(smartDevice.endpointId) 
+                if item['op']=='add':
+                    result=await self.addDeviceAndNotify(item['path'])
+                    if result:
+                        done.append(result) 
                 else:
                     smartDevice=self.getDeviceByEndpointId("%s%s" % (self.adaptername, self.getObjectPath(item['path']).replace("/",":")))
                     # Why the fuck are we using friendly names for keys in local devices instead of endpoint id's?
-                    #if smartDevice and smartDevice.endpointId in oldDevicePropertyStates:
-                    if smartDevice and smartDevice.endpointId not in done and smartDevice.friendlyName in oldDevicePropertyStates:
-                        #self.log.info('patch handling: %s %s' % (item, smartDevice))
+                    # 9/23/2020 this is a breaking change for most adapters, but switching to endpointId
+                    shortname="%s%s" % (self.adaptername, self.getObjectPath(item['path']).replace("/",":"))
+                    #if smartDevice and smartDevice.endpointId not in done and smartDevice.friendlyName in oldDevicePropertyStates:
+                    if smartDevice and smartDevice.endpointId not in done and smartDevice.endpointId in oldDevicePropertyStates:  
+                        # localDevices/friendlyName change 9/23/2020
                         newdev={}
                         olddev={}
                         for prop in smartDevice.propertyStates: 
@@ -442,7 +502,9 @@ class sofaDataset():
                                 newdev[prop['namespace']+'.'+prop['name']+"."+prop['instance']]=prop
                             else:
                                 newdev[prop['namespace']+'.'+prop['name']]=prop
-                        for prop in oldDevicePropertyStates[smartDevice.friendlyName]:
+                                
+                        #for prop in oldDevicePropertyStates[smartDevice.friendlyName]: 
+                        for prop in oldDevicePropertyStates[smartDevice.endpointId]:# localDevices/friendlyName change 9/23/2020
                             if 'instance' in prop:
                                 olddev[prop['namespace']+'.'+prop['name']+"."+prop['instance']]=prop
                             else:
@@ -455,6 +517,7 @@ class sofaDataset():
                                     controllers[newdev[prop]['namespace']]=[]
                                 controllers[newdev[prop]['namespace']].append(newdev[prop]['name'])
                         if controllers:
+                            #self.log.info("XX Old: %s / New: %s" % (olddev, newdev))
                             changeReport=smartDevice.changeReport(controllers)
                             if changeReport:
                                 try:
@@ -464,17 +527,19 @@ class sofaDataset():
                                             changes=changes+" %s.%s.%s %s" % (prop['namespace'], prop['instance'], prop['name'], prop['value'] )
                                         else:
                                             changes=changes+" %s.%s %s" % (prop['namespace'], prop['name'], prop['value'] )
-                                        if 'log_changes' in self.config and self.config['log_changes']==True:
+                                        if self.config.log_changes:
                                             self.log.info(changes)
                                 except:
                                     self.log.info('[> changereport: %s' % changeReport, exc_info=True)
-                                #if hasattr(self, "notify"):    
-                                #    self.notify('sofa/updates',json.dumps(changeReport))
+
                                 if hasattr(self, "web_notify"):
                                     await self.web_notify(changeReport)
+                                if hasattr(self.adapter, "virtual_notify"):
+                                    await self.adapter.virtual_notify(changeReport)
                         done.append(smartDevice.endpointId) 
         except:
             self.log.error('Error checking devices', exc_info=True)
+
 
     async def ingest(self, data, notify=True, overwriteLevel=None,  mergeReplace=False, returnChangeReport=True):
         
@@ -540,7 +605,8 @@ class sofaDataset():
                                 #self.notify('sofa/updates',json.dumps(event))
                                 if hasattr(self, "web_notify"):
                                     await self.web_notify(event)
-
+                                if hasattr(self.adapter, "virtual_notify"):
+                                    await self.adapter.virtual_notify(event)
                         update=await self.updateDeviceState(item['path'], newDevice=False, patch=item)
                         if update:
                             updates.append(update)
@@ -615,8 +681,11 @@ class sofaDataset():
                 except:
                     self.log.info('[> mqtt changereport: %s' % changeReport, exc_info=True)
                 self.notify('sofa/updates',json.dumps(changeReport))
+                
                 if hasattr(self, "web_notify"):
                     await self.web_notify(changeReport)
+                if hasattr(self.adapter, "virtual_notify"):
+                    await self.adapter.virtual_notify(changeReport)
                 return changeReport
         
             elif newDevice:
@@ -625,7 +694,8 @@ class sofaDataset():
                 self.log.error('!! woooooop')
                 if hasattr(self, "web_notify"):
                     await self.web_notify(smartDevice.addOrUpdateReport)
-
+                if hasattr(self.adapter, "virtual_notify"):
+                    await self.adapter.virtual_notify(smartDevice.addOrUpdateReport)
                 return None
                 #return smartDevice.addOrUpdateReport
 
@@ -653,38 +723,47 @@ class sofaDataset():
             self.log.error('Error generating response: %s' % endpointId, exc_info=True)
             return {}
 
-    async def generateDeleteReport(self, endpointId, bearerToken=''):
+    async def generateDeleteReport(self, endpoint_list, bearerToken=''):
             
         try:
-            report={
-                        "event": {
-                            "header": {
-                                "messageId": str(uuid.uuid1()),
-                                "name": "DeleteReport",
-                                "namespace": "Alexa.Discovery",
-                                "payloadVersion": "3"
-                            },
-                            "payload": {
-                                "endpoints": [
-                                    { "endpointId": endpointId }
-                                ],
-                                "scope": {
-                                    "type": "BearerToken",
-                                    "token": bearerToken
+            if type(endpoint_list)==str:
+                endpoint_lists=[endpoint_list]
+            
+            endpoints=[]
+            for endpointId in endpoint_list:
+                endpoints.append( { "endpointId": endpointId} )
+                
+            if endpoints:    
+                report={
+                            "event": {
+                                "header": {
+                                    "messageId": str(uuid.uuid1()),
+                                    "name": "DeleteReport",
+                                    "namespace": "Alexa.Discovery",
+                                    "payloadVersion": "3"
+                                },
+                                "payload": {
+                                    "endpoints": [
+                                        { "endpointId": endpointId }
+                                    ],
+                                    "scope": {
+                                        "type": "BearerToken",
+                                        "token": bearerToken
+                                    }
                                 }
                             }
                         }
-                    }
-                    
-            self.notify('sofa/updates',json.dumps(report))
-            if hasattr(self, "web_notify"):
-                await self.web_notify(report)
-
-            return report
+                        
+                if hasattr(self, "web_notify"):
+                    await self.web_notify(report)
+                if hasattr(self.adapter, "virtual_notify"):
+                    await self.adapter.virtual_notify(report)
+                
+                return report
 
         except:
-            self.log.error('Error generating delete report: %s' % endpointId, exc_info=True)
-            return {}
+            self.log.error('Error generating delete report: %s' % endpoint_list, exc_info=True)
+        return {}
 
     async def restPost(self, path="", data={}):  
         
@@ -694,7 +773,7 @@ class sofaDataset():
                 return {}
             headers={ "Content-type": "text/xml", "authorization": self.token }
             timeout = aiohttp.ClientTimeout(total=self.restTimeout)
-            url=self.baseConfig['hub_address']
+            url=self.config.api_gateway
             if path:
                 url=url+"/"+path
             async with aiohttp.ClientSession(timeout=timeout) as client:
@@ -702,6 +781,8 @@ class sofaDataset():
                 result=await response.read()
                 if result:
                     try:
+                        #self.log.info(" restpost request: %s %s" % (url, data))
+                        #self.log.info(" restpost result: %s" % (json.loads(result.decode())))
                         return json.loads(result.decode())
                     except:
                         self.log.info('bad json? %s' % result)
@@ -729,7 +810,7 @@ class sofaDataset():
                 return {}
             headers={ "Content-type": "text/xml", "authorization": self.token }
             timeout = aiohttp.ClientTimeout(total=self.restTimeout)
-            url=self.baseConfig['hub_address']
+            url=self.config.api_gateway
             if path:
                 url=url+"/"+path
             async with aiohttp.ClientSession(timeout=timeout) as client:
@@ -767,8 +848,10 @@ class sofaDataset():
                     #result[dev]=self.dataset.getDeviceByfriendlyName(dev).StateReport()
                 #except AttributeError: 
                 #    self.log.warn('Warning - device was not ready for statereport: %s' % dev)
+                except AttributeError: 
+                    self.log.error('!! Error getting statereport: %s does not exist' % dev)
                 except:
-                    self.log.error('Error getting statereport for %s' % dev, exc_info=True)
+                    self.log.error('!! Error getting statereport for %s' % dev, exc_info=True)
             return result    
 
         except:
@@ -786,7 +869,7 @@ class sofaDataset():
 
             adapter=devicelist[0].split(":")[0]
             if adapter==self.adaptername:
-                stateReports=self.generateStateReports(devicelist)
+                stateReports=await self.generateStateReports(devicelist)
             else:
                 reportStates=self.ReportStates(devicelist)
                 stateReports=await self.restPost(data=reportStates)
@@ -795,6 +878,11 @@ class sofaDataset():
             if (datetime.datetime.now()-reqstart).total_seconds()>2:
                 # typically takes about .5 seconds
                 self.log.info('.. Warning - %s Report States took %s seconds to respond' % (adapter, (datetime.datetime.now()-reqstart).total_seconds()))
+            
+            for report in stateReports:
+                if 'event' not in stateReports[report]:
+                    self.log.info('report: %s' % stateReports[report])
+                    
             return stateReports
         except:
             self.log.error("Error requesting states for %s (%s)" % (adapter, devicelist),exc_info=True)
@@ -822,6 +910,10 @@ class sofaDataset():
                 #self.log.info('rrs: %s %s' % (endpointId, reportState))
                 statereport=await self.restPost(data=reportState)
 
+            if statereport and statereport['event']['header']['name']=='ErrorResponse':
+                self.log.error('!! error report received from ReportState: %s' % statereport)
+                return statereport
+                
             if statereport and hasattr(self.adapter, "handleStateReport"):
                 await self.adapter.handleStateReport(statereport)
                 return statereport
@@ -926,27 +1018,7 @@ class sofaDataset():
         return {}
 
 
-    async def get_url_for_device(self, endpointId):
-        
-        try:
-            device=None
-            device=self.getDeviceByEndpointId(endpointId)
-            if not device:
-                self.log.error('.. get_url for device - unknown device: %s' % endpointId)
-            try:
-                return device['cookie']['url']
-            except KeyError:
-                pass
-            adapter_name=endpointId.split(':')[0]
-            if adapter_name in self.adapters:
-                return self.adapters[adapter_name]['url']
-            
-            self.log.info('.. could not determine url for device: %s' % endpointId)
-            return None
-        except:
-            self.log.error("!! Error getting URL for device: %s %s" % (endpointId, device), exc_info=True)
-        
-               
+           
     async def sendDirectiveToAdapter(self, data, url=None):
     
         try:
@@ -1034,7 +1106,7 @@ class sofaDataset():
 
             return out_text
         except:
-            self.log.error('Error parsing alexa json', exc_info=True)
+            #self.log.error('Error parsing alexa json', exc_info=True)
             return data
 
 
@@ -1143,6 +1215,7 @@ class sofaDataset():
                 else:
                     target_namespace=data['directive']['header']['namespace'].split('.')[1]
                     self.log.info('<< %s' % (self.alexa_json_filter(data)))
+                    #self.log.info('<< %s' % data)
                     response=await self.handleDirective(data)
                     if response:
                         try:
