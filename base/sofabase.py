@@ -185,6 +185,11 @@ class adapterbase():
     @property
     def collector(self):
         return False 
+
+    @property
+    def is_hub(self):
+        return False
+
         
     @property
     def collector_categories(self):
@@ -196,6 +201,9 @@ class adapterbase():
         self.log=log
         self.loop=loop
 
+
+    async def pre_activate(self):
+        pass
             
     async def stop(self):
         self.log.info('Stopping adapter')
@@ -458,7 +466,7 @@ class sofabase():
                     
                 for task in asyncio.Task.all_tasks():
                     task.cancel()
-                    
+               
                 if self.restServer:
                     self.restServer.shutdown()
                 if self.executor:
@@ -513,19 +521,12 @@ class sofabase():
 
         self.adapter.running=True
         self.dataset.adapter=self.adapter
-        
-        if hasattr(self.adapter,'pre_activate'):
-            self.loop.run_until_complete(self.adapter.pre_activate())
+        self.loop.run_until_complete(self.adapter.pre_activate())
 
-        self.adapter.url='http://%s:%s' % (self.config.rest_address, self.config.rest_port)
-        
         self.log.info('.. starting REST server: http://%s:%s' % (self.config.rest_address, self.config.rest_port))
-        self.restServer = sofarest.sofaRest(loop=self.loop, log=self.log, dataset=self.dataset, collector=self.adapter.collector, categories=self.adapter.collector_categories, config=self.config)
-        self.restServer.adapter=self.adapter
-        
-        result=self.restServer.initialize()
+        self.restServer = sofarest.sofaRest(loop=self.loop, log=self.log, dataset=self.dataset, adapter=self.adapter, config=self.config)
 
-        if not result:
+        if not self.restServer.initialize():
             self.loop.stop()
             self.loop.close()
             sys.exit(1)
@@ -535,7 +536,6 @@ class sofabase():
         self.dataset.token=self.restServer.token
         self.loop.run_until_complete(self.adapter.start())
         
-
         try:
             self.log.info('.. adapter primary loop running')
             self.loop.run_forever()
@@ -545,5 +545,7 @@ class sofabase():
             self.log.error('.. adapter primary loop terminated', exc_info=True)
 
         self.log.info('.. stopping adapter %s' % self.adaptername)
+        for task in asyncio.Task.all_tasks():
+            task.cancel()
         self.loop.close()
 

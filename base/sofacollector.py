@@ -20,6 +20,10 @@ class SofaCollector(sofabase):
         def collector(self):
             return True
 
+        @property
+        def is_hub(self):
+            return False
+
 
         @property
         def collector_categories(self):
@@ -31,7 +35,6 @@ class SofaCollector(sofabase):
             self.config=config
             self.log=log
             self.loop=loop
-            self.adapters_not_responding=[]
             self.device_cache={}
             self.state_cache={}
             self.caching_enabled=True
@@ -43,20 +46,26 @@ class SofaCollector(sofabase):
                 self.log.error('!! Error loading devices from device cache')
 
 
-        async def scrubDevicesOnStartup(self, adaptername):
-            
+        async def handle_discovery_report(self, message, adapter=None):
             try:
-                dead_devs=[]
-                for dev in self.dataset.devices:
-                    if dev.startswith("%s:" % adaptername):
-                        dead_devs.append(dev)
-                
-                for dev in dead_devs:
-                    del self.dataset.devices[dev]
-                    self.log.debug('.. removing device on adapter restart: %s' % dev)
-            
+                devlist=message['event']['payload']['endpoints']
+                if devlist:
+                    for dev in devlist:
+                        self.dataset.devices[dev['endpointId']]=dev
+                        if hasattr(self, "virtualAddDevice"):
+                            await self.virtualAddDevice(dev['endpointId'], dev)
+                        
+                        # deprecating virtualAddDevice for process_ for better clarity in adapters
+                        
+                        if hasattr(self, "add_remote_device"):
+                            await self.add_remote_device(dev['endpointId'], dev)
+                            
+                    self.log.info('++ AddOrUpdate %s devices. Now %s total devices.'  % (len(devlist), len(self.dataset.devices)))
+                    if self.caching_enabled:
+                        self.save_cache('%s_device_cache' % self.config.adapter_name, self.dataset.devices)
+
             except:
-                self.log.error('Error scrubbing devices on adapter restart', exc_info=True)
+                self.log.error('Error handling AddorUpdate: %s' % message , exc_info=True)
 
 
         async def handleAddOrUpdateReport(self, message, source=None):
@@ -66,16 +75,19 @@ class SofaCollector(sofabase):
                 if devlist:
                     for dev in devlist:
                         self.dataset.devices[dev['endpointId']]=dev
-
-                        if dev['endpointId'].split(':')[0] in self.adapters_not_responding:
-                            self.adapters_not_responding.remove( dev['endpointId'].split(':')[0] )
- 
                         if hasattr(self, "virtualAddDevice"):
                             await self.virtualAddDevice(dev['endpointId'], dev)
+                        
+                        # deprecating virtualAddDevice for process_ for better clarity in adapters
+                        
+                        if hasattr(self, "add_remote_device"):
+                            await self.add_remote_device(dev['endpointId'], dev)
                             
                     self.log.info('++ AddOrUpdate %s devices. Now %s total devices.'  % (len(devlist), len(self.dataset.devices)))
                     if self.caching_enabled:
                         self.save_cache('%s_device_cache' % self.config.adapter_name, self.dataset.devices)
+                        # TODO/CHEESE - Probably need to update the device states here but need to think about how
+                        #self.request_state_reports
 
             except:
                 self.log.error('Error handling AddorUpdate: %s' % message , exc_info=True)
@@ -85,7 +97,7 @@ class SofaCollector(sofabase):
             
             try:
                 header={"name": command, "namespace":"Alexa." + controller, "payloadVersion":"3", "messageId": str(uuid.uuid1()), "correlationToken": str(uuid.uuid1())}
-                endpoint={"endpointId": endpointId, "cookie": cookie, "scope":{ "type":"BearerToken", "token":"access-token-from-skill" }}
+                endpoint={"endpointId": endpointId, "cookie": cookie, "scope":{ "type":"BearerToken", "token":self.config.api_key }}
                 data={"directive": {"header": header, "endpoint": endpoint, "payload": payload }}
                 report=await self.dataset.sendDirectiveToAdapter(data)
                 return report
@@ -137,11 +149,17 @@ class SofaCollector(sofabase):
         async def handleErrorResponse(self, message ):
             try:
                 self.log.info('!> ErrorResponse: %s' % message)
+                error_type=message['event']['payload']['type']
                 endpointId=message['event']['endpoint']['endpointId']
-                if endpointId in self.state_cache:
-                    for prop in self.state_cache[endpointId]:
-                        if prop['namespace']=="Alexa.EndpointHealth":
-                            prop['value']={"value": "UNREACHABLE"}
+                if error_type=="BRIDGE_UNREACHABLE":
+                    if endpointId in self.state_cache:
+                        for prop in self.state_cache[endpointId]:
+                            if prop['namespace']=="Alexa.EndpointHealth":
+                                prop['value']={"value": "UNREACHABLE"}
+                
+                elif error_type=="NO_SUCH_DEVICE":
+                    if endpointId in self.state_cache:
+                        del self.state_cache[endpointId]
                     
                 if hasattr(self, "virtualErrorHandler"):
                     await self.virtualErrorHandler(message['event']['endpoint']['endpointId'], message['event']['payload']['type'], message['event']['payload']['message'])
@@ -155,21 +173,21 @@ class SofaCollector(sofabase):
             # This handler accepts Alexa events such as DoorbellPress
             
             try:
-                self.log.info('Event detected: %s' % message)
-                eventtype=message['event']['header']['name']
-                endpointId=message['event']['endpoint']['endpointId']
-                source=message['event']['header']['namespace'].split('.')[1]
+                self.log.info('.! alexa event received: %s' % message)
                 if hasattr(self, "virtualEventHandler"):
-                    #self.log.info('Adapter has virtualeventhandler')
-                    await self.virtualEventHandler(eventtype, source, endpointId, message)
+                    await self.virtualEventHandler(message['event']['header']['name'], message['event']['endpoint']['endpointId'], "", message)
+
+                # deprecating virtual event handler, removing source and rearranging param order
+
+                if hasattr(self, "process_remote_event"):
+                    await self.process_remote_event(message['event']['endpoint']['endpointId'], message['event']['header']['name'], message)
+                    
             except:
                 self.log.error('Error handling Alexa Event', exc_info=True)
 
         async def handleChangeReport(self, message):
             
             try:
-                if self.config.log_changes:
-                    self.log.info('.. Change Report Prop: %s' % self.dataset.alexa_json_filter(message))
 
                 if self.caching_enabled:
                     try:
@@ -242,7 +260,11 @@ class SofaCollector(sofabase):
                                 self.pendingRequests.remove(message['event']['header']['correlationToken'])
                         except:
                             self.log.error('Error handling a correlation token response: %s ' % message, exc_info=True)
-                    elif message['event']['header']['name']=='DoorbellPress':
+                    
+                    # Note this is a separate if statement from the correlation token tracker and should not be combined
+                    # 10/14/20 caused major confusion when the following was elif
+                    
+                    if message['event']['header']['name']=='DoorbellPress':
                         await self.handleAlexaEvent(message)
                 
                     elif message['event']['header']['name']=='StateReport':
@@ -315,8 +337,13 @@ class SofaCollector(sofabase):
                 req_start=datetime.datetime.now()
                 web_requests=[]
                 cache_results=[]
-                for dev in device_list:  
-                    if dev in self.state_cache:
+                for dev in device_list:
+                    proactive=True
+                    for cap in self.dataset.devices[dev]['capabilities']:
+                        if 'properties' in cap and not cap['properties']['proactivelyReported']:      
+                            proactive=False
+                            break
+                    if dev in self.state_cache and proactive:
                         #self.log.info('.. getting %s from cache' % dev)
                         cache_results.append(await self.cached_state_report(dev))
                     else:
@@ -326,7 +353,7 @@ class SofaCollector(sofabase):
 
                 results=results+cache_results
                 if len(web_requests)>0:
-                    self.log.info('<< requested state reports: %s seconds / %s items / %s cache misses / %s results' % ((datetime.datetime.now()-req_start).total_seconds(), len(device_list), len(web_requests), len(results)))
+                    self.log.info('>> requested state reports: %s seconds / %s items / %s cache misses / %s results' % ((datetime.datetime.now()-req_start).total_seconds(), len(device_list), len(web_requests), len(results)))
             except:
                 self.log.error('!! error generating cached state report %s' % endpointId, exc_info=True)
             return results

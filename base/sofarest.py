@@ -1,3 +1,5 @@
+import devices
+import reports
 import asyncio
 import aiohttp
 from aiohttp import web
@@ -20,9 +22,9 @@ class sofaRest():
     def initialize(self):
             
         try:
-            if not self.port:
+            if not self.config.rest_port:
                 self.log.info('.. no rest port provided.  Adapter rest server will start when port is specified')
-            while not self.port:
+            while not self.config.rest_port:
                 asyncio.sleep(1)
                 
             #self.log.info('Dataset: %s' % self.dataset.__dict__)
@@ -69,12 +71,12 @@ class sofaRest():
 
             self.loop.run_until_complete(self.runner.setup())
 
-            self.site = aiohttp.web.TCPSite(self.runner, self.serverAddress, self.port)
+            self.site = aiohttp.web.TCPSite(self.runner, self.serverAddress, self.config.rest_port)
             self.loop.run_until_complete(self.site.start())
             return True
         except OSError as e:
             if e.errno==98:
-                self.log.error('!! REST port %s is already in use.  Is another copy of the adapter running?' % (self.port))
+                self.log.error('!! REST port %s is already in use.  Is another copy of the adapter running?' % (self.config.rest_port))
             else:
                 self.log.error('!! Error starting REST server', exc_info=True)
         except:
@@ -490,7 +492,7 @@ class sofaRest():
             raise aiohttp.web.HTTPUnauthorized()
         elif 'authorization' in request.headers:
             if request.headers['authorization']!=self.response_token:
-                self.log.info('.. incorrect response_token: (%s vs %s)' % (request.headers['authorization'],self.response_token))
+                self.log.info('.. incorrect response_token: (sent %s vs actual %s)' % (request.headers['authorization'],self.response_token))
                 raise aiohttp.web.HTTPUnauthorized()
         else:
             self.log.info('.. no token was provided.')
@@ -523,7 +525,7 @@ class sofaRest():
         
     async def statusHandler(self, request):
         try:
-            urls={ "native": "http://%s:%s/native" % (self.serverAddress, self.port), "devices": "http://%s:%s/devices" % (self.serverAddress, self.port)}
+            urls={ "native": "http://%s:%s/native" % (self.serverAddress, self.config.rest_port), "devices": "http://%s:%s/devices" % (self.serverAddress, self.config.rest_port)}
             return self.json_response({"name": self.dataset.adaptername, "mqtt": self.dataset.mqtt, "logged": self.dataset.logged_lines, "native_size": self.dataset.getSizeOfNative(), "urls": urls})
         except:
             self.log.error('!! Error handling status request',exc_info=True)
@@ -542,7 +544,7 @@ class sofaRest():
 
     async def publish_adapter_device(self):
         try:
-            url="http://%s:%s" % (self.serverAddress, self.port)
+            url="http://%s:%s" % (self.serverAddress, self.config.rest_port)
             device=devices.alexaDevice('%s/adapter/%s' % (self.dataset.adaptername, self.dataset.adaptername), self.dataset.adaptername, displayCategories=["ADAPTER"], adapter=self)
             device.AdapterHealth=devices.AdapterHealth(device=device, url=url)
             smartAdapter=self.dataset.newaddDevice(device)
@@ -570,27 +572,9 @@ class sofaRest():
 
     async def hub_discovery(self):
 
-        discovery_directive={   "directive": {
-                                    "header": {
-                                        "namespace": "Alexa.Discovery", 
-                                        "name": "Discover", 
-                                        "messageId": str(uuid.uuid1()),
-                                        "payloadVersion": "3"
-                                    },
-                                    "payload": {
-                                        "scope": {
-                                            "type": "BearerToken",
-                                            "token": "fake_temporary"
-                                        }
-                                    }
-                                }
-                            }
-
-
         try:
             if self.activated:
-                result=await self.get_post_event_gateway(data=json.dumps(discovery_directive))
-                #await self.adapter.updateDeviceList(result['event']['payload']['endpoints'])
+                result=await self.get_post_event_gateway(data=json.dumps(reports.Discover()))
                 await self.adapter.handleAddOrUpdateReport(result)
                 self.log.info('.. discovered %s devices on hub @ %s' % (len(result['event']['payload']['endpoints']), self.config.event_gateway) )
                 if hasattr(self.adapter, 'state_cache'):
@@ -599,23 +583,25 @@ class sofaRest():
 
         except:
             self.log.error('!! Error running discovery on hub: %s' % self.config.event_gateway ,exc_info=True)
+
         
     async def activate(self, force=False):
         try:
+            if self.adapter.is_hub:
+                return True
+            
             if not self.activating or force:
                 self.activating=True
                 self.response_token=str(uuid.uuid1())
-                if self.dataset.adaptername=="hub":
-                    return True
                 if not hasattr(self.config,'api_key') or self.config.api_key=="":
                     self.config.api_key=str(uuid.uuid1())
                     self.dataset.saveConfig()
                 url = '%s/activate' % (self.config.api_gateway)
                 data={  'name':self.dataset.adaptername, 'response_token': self.response_token, 'api_key': self.config.api_key, 
-                        'collector': self.collector, "categories": self.collector_categories, "type": "adapter", 
+                        'collector': self.adapter.collector, "categories": self.adapter.collector_categories, "type": "adapter", 
                         "url": "http://%s:%s" % (self.serverAddress, self.config.rest_port) }
     
-                self.log.info('>> Posting activation request to %s' % url)
+                self.log.info('>> Posting activation request to %s %s' % (url, self.response_token))
                 #self.log.debug('.. activation request: %s' % data)
 
                 result=await self.get_post_event_gateway(path='activate', data=data)
@@ -628,9 +614,9 @@ class sofaRest():
                     self.log.info('<< received hub token: %s good until %s' % (result['token'][-10:], result['expiration']))
                     self.activated=True
     
-                    if self.collector:
+                    if self.adapter.collector:
                         asyncio.create_task(self.hub_discovery())    
-    
+                    
                     asyncio.create_task(self.hub_watchdog())
                     
                     self.activating=False
@@ -703,7 +689,7 @@ class sofaRest():
                     if result:
                         self.log.debug('.. result: %s' % result)
                 elif response.status == 401:
-                    self.log.info('.. error token is not valid: %s' % response.status)
+                    self.log.info('.. error token is not valid: %s %s' % (response.status, self.token))
                     self.activated=False
                     asyncio.create_task(self.activate())
                     result={}
@@ -724,15 +710,16 @@ class sofaRest():
         return result
 
     def shutdown(self):
-        asyncio.create_task(self.serverApp.shutdown())
+        self.log.info('.. do we need rest server shutdown? skipped for testing')
+        #asyncio.create_task(self.serverApp.shutdown())
 
-    def __init__(self, loop, log=None, dataset={}, collector=False, categories=[], config=None):
+    #def __init__(self, loop, log=None, dataset={}, collector=False, categories=[], config=None):
+    def __init__(self, loop, log=None, dataset={}, adapter=None, config=None):
+
         self.config=config
-        self.port = self.config.rest_port
         self.loop = loop
-        self.workloadData={}
         self.log=log
-        self.adapter=None
+        self.adapter=adapter
         self.dataset=dataset
         self.activated=False
         self.activating=False
@@ -740,8 +727,5 @@ class sofaRest():
         self.token=None
         self.response_token=None
         self.token_expires=0
-        self.collector=collector
-        self.url='http://%s:%s' % (self.config.rest_address, self.config.rest_port)
-        self.collector_categories=categories
 
     

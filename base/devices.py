@@ -3,6 +3,7 @@ import uuid
 import datetime
 import copy
 import asyncio
+import reports
 
 class capabilityInterface(object):
 
@@ -597,33 +598,9 @@ class SceneController(capabilityInterface):
     def props(self):
         return {}
         
-    def ActivationStarted(self, correlationToken="", bearerToken=""):
-        
-        return {
-            "context" : { },
-            "event": {
-                "header": {
-                    "messageId": str(uuid.uuid1()),
-                    "correlationToken": correlationToken,
-                    "namespace": "Alexa.SceneController",
-                    "name": "ActivationStarted",
-                    "payloadVersion": "3"
-                },
-                "endpoint": {
-                    "scope": {
-                        "type": "BearerToken",
-                        "token": bearerToken,
-                    },
-                    "endpointId": self.device.endpointId,
-                },
-                "payload": {
-                    "cause" : {
-                        "type" : "PHYSICAL_INTERACTION"
-                    },
-                    "timestamp" : datetime.datetime.now(datetime.timezone.utc).isoformat()[:-10]+"Z"
-                }
-            }
-        }
+    def ActivationStarted(self, correlationToken="", bearerToken="", cause="PHYSICAL_INTERACTION"):
+        return reports.ActivationStarted(self.device.endpointId, correlationToken=correlationToken, bearerToken=bearerToken, cause=cause)
+
 
 class TemperatureSensor(capabilityInterface):
     
@@ -1057,33 +1034,9 @@ class DoorbellEventSource(capabilityInterface):
         # DoorbellEventSource is Quirks mode stuff: https://developer.amazon.com/docs/device-apis/alexa-doorbelleventsource.html
         return {"interface":self.interface, "version": self.version, "type": self.capabilityType, "proactivelyReported": True}
 
-    def press(self):
-        return {
-                    "context": {},
-                    "event": {
-                        "header": {
-                            "messageId": str(uuid.uuid1()),
-                            "namespace" : "Alexa.DoorbellEventSource",
-                            "name": "DoorbellPress",
-                            "payloadVersion": "3"
-                        },
-                        "endpoint": {
-                            "scope": {
-                                "type": "BearerToken",
-                                "token": ""
-                            },
-                            "endpointId": self.endpointId
-                        },
-                        "payload" : {
-                            "cause": {
-                                "type": "PHYSICAL_INTERACTION"
-                            },
-                            "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()[:-10]+"Z"
-                        }
-                    }
-                }
+    def press(self, bearerToken=''):
+        return reports.DoorbellPress(self.endpointId, bearerToken=bearerToken)
 
-    
 
 class EndpointHealth(capabilityInterface):
     
@@ -1323,79 +1276,22 @@ class alexaDevice(object):
             "description": self.description,
             "manufacturerName": self.manufacturerName,
             "modelName": self.modelName,
-            "cookie": {"url": self.adapter.url},
+            "cookie": {},
             "capabilities": self.capabilities,
         }
         
     def ReportState(self, correlationToken='' , bearerToken=''):
+        return reports.ReportState(self.endpointId, namespace=self.namespace, correlationToken=correlationToken, bearerToken=bearerToken)
 
-        return  {
-            "directive": {
-                "header": {
-                    "name":"ReportState",
-                    "payloadVersion": self.payloadVersion,
-                    "messageId":str(uuid.uuid1()),
-                    "namespace":self.namespace,
-                    "correlationToken":correlationToken
-                },
-                "endpoint": {
-                    "endpointId": self.endpointId,
-                    "scope": {
-                        "type": "BearerToken",
-                        "token": bearerToken
-                    },     
-                    "cookie": {}
-                },
-                "payload": {}
-            },
-        }
 
     def StateReport(self, correlationToken=None, bearerToken=''):
-        
-        if not correlationToken:
-            correlationToken=str(uuid.uuid1())
-            
-        return  {
-            "event": {
-                "header": {
-                    "name":"StateReport",
-                    "payloadVersion": self.payloadVersion,
-                    "messageId":str(uuid.uuid1()),
-                    "namespace":self.namespace,
-                    "correlationToken":correlationToken
-                },
-                "endpoint": {
-                    "endpointId": self.endpointId,
-                    "scope": {
-                        "type": "BearerToken",
-                        "token": bearerToken
-                    },     
-                    "cookie": {}
-                },
-                "payload": {}
-            },
-            "context": {
-                "properties": self.propertyStates
-            }
-        }
+        return reports.StateReport(self.endpointId, self.namespace, correlationToken=correlationToken, bearerToken=bearerToken, 
+                                    propertyStates=self.propertyStates, payloadVersion=self.payloadVersion)
+      
         
     @property
     def addOrUpdateReport(self):
-        return {
-            "event": {
-                "header": {
-                    "namespace": "Alexa.Discovery",
-                    "name": "AddOrUpdateReport",
-                    "payloadVersion": "3",
-                    "messageId": str(uuid.uuid1()),
-                },
-                "payload": {
-                    "endpoints": [
-                        self.discoverResponse
-                    ]          
-                }
-            }
-        }
+        return reports.AddOrUpdateReport([self.discoverResponse])
         
     def changeReport(self, controllers, names={}):
         
@@ -1421,80 +1317,18 @@ class alexaDevice(object):
 
         if not changedPropertyStates:
             return {}
-                
-        return  {
-            "event": {
-                "header": {
-                    "name":"ChangeReport",
-                    "payloadVersion": self.payloadVersion,
-                    "messageId":str(uuid.uuid1()),
-                    "namespace":self.namespace
-                },
-                "endpoint": {
-                    "endpointId": self.endpointId,
-                    "cookie": {
-                        "name": self.friendlyName
-                    }
-                },
-                "payload": {
-                    "change": {
-                        "cause": {
-                            "type":"APP_INTERACTION"
-                        },
-                        "properties": changedPropertyStates
-                    }
-                }
-            },
-            "context": {
-                "properties": unchangedPropertyStates
-            },
-        }
+            
+        return reports.ChangeReport(self.endpointId, changedPropertyStates,unchangedPropertyStates, namespace=self.namespace)
 
 
     def Response(self, correlationToken='', controller='', payload={}, override={}):
+        context_properties = [prop for prop in self.propertyStates if (prop['namespace'].split('.')[1]==controller or not controller)]
+        return reports.Response(self.endpointId, context_properties, namespace=self.namespace, correlationToken=correlationToken, payload=payload)
 
-        return {
-            "event": {
-                "header": {
-                    "name":"Response",
-                    "payloadVersion": self.payloadVersion,
-                    "messageId":str(uuid.uuid1()),
-                    "namespace":self.namespace,
-                    "correlationToken":correlationToken
-                },
-                "endpoint": {
-                    "endpointId": self.endpointId
-                }
-            },
-            "context": {
-                "properties": [prop for prop in self.propertyStates if (prop['namespace'].split('.')[1]==controller or not controller)]
-            },
-            "payload": payload
-        }
 
-    def ErrorResponse(self, correlationToken="", error_type="INTERNAL_ERROR", error_message="An unknown exception occurred"):
-
-        # Possible error messages are defined at https://developer.amazon.com/en-US/docs/alexa/device-apis/alexa-errorresponse.html
-        return {
-            "event": {
-                "header": {
-                    "name":"ErrorResponse",
-                    "payloadVersion": self.payloadVersion,
-                    "messageId":str(uuid.uuid1()),
-                    "namespace":self.namespace,
-                    "correlationToken":correlationToken
-                },
-                "endpoint": {
-                    "endpointId": self.endpointId
-                }
-            },
-            "payload": {
-                "type": error_type,
-                "message": error_message
-            }
-        }
-
-        
+    def ErrorResponse(self, error_type="INTERNAL_ERROR", error_message="An unknown exception occurred", correlationToken=None):
+        return reports.ErrorResponse(self.endpointId, error_type, error_message, correlationToken=correlationToken)
+ 
 
 class remoteAlexaDevice(object):
     # This is a representation of a device that is hosted on another adapter.  It should be used by
@@ -1516,54 +1350,8 @@ class remoteAlexaDevice(object):
         self.adapter=localadapter
         self.nativeObject=None
         self.adaptername=self.adapter.dataset.adaptername
-        self.url=self.adapter.url
         
-        
-def ErrorResponse(endpointId, error_type, message, payload={}, messageId=None, correlationToken=None, bearerToken=""):
 
-    error_types=[  "ALREADY_IN_OPERATION","BRIDGE_UNREACHABLE","CLOUD_CONTROL_DISABLED","ENDPOINT_BUSY", "ENDPOINT_LOW_POWER", "ENDPOINT_UNREACHABLE", 
-                        "EXPIRED_AUTHORIZATION_CREDENTIAL","FIRMWARE_OUT_OF_DATE", "HARDWARE_MALFUNCTION", "INSUFFICIENT_PERMISSIONS", "INTERNAL_ERROR", 
-                        "INVALID_AUTHORIZATION_CREDENTIAL", "INVALID_DIRECTIVE", "INVALID_VALUE", "NO_SUCH_ENDPOINT", "NOT_CALIBRATED", 
-                        "NOT_SUPPORTED_IN_CURRENT_MODE", "NOT_IN_OPERATION", "POWER_LEVEL_NOT_SUPPORTED", "RATE_LIMIT_EXCEEDED", 
-                        "TEMPERATURE_VALUE_OUT_OF_RANGE","TOO_MANY_FAILED_ATTEMPTS","VALUE_OUT_OF_RANGE"
-                    ]
-
-    if not messageId:
-        messageId=str(uuid.uuid1())
-        
-    if error_type not in error_types:
-        error_type="INTERNAL_ERROR"
-        
-    payload['type']=error_type
-    payload['message']=message
-    
-    error = { 
-            "event": {
-                "header": {
-                    "namespace": "Alexa",
-                    "name": "ErrorResponse",
-                    "messageId": messageId,
-                    #"correlationToken": "<an opaque correlation token>",
-                    "payloadVersion": "3"
-                },
-                "endpoint":{
-                    "scope":{
-                        "type":"BearerToken",
-                        "token":bearerToken
-                    },
-                    "endpointId": endpointId
-                },
-                "payload": payload
-            }
-        }
-                
-    if correlationToken:
-        error['event']['header']['correlationToken']=correlationToken
-        
-    return error
-
-
-        
 
 if __name__ == '__main__':
     pass
