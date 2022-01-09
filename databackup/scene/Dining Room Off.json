@@ -1,0 +1,20 @@
+{
+    "endpointId": "logic:scene:Dining Room Off",
+    "friendlyName": "Dining Room Off",
+    "children": {
+        "hue:lights:9": {
+            "powerState": "OFF"
+        },
+        "hue:lights:7": {
+            "powerState": "OFF"
+        },
+        "hue:lights:3": {
+            "powerState": "OFF"
+        },
+        "hue:lights:5": {
+            "powerState": "OFF"
+        }
+    },
+    "name": "Dining Room Off",
+    "filename": "Dining Room Off.json"
+}

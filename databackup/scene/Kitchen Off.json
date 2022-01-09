@@ -1,0 +1,26 @@
+{
+    "endpointId": "logic:scene:Kitchen Off",
+    "friendlyName": "Kitchen Off",
+    "children": {
+        "hue:lights:24": {
+            "powerState": "OFF"
+        },
+        "hue:lights:25": {
+            "powerState": "OFF"
+        },
+        "hue:lights:26": {
+            "powerState": "OFF"
+        },
+        "insteon:node:1A 36 DB 1": {
+            "powerState": "OFF"
+        },
+        "insteon:node:1A 37 9C 1": {
+            "powerState": "OFF"
+        },
+        "hue:lights:27": {
+            "powerState": "OFF"
+        }
+    },
+    "name": "Kitchen Off",
+    "filename": "Kitchen Off.json"
+}

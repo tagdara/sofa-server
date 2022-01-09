@@ -1,0 +1,21 @@
+{
+    "endpointId": "logic:scene:Office Blue",
+    "friendlyName": "Office Blue",
+    "children": {
+        "hue:lights:28": {
+            "brightness": 80,
+            "saturation": 1,
+            "hue": 246.07594936708864
+        },
+        "hue:lights:29": {
+            "brightness": 80,
+            "saturation": 1,
+            "hue": 246.07594936708864
+        },
+        "insteon:node:19 45 EA 1": {
+            "brightness": 0
+        }
+    },
+    "name": "Office Blue",
+    "filename": "Office Blue.json"
+}

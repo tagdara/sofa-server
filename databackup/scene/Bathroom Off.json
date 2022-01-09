@@ -1,0 +1,11 @@
+{
+    "endpointId": "logic:scene:Bathroom Off",
+    "friendlyName": "Bathroom Off",
+    "children": {
+        "insteon:node:29 B6 33 1": {
+            "powerState": "OFF"
+        }
+    },
+    "name": "Bathroom Off",
+    "filename": "Bathroom Off.json"
+}

@@ -1,0 +1,70 @@
+{
+    "lastrun": "2020-09-27T18:43:48.524016Z",
+    "triggers": [],
+    "actions": [
+        {
+            "name": "TV",
+            "endpointId": "sonybravia:tv:BRAVIA",
+            "controller": "PowerController",
+            "command": "TurnOn"
+        },
+        {
+            "name": "Receiver",
+            "endpointId": "yamaha:Receiver:Main_Zone",
+            "controller": "PowerController",
+            "command": "TurnOn"
+        },
+        {
+            "name": "Logic",
+            "endpointId": "logic:logic:command",
+            "controller": "LogicController",
+            "command": "Wait"
+        },
+        {
+            "name": "TV",
+            "endpointId": "sonybravia:tv:BRAVIA",
+            "propertyName": "mode",
+            "controller": "ModeController",
+            "command": "SetMode",
+            "instance": "Tv.Audio",
+            "value": {
+                "mode": "Audio.audioSystem"
+            }
+        },
+        {
+            "name": "Logic",
+            "endpointId": "logic:logic:command",
+            "controller": "LogicController",
+            "command": "Wait"
+        },
+        {
+            "name": "Receiver",
+            "endpointId": "yamaha:Receiver:Main_Zone",
+            "propertyName": "mode",
+            "controller": "ModeController",
+            "command": "SetMode",
+            "instance": "Receiver.InputLock",
+            "value": {
+                "mode": "InputLock.Unlocked"
+            }
+        },
+        {
+            "name": "Receiver",
+            "endpointId": "yamaha:Receiver:Main_Zone",
+            "propertyName": "input",
+            "controller": "InputController",
+            "command": "SelectInput",
+            "value": {
+                "input": "TV"
+            }
+        }
+    ],
+    "conditions": [],
+    "schedules": [],
+    "favorite": false,
+    "name": "Join TV Audio",
+    "nextrun": "",
+    "id_code": "solnk",
+    "description": "",
+    "endpointId": "logic:activity:solnk"
+}

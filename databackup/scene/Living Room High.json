@@ -1,0 +1,44 @@
+{
+    "endpointId": "logic:scene:Living Room High",
+    "friendlyName": "Living Room High",
+    "children": {
+        "hue:lights:8": {
+            "powerState": "ON",
+            "brightness": 100,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:6": {
+            "powerState": "ON",
+            "brightness": 100,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:4": {
+            "powerState": "ON",
+            "brightness": 100,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:2": {
+            "powerState": "ON",
+            "brightness": 100,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:10": {
+            "powerState": "ON",
+            "brightness": 100,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:11": {
+            "powerState": "ON",
+            "brightness": 100,
+            "saturation": 0.27,
+            "hue": 43.5
+        }
+    },
+    "name": "Living Room High",
+    "filename": "Living Room High.json"
+}

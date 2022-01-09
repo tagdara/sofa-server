@@ -1,0 +1,75 @@
+{
+    "actions": [
+        {
+            "value": {
+                "rangeValue": "100"
+            },
+            "deviceName": "Kitchen Counter",
+            "endpointId": "insteon:node:1A 36 DB 1",
+            "command": "SetRangeValue",
+            "type": "command",
+            "controller": "Alexa.RangeController",
+            "propertyName": "rangeValue",
+            "instance": "Light.On Level"
+        },
+        {
+            "value": {
+                "rangeValue": "100"
+            },
+            "deviceName": "Kitchen Sink",
+            "endpointId": "insteon:node:1A 37 9C 1",
+            "command": "SetRangeValue",
+            "type": "command",
+            "controller": "Alexa.RangeController",
+            "propertyName": "rangeValue",
+            "instance": "Light.On Level"
+        },
+        {
+            "value": {
+                "rangeValue": "100"
+            },
+            "deviceName": "Bathroom Light",
+            "endpointId": "insteon:node:29 B6 33 1",
+            "command": "SetRangeValue",
+            "type": "command",
+            "controller": "Alexa.RangeController",
+            "propertyName": "rangeValue",
+            "instance": "Light.On Level"
+        }
+    ],
+    "lastrun": "2021-11-13T12:50:15.383086Z",
+    "favorite": false,
+    "conditions": [],
+    "nextrun": "2021-11-13T09:00:00Z",
+    "schedules": [
+        {
+            "type": "days",
+            "unit": "days",
+            "interval": 1,
+            "start": "2019-01-04T08:00",
+            "days": [
+                "mon",
+                "tue",
+                "wed",
+                "thu",
+                "fri"
+            ]
+        },
+        {
+            "type": "days",
+            "unit": "days",
+            "interval": 1,
+            "start": "2019-01-05T09:00",
+            "days": [
+                "sun",
+                "sat"
+            ]
+        }
+    ],
+    "triggers": [],
+    "name": "Higher Light On Levels",
+    "id_code": "owiyl",
+    "description": "",
+    "endpointId": "logic:activity:owiyl",
+    "running": true
+}

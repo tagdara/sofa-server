@@ -1,0 +1,105 @@
+{
+    "lastrun": "2021-11-12T00:26:17.893520Z",
+    "triggers": [],
+    "actions": [
+        {
+            "value": 0,
+            "deviceName": "Master Bedroom",
+            "type": "command",
+            "command": "Pause",
+            "endpointId": "sonos:player:RINCON_B8E9378E1E8001400",
+            "controller": "Alexa.MusicController"
+        },
+        {
+            "command": "TurnOff",
+            "deviceName": "Master Bedroom Floor",
+            "endpointId": "hue:lights:23",
+            "controller": "Alexa.PowerController",
+            "type": "command"
+        },
+        {
+            "value": {
+                "thermostatMode": {
+                    "value": "COOL"
+                }
+            },
+            "deviceName": "Master bedroom",
+            "type": "command",
+            "command": "SetThermostatMode",
+            "endpointId": "dyson:fan:PE7-US-JNA0805A",
+            "controller": "Alexa.ThermostatController",
+            "propertyName": "thermostatMode"
+        },
+        {
+            "type": "command",
+            "endpointId": "logic:logic:command",
+            "controller": "LogicController",
+            "command": "Wait",
+            "name": "Logic"
+        },
+        {
+            "value": {
+                "targetSetpoint": {
+                    "value": "67",
+                    "scale": "FAHRENHEIT"
+                }
+            },
+            "deviceName": "Main Thermostat",
+            "type": "command",
+            "command": "SetTargetTemperature",
+            "endpointId": "insteon:node:1D 6D BC 1",
+            "controller": "Alexa.ThermostatController",
+            "propertyName": "targetSetpoint"
+        },
+        {
+            "name": "Shutdown",
+            "endpointId": "logic:activity:qqonc",
+            "controller": "Alexa.SceneController",
+            "command": "Activate"
+        },
+        {
+            "command": "TurnOn",
+            "deviceName": "Overnight Mode",
+            "endpointId": "logic:mode:Overnight Mode",
+            "controller": "Alexa.PowerController",
+            "type": "command"
+        },
+        {
+            "name": "Audio Video Overnight Reset",
+            "endpointId": "logic:activity:hylnk",
+            "controller": "Alexa.SceneController",
+            "command": "Activate"
+        },
+        {
+            "name": "Master Bedroom Fan",
+            "endpointId": "dyson:fan:PE7-US-JNA0805A",
+            "propertyName": "mode",
+            "controller": "Alexa.ModeController",
+            "command": "SetMode",
+            "instance": "Thermostat.Night Mode",
+            "value": {
+                "mode": "Night Mode.ON"
+            }
+        },
+        {
+            "name": "Garage Ceiling",
+            "endpointId": "insteon:node:23 F8 9E 1",
+            "controller": "Alexa.PowerController",
+            "command": "TurnOff"
+        },
+        {
+            "name": "Christmas Tree",
+            "endpointId": "insteon:node:1A F1 A5 1",
+            "controller": "Alexa.PowerController",
+            "command": "TurnOff"
+        }
+    ],
+    "conditions": [],
+    "schedules": [],
+    "favorite": false,
+    "name": "Overnight",
+    "id_code": "awwnz",
+    "description": "",
+    "nextrun": "",
+    "endpointId": "logic:activity:awwnz"
+}

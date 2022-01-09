@@ -1,0 +1,38 @@
+{
+    "endpointId": "logic:scene:Living Room Low",
+    "friendlyName": "Living Room Low",
+    "children": {
+        "hue:lights:8": {
+            "brightness": 40,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:6": {
+            "brightness": 40,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:4": {
+            "brightness": 40,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:2": {
+            "brightness": 40,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:10": {
+            "brightness": 40,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:11": {
+            "brightness": 40,
+            "saturation": 0.27,
+            "hue": 43.5
+        }
+    },
+    "name": "Living Room Low",
+    "filename": "Living Room Low.json"
+}

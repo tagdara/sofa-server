@@ -1,0 +1,29 @@
+{
+    "endpointId": "logic:scene:Living Room Off",
+    "friendlyName": "Living Room Off",
+    "children": {
+        "hue:lights:8": {
+            "brightness": 0
+        },
+        "hue:lights:6": {
+            "brightness": 0
+        },
+        "hue:lights:4": {
+            "brightness": 0
+        },
+        "hue:lights:2": {
+            "brightness": 0
+        },
+        "hue:lights:10": {
+            "brightness": 0
+        },
+        "hue:lights:11": {
+            "brightness": 0
+        },
+        "insteon:node:A B9 D5 1": {
+            "powerState": "OFF"
+        }
+    },
+    "name": "Living Room Off",
+    "filename": "Living Room Off.json"
+}

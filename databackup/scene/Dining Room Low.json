@@ -1,0 +1,28 @@
+{
+    "endpointId": "logic:scene:Dining Room Low",
+    "friendlyName": "Dining Room Low",
+    "children": {
+        "hue:lights:9": {
+            "brightness": 40,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:7": {
+            "brightness": 40,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:3": {
+            "brightness": 40,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:5": {
+            "brightness": 40,
+            "saturation": 0.27,
+            "hue": 43.5
+        }
+    },
+    "name": "Dining Room Low",
+    "filename": "Dining Room Low.json"
+}

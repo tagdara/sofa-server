@@ -1,0 +1,48 @@
+{
+    "endpointId": "logic:scene:Watch",
+    "friendlyName": "Watch",
+    "children": {
+        "hue:lights:8": {
+            "powerState": "OFF",
+            "brightness": 75,
+            "hue": 43.5,
+            "saturation": 0.2667
+        },
+        "hue:lights:6": {
+            "powerState": "OFF",
+            "brightness": 75,
+            "hue": 43.5,
+            "saturation": 0.2667
+        },
+        "hue:lights:4": {
+            "powerState": "OFF",
+            "brightness": 75,
+            "hue": 43.5,
+            "saturation": 0.2667
+        },
+        "hue:lights:2": {
+            "powerState": "OFF",
+            "brightness": 75,
+            "hue": 43.5,
+            "saturation": 0.2667
+        },
+        "hue:lights:10": {
+            "powerState": "ON",
+            "brightness": 50,
+            "hue": 43.5,
+            "saturation": 0.2667
+        },
+        "hue:lights:11": {
+            "powerState": "ON",
+            "brightness": 60,
+            "hue": 40.4,
+            "saturation": 0.9961
+        },
+        "insteon:node:1A F1 A5 1": {
+            "powerState": "ON",
+            "brightness": 25
+        }
+    },
+    "name": "Watch",
+    "filename": "Watch.json"
+}

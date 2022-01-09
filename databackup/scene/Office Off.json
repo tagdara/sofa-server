@@ -1,0 +1,17 @@
+{
+    "endpointId": "logic:scene:Office Off",
+    "friendlyName": "Office Off",
+    "children": {
+        "hue:lights:28": {
+            "powerState": "OFF"
+        },
+        "hue:lights:29": {
+            "powerState": "OFF"
+        },
+        "insteon:node:2F 96 D 1": {
+            "powerState": "OFF"
+        }
+    },
+    "name": "Office Off",
+    "filename": "Office Off.json"
+}

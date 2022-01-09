@@ -1,0 +1,1 @@
+{"endpointId": "logic:scene:Front Low", "friendlyName": "Front Low", "children": {"insteon:node:1A 5D 79 1": {"brightness": 0}, "insteon:node:1B 3E 34 1": {"brightness": 100}, "insteon:node:1B 1C AE 1": {"brightness": 0}}, "name": "Front Low", "filename": "Front Low.json"}

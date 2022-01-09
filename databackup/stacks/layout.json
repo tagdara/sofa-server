@@ -1,0 +1,153 @@
+{
+    "Home": {
+        "type": "pages",
+        "maxColumns": 3,
+        "order": [
+            "Audio Video",
+            "Lights and Comfort",
+            "Climate",
+            "Security"
+        ],
+        "pages": {
+            "Audio Video": {
+                "icon": "MusicVideoIcon",
+                "actions": [
+                    "Video Games and Music",
+                    "Join TV Audio"
+                ],
+                "cards": [
+                    {
+                        "module": "PlayerHero",
+                        "props": {
+                            "Category": "SPEAKER",
+                            "test": "category"
+                        },
+                        "grid": true
+                    },
+                    {
+                        "module": "ReceiverHero",
+                        "props": {
+                            "Category": "RECEIVER"
+                        },
+                        "grid": true
+                    },
+                    {
+                        "module": "TvHero",
+                        "props": {
+                            "Category": "TV"
+                        },
+                        "grid": true
+                    },
+                    {
+                        "module": "ComputerHero",
+                        "props": {
+                            "Category": "MATRIX"
+                        },
+                        "grid": true
+                    }
+                ]
+            },
+            "Lights and Comfort": {
+                "icon": "LightBulbIcon",
+                "cards": [
+                    {
+                        "module": "LightHero",
+                        "props": {},
+                        "grid": true
+                    },
+                    {
+                        "module": "AreaHero",
+                        "props": {
+                            "area": "Main"
+                        },
+                        "grid": true
+                    }
+                ]
+            },
+            "Climate": {
+                "icon": "DataUsageIcon",
+                "cards": [
+                    {
+                        "module": "ThermostatHero",
+                        "props": {
+                            "Category": "THERMOSTAT",
+                            "airQuality": "Master Bedroom Fan",
+                            "Primary": "Main Thermostat",
+                            "Secondary": "Master Bedroom Fan",
+                            "outdoor": "Outdoor Temperature"
+                        },
+                        "grid": true
+                    },
+                    {
+                        "module": "MoreDevicesHero",
+                        "props": {
+                            "Category": "SWITCH",
+                            "name": "More Devices",
+                            "showDetail": true
+                        },
+                        "grid": true
+                    }
+                ]
+            },
+            "Security": {
+                "icon": "VerifiedUserIcon",
+                "cards": [
+                    {
+                        "module": "ZoneHero",
+                        "props": {
+                            "Category": [
+                                "CONTACT_SENSOR",
+                                "MOTION_SENSOR"
+                            ]
+                        },
+                        "grid": true
+                    },
+                    {
+                        "module": "CameraSelect",
+                        "props": {
+                            "default": "driveway"
+                        },
+                        "grid": true
+                    },
+                    {
+                        "module": "Opener",
+                        "props": {
+                            "deviceName": "Virtual Front Gate",
+                            "displayName": "Front Gate",
+                            "buttonDuration": 4
+                        },
+                        "grid": true
+                    },
+                    {
+                        "module": "Opener",
+                        "props": {
+                            "deviceName": "Virtual Garage Door",
+                            "displayName": "Garage Door",
+                            "buttonDuration": 1
+                        },
+                        "grid": true
+                    }
+                ]
+            },
+            "System": {
+                "cards": [
+                    {
+                        "module": "SystemButtons",
+                        "props": {},
+                        "grid": true
+                    },
+                    {
+                        "module": "AutomationsFavorites",
+                        "props": {},
+                        "grid": true
+                    },
+                    {
+                        "module": "AdminFeatures",
+                        "props": {},
+                        "grid": true
+                    }
+                ]
+            }
+        }
+    }
+}

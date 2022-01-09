@@ -1,0 +1,38 @@
+{
+    "endpointId": "logic:scene:Evies Room Med",
+    "friendlyName": "Evies Room Med",
+    "children": {
+        "hue:lights:12": {
+            "brightness": 50,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:13": {
+            "brightness": 50,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:14": {
+            "brightness": 50,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:15": {
+            "brightness": 50,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:16": {
+            "brightness": 50,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:17": {
+            "brightness": 50,
+            "saturation": 0.27,
+            "hue": 43.5
+        }
+    },
+    "name": "Evies Room Med",
+    "filename": "Evies Room Med.json"
+}

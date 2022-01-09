@@ -1,0 +1,11 @@
+{
+    "scene": "",
+    "children": [
+        "hue:lights:18",
+        "insteon:node:F 14 2F 1",
+        "insteon:node:17 C0 C1 1",
+        "insteon:node:A D6 42 1"
+    ],
+    "name": "Guest Room",
+    "filename": "Guest Room.json"
+}

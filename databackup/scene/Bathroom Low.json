@@ -1,0 +1,11 @@
+{
+    "endpointId": "logic:scene:Bathroom Low",
+    "friendlyName": "Bathroom Low",
+    "children": {
+        "insteon:node:29 B6 33 1": {
+            "brightness": 20
+        }
+    },
+    "name": "Bathroom Low",
+    "filename": "Bathroom Low.json"
+}

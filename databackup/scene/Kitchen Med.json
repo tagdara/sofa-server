@@ -1,0 +1,28 @@
+{
+    "endpointId": "logic:scene:Kitchen Med",
+    "friendlyName": "Kitchen Med",
+    "children": {
+        "hue:lights:24": {
+            "powerState": "OFF"
+        },
+        "hue:lights:25": {
+            "powerState": "OFF"
+        },
+        "hue:lights:26": {
+            "powerState": "OFF"
+        },
+        "insteon:node:1A 36 DB 1": {
+            "brightness": 100,
+            "powerState": "ON"
+        },
+        "insteon:node:1A 37 9C 1": {
+            "brightness": 100,
+            "powerState": "ON"
+        },
+        "hue:lights:27": {
+            "powerState": "OFF"
+        }
+    },
+    "name": "Kitchen Med",
+    "filename": "Kitchen Med.json"
+}

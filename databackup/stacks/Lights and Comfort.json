@@ -1,0 +1,33 @@
+{
+    "name": "Lights and Comfort",
+    "icon": "LightBulbIcon",
+    "cards": [
+        {
+            "module": "LightHero",
+            "props": {},
+            "grid": true
+        },
+        {
+            "module": "AreaHero",
+            "props": {
+                "area": "Main"
+            },
+            "grid": true
+        },
+        {
+            "module": "SubAreaHero",
+            "props": {
+                "area": "logic:area:Outside"
+            },
+            "grid": true
+        },
+        {
+            "module": "SubAreaHero",
+            "props": {
+                "area": "Bedrooms"
+            },
+            "grid": true,
+            "expand": true
+        }
+    ]
+}

@@ -1,0 +1,9 @@
+{
+    "scene": "",
+    "children": [
+        "logic:area:Front",
+        "logic:area:Patio"
+    ],
+    "name": "Outside",
+    "filename": "Outside.json"
+}

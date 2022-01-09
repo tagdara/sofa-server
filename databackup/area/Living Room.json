@@ -1,0 +1,28 @@
+{
+    "scene": "logic:scene:Living Room Off",
+    "children": [
+        "hue:lights:11",
+        "hue:lights:6",
+        "hue:lights:8",
+        "hue:lights:10",
+        "logic:scene:Living Room Med",
+        "logic:scene:Living Room Low",
+        "logic:scene:Living Room Off",
+        "logic:scene:Living Room High",
+        "logic:scene:Pre-game",
+        "logic:scene:Watch",
+        "logic:scene:TV Night",
+        "sonybravia:tv:BRAVIA",
+        "hue:lights:4",
+        "hue:lights:2",
+        "tplink:plug:50C7BF3325B0"
+    ],
+    "shortcuts": [
+        "logic:scene:Living Room Off",
+        "logic:scene:Living Room Low",
+        "logic:scene:Living Room Med",
+        "logic:scene:Living Room High"
+    ],
+    "name": "Living Room",
+    "filename": "Living Room.json"
+}

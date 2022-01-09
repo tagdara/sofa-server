@@ -1,0 +1,1 @@
+{"endpointId": "logic:scene:Front Med", "friendlyName": "Front Med", "children": {"insteon:node:1A 5D 79 1": {"brightness": 50, "powerState": "ON"}, "insteon:node:1B 3E 34 1": {"brightness": 100, "powerState": "ON"}, "insteon:node:1B 1C AE 1": {"brightness": 100, "powerState": "ON"}}, "name": "Front Med", "filename": "Front Med.json"}

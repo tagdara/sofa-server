@@ -1,0 +1,9 @@
+{
+    "scene": "",
+    "children": [
+        "insteon:node:1A 4F 3E 1",
+        "insteon:node:14 D4 1B 1"
+    ],
+    "name": "Atrium",
+    "filename": "Atrium.json"
+}

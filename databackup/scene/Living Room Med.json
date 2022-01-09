@@ -1,0 +1,38 @@
+{
+    "endpointId": "logic:scene:Living Room Med",
+    "friendlyName": "Living Room Med",
+    "children": {
+        "hue:lights:8": {
+            "brightness": 75,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:6": {
+            "brightness": 75,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:4": {
+            "brightness": 75,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:2": {
+            "brightness": 75,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:10": {
+            "brightness": 75,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:11": {
+            "brightness": 75,
+            "saturation": 0.27,
+            "hue": 43.5
+        }
+    },
+    "name": "Living Room Med",
+    "filename": "Living Room Med.json"
+}

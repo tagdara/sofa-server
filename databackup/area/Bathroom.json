@@ -1,0 +1,18 @@
+{
+    "scene": "logic:scene:Bathroom Off",
+    "shortcuts": [
+        "logic:scene:Bathroom Off",
+        "logic:scene:Bathroom Low",
+        "logic:scene:Bathroom Med",
+        "logic:scene:Bathroom High"
+    ],
+    "children": [
+        "insteon:node:29 B6 33 1",
+        "logic:scene:Bathroom Off",
+        "logic:scene:Bathroom Low",
+        "logic:scene:Bathroom Med",
+        "logic:scene:Bathroom High"
+    ],
+    "name": "Bathroom",
+    "filename": "Bathroom.json"
+}

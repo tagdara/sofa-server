@@ -1,0 +1,32 @@
+{
+    "endpointId": "logic:scene:Kitchen High",
+    "friendlyName": "Kitchen High",
+    "children": {
+        "hue:lights:24": {
+            "powerState": "ON",
+            "brightness": 100
+        },
+        "hue:lights:25": {
+            "powerState": "ON",
+            "brightness": 100
+        },
+        "hue:lights:26": {
+            "powerState": "ON",
+            "brightness": 100
+        },
+        "insteon:node:1A 36 DB 1": {
+            "powerState": "ON",
+            "brightness": 100
+        },
+        "insteon:node:1A 37 9C 1": {
+            "powerState": "ON",
+            "brightness": 100
+        },
+        "hue:lights:27": {
+            "powerState": "ON",
+            "brightness": 100
+        }
+    },
+    "name": "Kitchen High",
+    "filename": "Kitchen High.json"
+}

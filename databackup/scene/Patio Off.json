@@ -1,0 +1,14 @@
+{
+    "endpointId": "logic:scene:Patio Off",
+    "friendlyName": "Patio Off",
+    "children": {
+        "tplink:plug:8006A42501C7AB8E7F99A3A43D4F09A21ECA78B001": {
+            "powerState": "OFF"
+        },
+        "tplink:plug:8006A42501C7AB8E7F99A3A43D4F09A21ECA78B000": {
+            "powerState": "OFF"
+        }
+    },
+    "name": "Patio Off",
+    "filename": "Patio Off.json"
+}

@@ -1,0 +1,26 @@
+{
+    "endpointId": "logic:scene:Evies Room Off",
+    "friendlyName": "Evies Room Off",
+    "children": {
+        "hue:lights:12": {
+            "brightness": 0
+        },
+        "hue:lights:13": {
+            "brightness": 0
+        },
+        "hue:lights:14": {
+            "brightness": 0
+        },
+        "hue:lights:15": {
+            "brightness": 0
+        },
+        "hue:lights:16": {
+            "brightness": 0
+        },
+        "hue:lights:17": {
+            "brightness": 0
+        }
+    },
+    "name": "Evies Room Off",
+    "filename": "Evies Room Off.json"
+}

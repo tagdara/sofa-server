@@ -1,0 +1,11 @@
+{
+    "scene": "",
+    "children": [
+        "logic:area:Living Room",
+        "logic:area:Dining Room",
+        "logic:area:Kitchen",
+        "logic:area:Office"
+    ],
+    "name": "Main",
+    "filename": "Main.json"
+}

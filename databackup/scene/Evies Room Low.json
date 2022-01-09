@@ -1,0 +1,26 @@
+{
+    "endpointId": "logic:scene:Evies Room Low",
+    "friendlyName": "Evies Room Low",
+    "children": {
+        "hue:lights:12": {
+            "powerState": "OFF"
+        },
+        "hue:lights:13": {
+            "powerState": "OFF"
+        },
+        "hue:lights:14": {
+            "powerState": "OFF"
+        },
+        "hue:lights:15": {
+            "brightness": 50
+        },
+        "hue:lights:16": {
+            "brightness": 50
+        },
+        "hue:lights:17": {
+            "powerState": "OFF"
+        }
+    },
+    "name": "Evies Room Low",
+    "filename": "Evies Room Low.json"
+}

@@ -1,0 +1,67 @@
+{
+    "actions": [
+        {
+            "value": {
+                "rangeValue": "30"
+            },
+            "deviceName": "Bathroom Light",
+            "endpointId": "insteon:node:29 B6 33 1",
+            "command": "SetRangeValue",
+            "type": "command",
+            "controller": "Alexa.RangeController",
+            "propertyName": "rangeValue",
+            "instance": "Light.On Level"
+        },
+        {
+            "value": {
+                "rangeValue": "30"
+            },
+            "deviceName": "Kitchen Sink",
+            "endpointId": "insteon:node:1A 37 9C 1",
+            "command": "SetRangeValue",
+            "type": "command",
+            "controller": "Alexa.RangeController",
+            "propertyName": "rangeValue",
+            "instance": "Light.On Level"
+        },
+        {
+            "value": {
+                "rangeValue": "30"
+            },
+            "deviceName": "Kitchen Counter",
+            "endpointId": "insteon:node:1A 36 DB 1",
+            "command": "SetRangeValue",
+            "type": "command",
+            "controller": "Alexa.RangeController",
+            "propertyName": "rangeValue",
+            "instance": "Light.On Level"
+        }
+    ],
+    "lastrun": "2021-11-13T12:50:01.890222Z",
+    "favorite": false,
+    "conditions": [],
+    "nextrun": "2021-11-12T21:00:00Z",
+    "schedules": [
+        {
+            "type": "days",
+            "unit": "days",
+            "days": [
+                "sun",
+                "mon",
+                "tue",
+                "wed",
+                "thu",
+                "fri",
+                "sat"
+            ],
+            "start": "2019-01-04T21:00",
+            "interval": 1
+        }
+    ],
+    "triggers": [],
+    "name": "Lower Light On Levels",
+    "id_code": "utxbk",
+    "description": "",
+    "endpointId": "logic:activity:utxbk",
+    "running": true
+}

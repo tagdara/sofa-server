@@ -1,0 +1,17 @@
+{
+    "scene": "",
+    "children": [
+        "logic:area:Living Room",
+        "logic:area:Dining Room",
+        "logic:area:Kitchen",
+        "logic:area:Office",
+        "logic:area:Front",
+        "logic:area:Atrium",
+        "logic:area:Stairs",
+        "logic:area:Bathroom",
+        "logic:area:Master Bedroom",
+        "logic:area:Evies Room"
+    ],
+    "name": "Upstairs",
+    "filename": "Upstairs.json"
+}

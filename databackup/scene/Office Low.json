@@ -1,0 +1,21 @@
+{
+    "endpointId": "logic:scene:Office Low",
+    "friendlyName": "Office Low",
+    "children": {
+        "hue:lights:28": {
+            "brightness": 50,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:29": {
+            "brightness": 50,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "insteon:node:2F 96 D 1": {
+            "powerState": "OFF"
+        }
+    },
+    "name": "Office Low",
+    "filename": "Office Low.json"
+}

@@ -1,0 +1,51 @@
+{
+    "actions": [
+        {
+            "command": "TurnOn",
+            "deviceName": "Overnight Mode",
+            "endpointId": "logic:mode:Overnight Mode",
+            "controller": "Alexa.PowerController",
+            "type": "command"
+        }
+    ],
+    "lastrun": "2021-11-13T12:49:59.421099Z",
+    "favorite": false,
+    "conditions": [
+        {
+            "value": {
+                "powerState": "OFF"
+            },
+            "deviceName": "Overnight Mode",
+            "operator": "=",
+            "endpointId": "logic:mode:Overnight Mode",
+            "controller": "PowerController",
+            "type": "property",
+            "propertyName": "powerState",
+            "command": "TurnOff"
+        }
+    ],
+    "nextrun": "2021-11-13T04:00:00Z",
+    "schedules": [
+        {
+            "interval": 1,
+            "unit": "days",
+            "days": [
+                "sun",
+                "mon",
+                "tue",
+                "wed",
+                "thu",
+                "fri",
+                "sat"
+            ],
+            "start": "2019-02-01T04:00",
+            "type": "days"
+        }
+    ],
+    "triggers": [],
+    "name": "Enable overnight mode",
+    "id_code": "cuqqu",
+    "description": "",
+    "endpointId": "logic:activity:cuqqu",
+    "running": false
+}

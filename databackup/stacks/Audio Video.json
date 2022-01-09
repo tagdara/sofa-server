@@ -1,0 +1,58 @@
+{
+    "name": "Audio Video",
+    "icon": "MusicVideoIcon",
+    "cards": [
+        {
+            "module": "JukeboxHero",
+            "props": {},
+            "grid": true
+        },
+        {
+            "module": "ReceiverHero",
+            "props": {
+                "Category": "RECEIVER"
+            },
+            "grid": true
+        },
+        {
+            "module": "TvHero",
+            "props": {
+                "Category": "TV"
+            },
+            "grid": true
+        },
+        {
+            "module": "ComputerHero",
+            "props": {
+                "Category": "MATRIX"
+            },
+            "grid": true
+        },
+        {
+            "module": "AppleTvHero",
+            "props": {},
+            "grid": true,
+            "expand": true
+        },
+        {
+            "module": "PlayerHero",
+            "props": {
+                "Category": "SPEAKER",
+                "test": "category"
+            },
+            "grid": true,
+            "expand": true
+        },
+        {
+            "module": "PageActions",
+            "expand": true,
+            "props": {
+                "actions": [
+                    "Video Games and Music",
+                    "Join TV Audio"
+                ]
+            },
+            "grid": true
+        }
+    ]
+}

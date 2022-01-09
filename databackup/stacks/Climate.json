@@ -1,0 +1,37 @@
+{
+    "name": "Climate",
+    "icon": "DataUsageIcon",
+    "cards": [
+        {
+            "module": "OutdoorHero",
+            "props": {
+                "outdoor": "Cayuga Weather Station",
+                "indoorAirQuality": "Master Bedroom Fan",
+                "outdoorAirQuality": "Outdoor Air Quality"
+            }
+        },
+        {
+            "module": "ThermostatHero",
+            "props": {
+                "Category": "THERMOSTAT",
+                "primary": "Main Thermostat"
+            }
+        },
+        {
+            "module": "ThermostatHero",
+            "expand": true,
+            "props": {
+                "Category": "THERMOSTAT",
+                "primary": "Master Bedroom Fan"
+            }
+        },
+        {
+            "module": "MoreDevicesHero",
+            "props": {
+                "Category": "SWITCH",
+                "name": "More Devices",
+                "showDetail": true
+            }
+        }
+    ]
+}

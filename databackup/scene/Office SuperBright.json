@@ -1,0 +1,24 @@
+{
+    "endpointId": "logic:scene:Office SuperBright",
+    "friendlyName": "Office SuperBright",
+    "children": {
+        "hue:lights:12": {
+            "powerState": "ON",
+            "brightness": 100,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:13": {
+            "powerState": "ON",
+            "brightness": 100,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "insteon:node:2F 96 D 1": {
+            "powerState": "ON",
+            "brightness": 100
+        }
+    },
+    "name": "Office SuperBright",
+    "filename": "Office SuperBright.json"
+}

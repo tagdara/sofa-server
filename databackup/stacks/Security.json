@@ -1,0 +1,41 @@
+{
+    "name": "Security",
+    "icon": "VerifiedUserIcon",
+    "cards": [
+        {
+            "module": "ZoneHero",
+            "props": {
+                "Category": [
+                    "CONTACT_SENSOR",
+                    "MOTION_SENSOR"
+                ]
+            },
+            "grid": true
+        },
+        {
+            "module": "CameraSelect",
+            "props": {
+                "default": "driveway"
+            },
+            "grid": true
+        },
+        {
+            "module": "Opener",
+            "props": {
+                "deviceName": "Virtual Front Gate",
+                "displayName": "Front Gate",
+                "buttonDuration": 4
+            },
+            "grid": true
+        },
+        {
+            "module": "Opener",
+            "props": {
+                "deviceName": "Virtual Garage Door",
+                "displayName": "Garage Door",
+                "buttonDuration": 1
+            },
+            "grid": true
+        }
+    ]
+}

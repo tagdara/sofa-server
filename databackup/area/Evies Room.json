@@ -1,0 +1,23 @@
+{
+    "scene": "logic:scene:Evies Room Off",
+    "shortcuts": [
+        "logic:scene:Evies Room Off",
+        "logic:scene:Evies Room Low",
+        "logic:scene:Evies Room Med",
+        "logic:scene:Evies Room High"
+    ],
+    "children": [
+        "hue:lights:12",
+        "hue:lights:13",
+        "hue:lights:14",
+        "hue:lights:15",
+        "hue:lights:16",
+        "hue:lights:17",
+        "logic:scene:Evies Room High",
+        "logic:scene:Evies Room Low",
+        "logic:scene:Evies Room Off",
+        "logic:scene:Evies Room Med"
+    ],
+    "name": "Evies Room",
+    "filename": "Evies Room.json"
+}

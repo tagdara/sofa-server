@@ -1,0 +1,28 @@
+{
+    "endpointId": "logic:scene:Dining Room Med",
+    "friendlyName": "Dining Room Med",
+    "children": {
+        "hue:lights:9": {
+            "brightness": 75,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:7": {
+            "brightness": 75,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:3": {
+            "brightness": 75,
+            "saturation": 0.27,
+            "hue": 43.5
+        },
+        "hue:lights:5": {
+            "brightness": 75,
+            "saturation": 0.27,
+            "hue": 43.5
+        }
+    },
+    "name": "Dining Room Med",
+    "filename": "Dining Room Med.json"
+}

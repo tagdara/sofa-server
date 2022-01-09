@@ -1,0 +1,1 @@
+{"endpointId": "logic:scene:Stairs High", "friendlyName": "Stairs High", "children": {"insteon:node:1B 32 46 1": {"brightness": 100, "powerState": "ON"}, "insteon:node:1B 3E 1B 1": {"brightness": 100, "powerState": "ON"}}, "name": "Stairs High", "filename": "Stairs High.json"}

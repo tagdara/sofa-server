@@ -1,0 +1,116 @@
+{
+    "lastrun": "2020-09-11T16:43:26.570417Z",
+    "triggers": [],
+    "actions": [
+        {
+            "name": "TV",
+            "endpointId": "sonybravia:tv:BRAVIA",
+            "controller": "PowerController",
+            "command": "TurnOn"
+        },
+        {
+            "name": "Receiver",
+            "endpointId": "yamaha:Receiver:Main_Zone",
+            "controller": "PowerController",
+            "command": "TurnOn"
+        },
+        {
+            "name": "Logic",
+            "endpointId": "logic:logic:command",
+            "controller": "LogicController",
+            "command": "Wait"
+        },
+        {
+            "name": "Receiver",
+            "endpointId": "yamaha:Receiver:Main_Zone",
+            "propertyName": "mode",
+            "controller": "ModeController",
+            "command": "SetMode",
+            "instance": "Receiver.InputLock",
+            "value": {
+                "mode": "InputLock.Unlocked"
+            }
+        },
+        {
+            "name": "Logic",
+            "endpointId": "logic:logic:command",
+            "controller": "LogicController",
+            "command": "Wait"
+        },
+        {
+            "name": "Receiver",
+            "endpointId": "yamaha:Receiver:Main_Zone",
+            "propertyName": "input",
+            "controller": "InputController",
+            "command": "SelectInput",
+            "value": {
+                "input": "Sonos"
+            }
+        },
+        {
+            "name": "Logic",
+            "endpointId": "logic:logic:command",
+            "controller": "LogicController",
+            "command": "Wait"
+        },
+        {
+            "name": "Receiver",
+            "endpointId": "yamaha:Receiver:Main_Zone",
+            "propertyName": "mode",
+            "controller": "ModeController",
+            "command": "SetMode",
+            "instance": "Receiver.InputLock",
+            "value": {
+                "mode": "InputLock.Locked"
+            }
+        },
+        {
+            "name": "Receiver",
+            "endpointId": "yamaha:Receiver:Main_Zone",
+            "propertyName": "volume",
+            "controller": "SpeakerController",
+            "command": "SetVolume",
+            "value": {
+                "volume": 65
+            }
+        },
+        {
+            "value": {
+                "volume": 40
+            },
+            "type": "command",
+            "command": "SetVolume",
+            "endpointId": "sonos:player:RINCON_B8E937938D1001400",
+            "controller": "SpeakerController"
+        },
+        {
+            "name": "TV",
+            "endpointId": "sonybravia:tv:BRAVIA",
+            "propertyName": "mode",
+            "controller": "ModeController",
+            "command": "SetMode",
+            "instance": "Tv.Audio",
+            "value": {
+                "mode": "Audio.speaker"
+            }
+        },
+        {
+            "name": "TV",
+            "endpointId": "sonybravia:tv:BRAVIA",
+            "propertyName": "volume",
+            "controller": "SpeakerController",
+            "command": "SetVolume",
+            "value": {
+                "volume": 7
+            }
+        }
+    ],
+    "conditions": [],
+    "schedules": [],
+    "favorite": false,
+    "name": "Video Games and Music",
+    "nextrun": "",
+    "id_code": "icbqz",
+    "description": "",
+    "endpointId": "logic:activity:icbqz"
+}
