@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-from sofabase3 import log_setup, ConfigBase, SofaBase, Discover, AddOrUpdateReport, ErrorResponse, ReportState, DiscoveryResponse, alexa_json_filter, json_date_handler
+from sofabase3 import log_setup, SofaConfig, SofaBase, Discover, AddOrUpdateReport, Response, ErrorResponse, ReportState, DiscoveryResponse, alexa_json_filter, json_date_handler
 
 import sys, os
 import datetime
@@ -15,26 +15,28 @@ import copy
 import concurrent.futures
 from auth import api_consumer, Auth
 
+from wakeonlan import send_magic_packet
+
 app_name = "sofabase3"
 logger = log_setup(app_name, filename="eventgateway", level="INFO")
 
+adapter_name = "event_gateway"
+
+#Config.add("config_directory", default="/opt/sofa-server/config")
+
 class EventGateway(SofaBase):
 
-    class Config(ConfigBase):
-    
-        def adapter_fields(self):
-            self.add("web_address", mandatory=True)
-            self.add("web_port", default=6443)
-            self.add("token_secret", mandatory=True)
-            self.add("certificate", mandatory=True)
-            self.add("certificate_key", mandatory=True)
-            self.add("token_expires", default=604800)
-            self.add("error_threshold", default=20)
-            self.add("adapter_poll_time", default=60)
-            self.add("config_directory", default="/opt/sofa-server/config")
-
-    
     #def __init__(self, api_consumers=None, adapters_not_responding=[], dataset=None, adapter=None, config=None):
+
+    def add_adapter_fields(self):
+        SofaConfig.add("web_address", mandatory=True)
+        SofaConfig.add("web_port", default=6443)
+        SofaConfig.add("token_secret", mandatory=True)
+        SofaConfig.add("certificate", mandatory=True)
+        SofaConfig.add("certificate_key", mandatory=True)
+        SofaConfig.add("token_expires", default=604800)
+        SofaConfig.add("error_threshold", default=20)
+        SofaConfig.add("adapter_poll_time", default=60)        
 
     @property
     def caching_enabled(self):
@@ -66,11 +68,20 @@ class EventGateway(SofaBase):
         self.cached_wol_endpoints=[] 
         self.recent_changes=[]
         self.recent_limit=25
-        
+        logger.info('.. loading cached endpoints')
+
+        cached_devices = self.load_cache('event_gateway_device_cache')
+
+        logger.info(f'.. cached endpoints: {len(cached_devices.keys())}')
+
+        await self.add_endpoints_to_dataset(cached_devices.values(), skip_cache=True)
+
+        logger.info('.. done loading')      
+
     async def initialize(self):
 
         try:
-            self.auth=Auth(secret=self.config.token_secret, token_expires=self.config.token_expires)
+            self.auth=Auth(secret=SofaConfig.token_secret, token_expires=SofaConfig.token_expires)
             for consumer in self.api_consumers:
                 api_consumer.objects.create(name=consumer, api_key=self.api_consumers[consumer]['api_key'])
             
@@ -109,11 +120,11 @@ class EventGateway(SofaBase):
             await self.runner.setup()
 
             self.ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-            self.ssl_context.load_cert_chain(self.config.certificate, self.config.certificate_key)
+            self.ssl_context.load_cert_chain(SofaConfig.certificate, SofaConfig.certificate_key)
 
-            self.site = aiohttp.web.TCPSite(self.runner, self.config.web_address, self.config.web_port, ssl_context=self.ssl_context)
+            self.site = aiohttp.web.TCPSite(self.runner, SofaConfig.web_address, SofaConfig.web_port, ssl_context=self.ssl_context)
             await self.site.start()
-            logger.info(f".. started event gateway at {self.config.web_address}:{self.config.web_port}")
+            logger.info(f".. started event gateway at {SofaConfig.web_address}:{SofaConfig.web_port}")
 
         except:
             logger.error('!! Error intializing event gateway web server', exc_info=True)
@@ -136,7 +147,7 @@ class EventGateway(SofaBase):
 
     async def loadData(self, jsonfilename):
         try:
-            with open(os.path.join(self.config.data_directory, '%s.json' % jsonfilename),'r') as jsonfile:
+            with open(os.path.join(SofaConfig.data_directory, '%s.json' % jsonfilename),'r') as jsonfile:
                 return json.loads(jsonfile.read())
         except:
             logger.error('Error loading pattern: %s' % jsonfilename,exc_info=True)
@@ -193,7 +204,7 @@ class EventGateway(SofaBase):
             data=json.loads(body.decode())
             token = await self.auth.get_token_from_api_key(data['name'], data['api_key'])
             if token:
-                expiration=datetime.datetime.now() + datetime.timedelta(seconds=(self.config.token_expires-5))           
+                expiration=datetime.datetime.now() + datetime.timedelta(seconds=(SofaConfig.token_expires-5))           
                 logger.info(f"[> {data['name']} - refresh token valid until {expiration.isoformat()}")
                 return self.json_response({'token': token, 'expiration': expiration.isoformat() })
 
@@ -289,7 +300,7 @@ class EventGateway(SofaBase):
             #logger.info('.. activation request for %s' % data['name'])
             check=await self.auth.get_token_from_api_key(data['name'], data['api_key'])
             if check:
-                expiration=datetime.datetime.now() + datetime.timedelta(seconds=(self.config.token_expires-5))
+                expiration=datetime.datetime.now() + datetime.timedelta(seconds=(SofaConfig.token_expires-5))
                 return self.json_response({'token': check, 'expiration': expiration.isoformat() })
 
         except:
@@ -514,7 +525,6 @@ class EventGateway(SofaBase):
                 else:
                     url = '%s/image/%s' % (self.dataset.nativeDevices['adapters'][source]['url'], item.split('/',1)[1] )
                 
-                logger.info(f'getting image {url}')
                 async with aiohttp.ClientSession() as client:
                     async with client.get(url) as response:
                         result=await response.read()
@@ -660,13 +670,17 @@ class EventGateway(SofaBase):
                 #if not self.dataset.devices[dev].hidden:
                 if 'ALL' in categories or any(item in self.dataset.devices[dev]['displayCategories'] for item in categories):
                     try:
-                        if self.adapter.device_adapter_map[dev]==adapter_name:
+                        if self.adapter.device_adapter_map[dev] == adapter_name:
                             pass
                             #logger.info('~~ skipping device %s in discovery for owner adapter %s' % (dev,adapter_name))
                         else:
                             disco.append(self.dataset.devices[dev])
                     except KeyError:
-                        logger.warning('.! warning - unknown device %s / %s' % (dev, self.dataset.devices[dev]))
+                        pass
+                        # When using cache, many devices will not have an adapter in the map initially
+                        # we should probably also cache the map
+
+                        #logger.warning('.! warning - unknown device %s / %s' % (dev, self.dataset.devices[dev]))
                     
             logger.info('<< %s Discover.Response %s devices filtered for %s' % (adapter_name, len(disco), categories) )
         except:
@@ -691,14 +705,17 @@ class EventGateway(SofaBase):
                 except:
                     source=None
 
-                response=await self.process_gateway_message(data, source)
+                response = await self.process_gateway_message(data, source)
                 return web.Response(text=json.dumps(response, default=self.date_handler))
             else:
                 logger.info('[< eg no body %s' % request)
+        except TypeError:
+            logger.error(f"!! error - bad gateway response {response}")
         except:
             logger.error('!! Error with event gateway',exc_info=True)
         return self.json_response({})
   
+
     def get_source_from_token(self, token):
         try:
             for consumer in self.api_consumers:
@@ -763,8 +780,9 @@ class EventGateway(SofaBase):
                 return ErrorResponse(endpointId, 'NO_SUCH_ENDPOINT', 'hub could not locate this device in dataset')
 
             if endpointId not in self.adapter.device_adapter_map:
-                logger.info('.. device not in adapter map: %s %s %s' % (source, endpointId, data))
-                return ErrorResponse(endpointId, 'NO_SUCH_ENDPOINT', 'hub could not locate this device in the adapter map')
+                if endpointId not in self.cached_wol_endpoints and not self.dataset.deviceHasCapability(endpointId, 'WakeOnLANController'):
+                    logger.info('.. device not in adapter map: %s %s %s' % (source, endpointId, data))
+                    return ErrorResponse(endpointId, 'NO_SUCH_ENDPOINT', 'hub could not locate this device in the adapter map')
 
             if 'cookie' in data['directive']['endpoint']:
                 if 'groupKey' in data['directive']['endpoint']['cookie']:
@@ -801,8 +819,7 @@ class EventGateway(SofaBase):
                 # This should return the deferred result and all of the Alexa model but for now just adds the WOL action
                 if endpointId in self.cached_wol_endpoints or self.dataset.deviceHasCapability(endpointId, 'WakeOnLANController'):
                     logger.info(f'.. triggering WOL for TurnOn directive on device with WakeOnLANController: {endpointId}')
-                    wol_response = await self.adapter.wake_on_lan(endpointId)
-                    return web.Response(text=json.dumps(wol_response, default=self.date_handler))
+                    return await self.adapter.wake_on_lan(endpointId)
                     
             if endpointId in self.adapter.device_adapter_map and self.adapter.device_adapter_map[endpointId] in self.dataset.nativeDevices['adapters']:
                 # Pass along directives to other adapters as necessary
@@ -1163,7 +1180,7 @@ class EventGateway(SofaBase):
     def loadJSON(self, jsonfilename):
         
         try:
-            with open(os.path.join(self.config.config_directory, '%s.json' % jsonfilename),'r') as jsonfile:
+            with open(os.path.join(SofaConfig.config_directory, '%s.json' % jsonfilename),'r') as jsonfile:
                 return json.loads(jsonfile.read())
         except FileNotFoundError:
             logger.error('!! Error loading json - file does not exist: %s' % jsonfilename)
@@ -1176,7 +1193,7 @@ class EventGateway(SofaBase):
     def saveJSON(self, jsonfilename, data):
         
         try:
-            jsonfile = open(os.path.join(self.config.config_directory, '%s.json' % jsonfilename), 'wt')
+            jsonfile = open(os.path.join(SofaConfig.config_directory, '%s.json' % jsonfilename), 'wt')
             json.dump(data, jsonfile, ensure_ascii=False, default=self.date_handler)
             jsonfile.close()
 
@@ -1189,7 +1206,7 @@ class EventGateway(SofaBase):
         try:
             if json_format:
                 filename="%s.json" % filename
-            with open(os.path.join(self.config.cache_directory, filename),'r') as cachefile:
+            with open(os.path.join(SofaConfig.cache_directory, filename),'r') as cachefile:
                 if json_format:
                     return json.loads(cachefile.read())
                 else:
@@ -1207,7 +1224,7 @@ class EventGateway(SofaBase):
         try:
             if json_format:
                 filename="%s.json" % filename
-            cachefile = open(os.path.join(self.config.cache_directory, filename), 'wt')
+            cachefile = open(os.path.join(SofaConfig.cache_directory, filename), 'wt')
             if json_format:
                 json.dump(data, cachefile, ensure_ascii=False, default = json_date_handler)
             else:
@@ -1217,7 +1234,7 @@ class EventGateway(SofaBase):
             logger.error('Error saving cache to %s' % filename, exc_info=True)
 
 
-    async def add_endpoints_to_dataset(self, endpoints):
+    async def add_endpoints_to_dataset(self, endpoints, skip_cache=False):
 
         # Take endpoints from a discovery or AddOrUpdate report and merge them into the dataset, replacing any existing
         # object with the same endpointId
@@ -1231,8 +1248,8 @@ class EventGateway(SofaBase):
 
         # If caching is enabled save these devices so that they are present after a restart and before the 
         # adapter has activated
-        if self.caching_enabled:
-            self.save_cache(f'{self.config.adapter_name}_device_cache', self.dataset.devices)
+        if self.caching_enabled and not skip_cache:
+            self.save_cache(f'{SofaConfig.adapter_name}_device_cache', self.dataset.devices)
 
 
     async def request_report_states(self, endpoints, source=None):
@@ -1475,6 +1492,32 @@ class EventGateway(SofaBase):
             logger.error('!! error generating cached state report %s' % endpointId, exc_info=True)
         return {}
 
+
+    async def wake_on_lan(self, endpointId, correlationToken=None):
+        
+        try:
+            if endpointId in self.cached_wol_endpoints:
+                macs = self.cached_wol_endpoints[endpointId]
+            
+            elif self.dataset.deviceHasCapability(endpointId, 'WakeOnLANController'):
+                for devcap in self.dataset.devices[endpointId]['capabilities']:
+                    if devcap['interface']=='Alexa.WakeOnLANController':
+                        macs=devcap['configuration']['MACAddresses']
+            if macs:
+                for mac in macs:
+                    logger.info(f'.. sending wake on lan to {endpointId} - {mac}')
+                    #mac.replace(':','.')
+                    for x in range(1, 10, 1):
+                        send_magic_packet(mac.replace(':','.'))
+                        asyncio.sleep(0.1)
+                    response = Response(endpointId, {}, correlationToken=correlationToken, controller="WakeOnLANController")
+                    logger.info(f"WOL response: {response}")
+                    return response
+
+        except:
+            logger.error(f'Error sending wake on lan for {endpointId}', exc_info=True)
+
+        return ErrorResponse(endpointId, 'INTERNAL_ERROR', f'hub could not send wake-on-lan to {endpointId}')
 
 
 if __name__ == '__main__':
