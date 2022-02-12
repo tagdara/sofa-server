@@ -22,7 +22,7 @@ logger = log_setup(app_name, filename="eventgateway", level="INFO")
 
 adapter_name = "event_gateway"
 
-#Config.add("config_directory", default="/opt/sofa-server/config")
+#SofaConfig.add("config_directory", default="/opt/sofa-server/config")
 
 class EventGateway(SofaBase):
 
@@ -68,6 +68,7 @@ class EventGateway(SofaBase):
         self.cached_wol_endpoints=[] 
         self.recent_changes=[]
         self.recent_limit=25
+        self.access_logging = False
         logger.info('.. loading cached endpoints')
 
         cached_devices = self.load_cache('event_gateway_device_cache')
@@ -116,7 +117,7 @@ class EventGateway(SofaBase):
             for route in self.serverApp.router.routes():
                 self.cors.add(route)
 
-            self.runner=aiohttp.web.AppRunner(self.serverApp)
+            self.runner=aiohttp.web.AppRunner(self.serverApp, access_log=self.access_logging)
             await self.runner.setup()
 
             self.ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
