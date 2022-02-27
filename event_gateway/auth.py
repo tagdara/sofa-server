@@ -4,7 +4,7 @@ import datetime
 import uuid
 
 import logging
-logger = logging.getLogger('sofabase3')
+logger = logging.getLogger(__name__)
 
 class api_consumer:
 
@@ -180,8 +180,9 @@ class Auth():
                 "instance": self.instance_id
             }
             jwt_token = jwt.encode(payload, self.JWT_SECRET, self.JWT_ALGORITHM)
-            #logger.info('generated token %s' % jwt_token)
-            return jwt_token.decode('utf-8')
+            # logger.info('generated token %s' % jwt_token)
+            # return jwt_token.decode('utf-8')
+            return jwt_token
         except:
             logger.error('!! error with api key check post', exc_info=True)
         return False

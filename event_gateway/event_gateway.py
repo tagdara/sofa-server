@@ -17,12 +17,8 @@ from auth import api_consumer, Auth
 
 from wakeonlan import send_magic_packet
 
-app_name = "sofabase3"
-logger = log_setup(app_name, filename="eventgateway", level="INFO")
+logger = log_setup("eventgateway", level="INFO")
 
-adapter_name = "event_gateway"
-
-#SofaConfig.add("config_directory", default="/opt/sofa-server/config")
 
 class EventGateway(SofaBase):
 
@@ -58,7 +54,7 @@ class EventGateway(SofaBase):
         self.sse_last_update=datetime.datetime.now(datetime.timezone.utc)
         self.active_sessions={}
         self.pending_activations=[]
-        self.restTimeout=4
+        self.rest_timeout = 8 # Alexa spec allows for 8 seconds https://developer.amazon.com/en-US/docs/alexa/device-apis/alexa-response.html
         self.conn = aiohttp.TCPConnector()
         self.adapters_not_responding=[]
         self.queued_for_state=[]
@@ -214,85 +210,6 @@ class EventGateway(SofaBase):
 
         return self.json_response({'error': 'could not refresh token'})
 
-
-    async def discover_activated_adapter(self, adaptername, url, token):
-                            
-        try:
-            disc_start=datetime.datetime.now()
-            logger.info('~~ discover activated adapter %s with token: %s' % (adaptername, token))
-            adapter_response = await self.adapter_post(url, Discover(bearer_token=token), token=token)
-            if adaptername=='jukebox':
-                logger.info('~~ jukebox discovery: %s' % adapter_response)
-            endpoints=[]
-            
-            try:
-                endpoints=adapter_response['event']['payload']['endpoints']
-                changed_endpoints=await self.adapter.handle_discovery_report(adapter_response, adapter=adaptername)
-                if changed_endpoints:
-                    # Send an AddOrUpdate to collectors if any of the devices have changed
-                    await self.add_collector_update(AddOrUpdateReport(changed_endpoints))
-                await self.adapter.update_device_adapter_map(adaptername, endpoints)
-            except KeyError:
-                logger.error('!! Malformed discovery response: %s %s' % (adaptername, adapter_response))
-
-            disc_end=datetime.datetime.now()
-
-            if len(endpoints)>0:
-                logger.info('>> %s - discovered %s devices @ %s in %s seconds' % (adaptername, len(endpoints),  url, (disc_end-disc_start).total_seconds()) )
-                if adaptername in self.adapters_not_responding:
-                    logger.info('.. removing %s from not-responding adapters list: %s' % (adaptername, self.adapters_not_responding))
-                    self.adapters_not_responding.remove(adaptername)
-                await self.adapter.virtual_device_refresh(adaptername)
-                await self.queue_initial_state_reports(adaptername, endpoints)
-            else:
-                logger.info('~~  %s - discovered no devices' % (adaptername))
-   
-        except:
-            logger.error('!! Error running discovery on adapter: %s %s' % (adaptername, url) ,exc_info=True)
-
-            
-    async def queue_initial_state_reports(self, adapter_name, endpoints):
-        try:
-            tasks=[]
-            queued_for_state=[]
-            semaphore = asyncio.BoundedSemaphore(10)
-            for endpoint in endpoints:  # Identify devices with retrievable properties
-                if endpoint['endpointId'] not in queued_for_state:
-                    for cap in endpoint['capabilities']:
-                        try:
-                            if 'properties' in cap and cap['properties']['retrievable']:
-                                queued_for_state.append(endpoint['endpointId'])
-                                tasks.append(asyncio.create_task(self.get_initial_state_report(adapter_name, endpoint['endpointId'], semaphore)))
-                                break
-                        except:
-                            logger.error('!! Error checking cap %s' % cap ,exc_info=True) 
-            responses = await asyncio.gather(*tasks)
-            logger.info('>] %s - cached state for %s/%s devices' % (adapter_name, responses.count(1), len(responses)))
-        except:
-            logger.error('!! Error queue_initial_state_reports' ,exc_info=True)      
-
-
-    async def get_initial_state_report(self, adapter_name, endpointId, semaphore):
-        # new: only enter if semaphore can be acquired
-        async with semaphore:
-            try:
-                adapter_response=""
-                url=self.dataset.nativeDevices['adapters'][adapter_name]['url']
-                if 'directive_url' in self.dataset.nativeDevices['adapters'][adapter_name]:
-                    url=self.dataset.nativeDevices['adapters'][adapter_name]['directive_url']
-
-                response_token = self.dataset.nativeDevices['adapters'][adapter_name]['response_token']
-                correlationToken = str(uuid.uuid1())
-                report_state = ReportState(endpointId, bearerToken=response_token, correlationToken=correlationToken)
-                adapter_response = await self.adapter_post(url, report_state, token=response_token)
-                
-                if adapter_response and adapter_response['event']['header']['name']=='StateReport':
-                    await self.adapter.handleStateReport(adapter_response, source=adapter_name)
-                    return True
-            except:
-                logger.info('!! error caching initial state for %s %s' % (endpointId, adapter_response), exc_info=True)
-            return False
-            
 
     async def activation_refresh_handler(self, request):
         try:
@@ -1063,7 +980,7 @@ class EventGateway(SofaBase):
 
 
             #logger.info('1 token %s vs headers %s' % (token, headers))
-            timeout = aiohttp.ClientTimeout(total=self.restTimeout)
+            timeout = aiohttp.ClientTimeout(total=self.rest_timeout)
             jsondata=json.dumps(data)
             #logger.info('Adapter post: %s %s' % (url, data))
             # TODO/CHEESE - Using this semap
@@ -1127,11 +1044,11 @@ class EventGateway(SofaBase):
 
                 return ErrorResponse(None, "INTERNAL_ERROR", f"An unknown error occurred during message processing")
         
-        except concurrent.futures._base.TimeoutError:
+        except asyncio.exceptions.TimeoutError:
             if self.adapter_name_from_url(url) not in self.adapters_not_responding:
                 logger.error("!. Error - Timeout in rest post to %s: %s %s" % (self.adapter_name_from_url(url), url, data))
             result = ErrorResponse(None, "INTERNAL_ERROR", f"Timeout in rest post {self.adapter_name_from_url(url)}")
-        except concurrent.futures._base.CancelledError:
+        except asyncio.exceptions.CancelledError:
             if self.adapter_name_from_url(url) not in self.adapters_not_responding:
                 logger.error("!. Error - Cancelled rest post to %s: %s %s %s" % (self.adapter_name_from_url(url), url, headers, alexa_json_filter(data)))
             result = ErrorResponse(None, "INTERNAL_ERROR", f"Cancelled during rest post {self.adapter_name_from_url(url)}")
@@ -1399,6 +1316,7 @@ class EventGateway(SofaBase):
         except:
             logger.error('Error getting virtual list for %s' % itempath, exc_info=True)
 
+
     async def request_report_state(self, endpointId, correlationToken='', bearerToken=None, cookie={}):
         
         try:
@@ -1459,6 +1377,9 @@ class EventGateway(SofaBase):
 
         except concurrent.futures._base.TimeoutError:
             logger.error("!! Error requesting state for %s (timeout)" % endpointId,exc_info=True)
+
+        except KeyError:
+            logger.error(f"!! Error requesting state for {endpointId} and report format error in {statereport}",exc_info=True)
 
         except:
             logger.error("!! Error requesting state for %s" % endpointId,exc_info=True)
