@@ -1,5 +1,8 @@
 #!/usr/bin/python3
-from sofabase3 import log_setup, SofaConfig, SofaBase, Discover, AddOrUpdateReport, Response, ErrorResponse, ReportState, DiscoveryResponse, alexa_json_filter, json_date_handler
+from sofabase3 import log_setup, Config, SofaBase, Discover, AddOrUpdateReport, Response, ErrorResponse, ReportState
+from sofabase3 import DiscoveryResponse, alexa_json_filter, json_date_handler
+from sofabase3 import DeviceObjects
+
 
 import sys, os
 import datetime
@@ -12,7 +15,6 @@ from aiohttp import web
 import aiohttp_cors
 from aiohttp_sse import sse_response
 import copy
-import concurrent.futures
 from auth import api_consumer, Auth
 
 from wakeonlan import send_magic_packet
@@ -25,14 +27,14 @@ class EventGateway(SofaBase):
     #def __init__(self, api_consumers=None, adapters_not_responding=[], dataset=None, adapter=None, config=None):
 
     def add_adapter_fields(self):
-        SofaConfig.add("web_address", mandatory=True)
-        SofaConfig.add("web_port", default=6443)
-        SofaConfig.add("token_secret", mandatory=True)
-        SofaConfig.add("certificate", mandatory=True)
-        SofaConfig.add("certificate_key", mandatory=True)
-        SofaConfig.add("token_expires", default=604800)
-        SofaConfig.add("error_threshold", default=20)
-        SofaConfig.add("adapter_poll_time", default=60)        
+        Config.add("web_address", mandatory=True)
+        Config.add("web_port", default=6443)
+        Config.add("token_secret", mandatory=True)
+        Config.add("certificate", mandatory=True)
+        Config.add("certificate_key", mandatory=True)
+        Config.add("token_expires", default=604800)
+        Config.add("error_threshold", default=20)
+        Config.add("adapter_poll_time", default=60)        
 
     @property
     def caching_enabled(self):
@@ -68,6 +70,7 @@ class EventGateway(SofaBase):
         logger.info('.. loading cached endpoints')
 
         cached_devices = self.load_cache('event_gateway_device_cache')
+        self.device_objects = DeviceObjects()
 
         logger.info(f'.. cached endpoints: {len(cached_devices.keys())}')
 
@@ -78,7 +81,7 @@ class EventGateway(SofaBase):
     async def initialize(self):
 
         try:
-            self.auth=Auth(secret=SofaConfig.token_secret, token_expires=SofaConfig.token_expires)
+            self.auth=Auth(secret=Config.token_secret, token_expires=Config.token_expires)
             for consumer in self.api_consumers:
                 api_consumer.objects.create(name=consumer, api_key=self.api_consumers[consumer]['api_key'])
             
@@ -117,11 +120,11 @@ class EventGateway(SofaBase):
             await self.runner.setup()
 
             self.ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
-            self.ssl_context.load_cert_chain(SofaConfig.certificate, SofaConfig.certificate_key)
+            self.ssl_context.load_cert_chain(Config.certificate, Config.certificate_key)
 
-            self.site = aiohttp.web.TCPSite(self.runner, SofaConfig.web_address, SofaConfig.web_port, ssl_context=self.ssl_context)
+            self.site = aiohttp.web.TCPSite(self.runner, Config.web_address, Config.web_port, ssl_context=self.ssl_context)
             await self.site.start()
-            logger.info(f".. started event gateway at {SofaConfig.web_address}:{SofaConfig.web_port}")
+            logger.info(f".. started event gateway at {Config.web_address}:{Config.web_port}")
 
         except:
             logger.error('!! Error intializing event gateway web server', exc_info=True)
@@ -144,7 +147,7 @@ class EventGateway(SofaBase):
 
     async def loadData(self, jsonfilename):
         try:
-            with open(os.path.join(SofaConfig.data_directory, '%s.json' % jsonfilename),'r') as jsonfile:
+            with open(os.path.join(Config.data_directory, '%s.json' % jsonfilename),'r') as jsonfile:
                 return json.loads(jsonfile.read())
         except:
             logger.error('Error loading pattern: %s' % jsonfilename,exc_info=True)
@@ -201,7 +204,7 @@ class EventGateway(SofaBase):
             data=json.loads(body.decode())
             token = await self.auth.get_token_from_api_key(data['name'], data['api_key'])
             if token:
-                expiration=datetime.datetime.now() + datetime.timedelta(seconds=(SofaConfig.token_expires-5))           
+                expiration=datetime.datetime.now() + datetime.timedelta(seconds=(Config.token_expires-5))           
                 logger.info(f"[> {data['name']} - refresh token valid until {expiration.isoformat()}")
                 return self.json_response({'token': token, 'expiration': expiration.isoformat() })
 
@@ -218,7 +221,7 @@ class EventGateway(SofaBase):
             #logger.info('.. activation request for %s' % data['name'])
             check=await self.auth.get_token_from_api_key(data['name'], data['api_key'])
             if check:
-                expiration=datetime.datetime.now() + datetime.timedelta(seconds=(SofaConfig.token_expires-5))
+                expiration=datetime.datetime.now() + datetime.timedelta(seconds=(Config.token_expires-5))
                 return self.json_response({'token': check, 'expiration': expiration.isoformat() })
 
         except:
@@ -390,9 +393,9 @@ class EventGateway(SofaBase):
 
         except ConnectionRefusedError:
             logger.error('!! Connection refused for adapter %s.  Adapter is likely stopped' % adapter_name)
-        except concurrent.futures._base.TimeoutError:
+        except asyncio.exceptions.TimeoutError:
             logger.error('!! Error getting list data %s (timed out)' % item)
-        except concurrent.futures._base.CancelledError:
+        except asyncio.exceptions.CancelledError:
             logger.error('!! Error getting list data %s (cancelled)' % item)
         except:
             logger.error('!! Error getting list data %s %s' % (request.__dict__, item), exc_info=True)
@@ -458,7 +461,7 @@ class EventGateway(SofaBase):
             logger.warning('.. image request failed after %s seconds for %s (Server Disconnect)' % ((datetime.datetime.now()-reqstart).total_seconds(), item))
         except aiohttp.client_exceptions.ClientOSError:
             logger.warning('.. image request failed after %s seconds for %s (Client Error/Connection Reset)' % ((datetime.datetime.now()-reqstart).total_seconds(), item))
-        except concurrent.futures._base.CancelledError:
+        except asyncio.exceptions.CancelledError:
             logger.warning('.. image request cancelled after %s seconds for %s' % ((datetime.datetime.now()-reqstart).total_seconds(), item))
         except:
             logger.error('Error after %s seconds getting image %s' % ((datetime.datetime.now()-reqstart).total_seconds(), item), exc_info=True)
@@ -693,6 +696,13 @@ class EventGateway(SofaBase):
             else:
                 endpointId=data['directive']['endpoint']['endpointId']
 
+            try:
+                device_object = self.device_objects.get(endpointId)
+                if device_object:
+                    await device_object.handle_directive(data)
+            except:
+                logger.warning(f'!! [NEW] new device directive failed', exc_info=True)
+
             if endpointId not in self.dataset.devices and endpointId not in self.dataset.localDevices:
                 logger.info('.. device not in dataset: %s %s %s' % (source, endpointId, data))
                 return ErrorResponse(endpointId, 'NO_SUCH_ENDPOINT', 'hub could not locate this device in dataset')
@@ -731,6 +741,8 @@ class EventGateway(SofaBase):
             
                     for target_adapter in self.directive_groups[groupKey]['adapter_group'][directive_adapter]:
                         data['directive']['endpoint']['cookie']['groupCount']=len(self.directive_groups[groupKey]['adapter_group'][directive_adapter])
+
+            
             
             if data['directive']['header']['name']=='TurnOn':
                 # Intercept Wake on LAN for devices with that controller
@@ -929,7 +941,7 @@ class EventGateway(SofaBase):
                 except:
                     logger.error('!! error with acu: %s' % adapter_name, exc_info=True)
 
-        except concurrent.futures._base.CancelledError:
+        except asyncio.exceptions.CancelledError:
             logger.error('!! Error updating collectors (cancelled)', exc_info=True)
         except:
             logger.error('!! Error updating collectors', exc_info=True)
@@ -1098,7 +1110,7 @@ class EventGateway(SofaBase):
     def loadJSON(self, jsonfilename):
         
         try:
-            with open(os.path.join(SofaConfig.config_directory, '%s.json' % jsonfilename),'r') as jsonfile:
+            with open(os.path.join(Config.config_directory, '%s.json' % jsonfilename),'r') as jsonfile:
                 return json.loads(jsonfile.read())
         except FileNotFoundError:
             logger.error('!! Error loading json - file does not exist: %s' % jsonfilename)
@@ -1111,7 +1123,7 @@ class EventGateway(SofaBase):
     def saveJSON(self, jsonfilename, data):
         
         try:
-            jsonfile = open(os.path.join(SofaConfig.config_directory, '%s.json' % jsonfilename), 'wt')
+            jsonfile = open(os.path.join(Config.config_directory, '%s.json' % jsonfilename), 'wt')
             json.dump(data, jsonfile, ensure_ascii=False, default=self.date_handler)
             jsonfile.close()
 
@@ -1124,7 +1136,7 @@ class EventGateway(SofaBase):
         try:
             if json_format:
                 filename="%s.json" % filename
-            with open(os.path.join(SofaConfig.cache_directory, filename),'r') as cachefile:
+            with open(os.path.join(Config.cache_directory, filename),'r') as cachefile:
                 if json_format:
                     return json.loads(cachefile.read())
                 else:
@@ -1142,7 +1154,7 @@ class EventGateway(SofaBase):
         try:
             if json_format:
                 filename="%s.json" % filename
-            cachefile = open(os.path.join(SofaConfig.cache_directory, filename), 'wt')
+            cachefile = open(os.path.join(Config.cache_directory, filename), 'wt')
             if json_format:
                 json.dump(data, cachefile, ensure_ascii=False, default = json_date_handler)
             else:
@@ -1160,14 +1172,17 @@ class EventGateway(SofaBase):
         for endpoint in endpoints:
             self.dataset.devices[ endpoint['endpointId'] ] = endpoint
 
-        # Newly discovered devices should be tested again to see if they are unreachable
-        if endpoint['endpointId'] in self.dataset.unreachable_devices:
-            self.dataset.unreachable_devices.remove(endpoint['endpointId'])
+            # Newly discovered devices should be tested again to see if they are unreachable
+            if endpoint['endpointId'] in self.dataset.unreachable_devices:
+                self.dataset.unreachable_devices.remove(endpoint['endpointId'])
 
         # If caching is enabled save these devices so that they are present after a restart and before the 
         # adapter has activated
         if self.caching_enabled and not skip_cache:
-            self.save_cache(f'{SofaConfig.adapter_name}_device_cache', self.dataset.devices)
+            for item in self.dataset.devices:
+                if 'modelName' in self.dataset.devices[item]:
+                    del self.dataset.devices[item]['modelName']
+            self.save_cache(f'{Config.adapter_name}_device_cache', self.dataset.devices)
 
 
     async def request_report_states(self, endpoints, source=None):
@@ -1230,6 +1245,10 @@ class EventGateway(SofaBase):
             new_map_items=False
             endpoint_list=[]
             for item in endpoints:
+                device_object = self.device_objects.get(item['endpointId'])
+                if device_object:
+                    device_object.set_remote_source(self.dataset.nativeDevices['adapters'][adapter_name])
+
                 endpoint_list.append(item['endpointId'])
                 if item['endpointId'] not in self.device_adapter_map or self.device_adapter_map[item['endpointId']]!=adapter_name:
                     new_map_items=True
@@ -1375,7 +1394,7 @@ class EventGateway(SofaBase):
             logger.warning('.! No State Report returned for %s' % endpointId)            
             return {}
 
-        except concurrent.futures._base.TimeoutError:
+        except asyncio.exceptions.TimeoutError:
             logger.error("!! Error requesting state for %s (timeout)" % endpointId,exc_info=True)
 
         except KeyError:
